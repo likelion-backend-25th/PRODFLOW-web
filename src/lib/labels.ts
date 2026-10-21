@@ -1,0 +1,103 @@
+import type {
+  AccountStatus,
+  LineStatus,
+  OrderStatus,
+  PaymentStatus,
+  Role,
+  WorkOrderStatus,
+} from "@/types/domain.ts";
+
+export const roleLabel: Record<Role, string> = {
+  SUPER_ADMIN: "최고 관리자",
+  ORDER_MANAGER: "수주 관리자",
+  PRODUCTION_MANAGER: "생산 현장 관리자",
+  VIEWER: "업무 조회 담당",
+};
+
+export const orderStatusLabel: Record<OrderStatus, string> = {
+  WAITING: "대기",
+  CONFIRMED: "생산대기",
+  IN_PRODUCTION: "생산중",
+  PACKING: "포장중",
+  PACKED: "포장완료",
+  SHIPPING: "배송중",
+  COMPLETED: "완료",
+  ON_HOLD: "생산보류",
+  CANCELLED: "취소",
+};
+
+export const workStatusOrder: OrderStatus[] = [
+  "WAITING",
+  "CONFIRMED",
+  "IN_PRODUCTION",
+  "PACKING",
+  "PACKED",
+  "SHIPPING",
+  "COMPLETED",
+  "ON_HOLD",
+  "CANCELLED",
+];
+
+export function registrationStatus(status: OrderStatus): "RESERVED" | "CONFIRMED" {
+  return status === "WAITING" || status === "CANCELLED" ? "RESERVED" : "CONFIRMED";
+}
+
+export function registrationLabel(status: OrderStatus): string {
+  return registrationStatus(status) === "RESERVED" ? "예정" : "확정";
+}
+
+export function registrationTone(status: OrderStatus): string {
+  return registrationStatus(status) === "RESERVED" ? "bg-orange-50 text-orange-700" : "bg-cyan-50 text-cyan-800";
+}
+
+export const workOrderStatusLabel: Record<WorkOrderStatus, string> = {
+  READY: "준비",
+  IN_PRODUCTION: "생산중",
+  PAUSED: "일시정지",
+  COMPLETED: "생산완료",
+  CANCELLED: "취소",
+};
+
+export const paymentStatusLabel: Record<PaymentStatus, string> = {
+  UNPAID: "미입금",
+  PARTIAL: "부분입금",
+  PAID: "입금완료",
+};
+
+export const lineStatusLabel: Record<LineStatus, string> = {
+  AVAILABLE: "가동가능",
+  RUNNING: "가동중",
+  MAINTENANCE: "점검중",
+  BROKEN: "고장",
+};
+
+export const accountStatusLabel: Record<AccountStatus, string> = {
+  ACTIVE: "활성",
+  INACTIVE: "비활성",
+  DELETED: "삭제",
+};
+
+export function orderStatusTone(status: OrderStatus): string {
+  if (status === "WAITING") return "bg-slate-100 text-slate-600";
+  if (status === "CONFIRMED") return "bg-blue-50 text-blue-700";
+  if (status === "IN_PRODUCTION") return "bg-primary-soft text-primary";
+  if (status === "PACKING") return "bg-violet-50 text-violet-700";
+  if (status === "PACKED") return "bg-indigo-50 text-indigo-700";
+  if (status === "SHIPPING") return "bg-sky-50 text-sky-700";
+  if (status === "COMPLETED") return "bg-emerald-50 text-emerald-700";
+  if (status === "ON_HOLD") return "bg-amber-50 text-amber-800";
+  return "bg-red-50 text-red-700";
+}
+
+export function paymentTone(status: PaymentStatus): string {
+  if (status === "PAID") return "bg-lime-50 text-lime-800";
+  if (status === "UNPAID") return "bg-rose-50 text-rose-700";
+  return "bg-yellow-50 text-yellow-800";
+}
+
+export function lineTone(status: LineStatus): string {
+  if (status === "AVAILABLE") return "bg-slate-100 text-muted";
+  if (status === "MAINTENANCE") return "bg-warning-soft text-warning";
+  if (status === "BROKEN") return "bg-red-50 text-danger";
+  return "bg-primary-soft text-primary";
+}

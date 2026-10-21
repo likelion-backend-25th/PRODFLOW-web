@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #f4f6f7;
+  --color-primary: #12786f;
+  --color-primary-deep: #0c3f3b;
+  --color-primary-soft: #e6f4f2;
+  --color-ink: #1c1f23;
+  --color-muted: #667085;
+  --color-line: #e4e7ec;
+  --color-warning: #b54708;
+  --color-warning-soft: #fef4e6;
+  --color-success: #178a4a;
+  --color-danger: #d92d20;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}

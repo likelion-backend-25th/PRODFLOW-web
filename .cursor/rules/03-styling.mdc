@@ -1,0 +1,47 @@
+---
+description: PRODFLOW 피그마 비주얼 시스템 (딥 틸, 흰 사이드바, 상태 색)
+globs: src/**/*.{tsx,css}
+alwaysApply: false
+---
+
+# Styling
+
+피그마 `prodflow`(node `259:11`)의 보이는 스타일만 따른다. 그 파일의 메뉴, 문구, 화면 종류는 와이어프레임이므로 도메인 규칙보다 앞에 두지 않는다.
+
+- 앱 배경은 `#F4F6F7`, 사이드바와 카드는 흰색이다. 본문 글자는 14px, 제목은 semibold다.
+- 포인트 색은 채워진 버튼에 쓰인 딥 틸 하나다. 차트, 로고, 활성 메뉴, 링크, 총액 숫자가 이 색을 같이 쓴다. 선택 행과 금액 박스는 같은 색의 연한 민트다.
+- 토큰은 `src/index.css`의 `@theme`에만 둔다. 컴포넌트에 새 hex를 쓰지 않는다.
+
+```css
+@theme {
+  --color-canvas: #f4f6f7;
+  --color-primary: #12786f;
+  --color-primary-soft: #e6f4f2;
+  --color-ink: #1c1f23;
+  --color-muted: #667085;
+  --color-line: #e4e7ec;
+  --color-warning: #b54708;
+  --color-warning-soft: #fef4e6;
+  --color-success: #178a4a;
+  --color-danger: #d92d20;
+}
+```
+
+- 셸은 너비 240px의 흰 왼쪽 사이드바다. 로고는 틸 모서리 사각과 PRODFLOW 워드마크. 활성 메뉴는 민트 알약에 틸 글자와 라인 아이콘. 어두운 상단 헤더는 쓰지 않는다.
+- 로그인은 왼쪽 어두운 틸 사진 패널, 오른쪽 흰 폼, 가로로 긴 기본 버튼이다.
+- 카드는 흰 배경, 12px 모서리, 1px `--color-line` 테두리다. 화면 여백은 가로 32px다.
+- 기본 버튼은 틸 배경에 흰 글자, 8px 모서리, 높이 40px다. 보조 버튼은 흰 배경에 회색 테두리다.
+- 입력도 높이 40px, 8px 모서리, 흰 배경, 1px 테두리다. 주소·검색 아이콘은 입력 안에 둔다.
+- 표는 흰 카드 안이다. 상태는 색 점과 글자, 또는 연한 알약이다. 상태마다 다른 원색을 주지 않는다.
+- 대기·준비·가동가능은 회색. 확정·생산중·가동중은 틸. 보류·점검·미입금·부분입금·납기 임박은 앰버. 완료·입금완료는 초록. 취소·고장은 빨강. 포장과 배송은 틸을 유지한다.
+- 아이콘은 `lucide-react`. 조건부 클래스는 `cn`. `style={{}}`는 캘린더 좌표처럼 계산값이 필요할 때만 쓴다. CSS-in-JS는 추가하지 않는다.
+
+```tsx
+// ❌
+<div style={{ background: "#5b21b6", borderRadius: 24 }} />
+
+// ✅
+<button className="h-10 rounded-lg bg-primary px-4 text-white" type="button">
+  수주 등록
+</button>
+```

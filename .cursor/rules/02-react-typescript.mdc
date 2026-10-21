@@ -1,0 +1,61 @@
+---
+description: PRODFLOW React 컴포넌트와 도메인 타입 규칙
+globs: src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# React & TypeScript
+
+- 컴포넌트는 함수로 작성한다. Props와 DTO는 `interface` 또는 `type`.
+- 두 파일 이상에서 쓰는 타입은 `src/types/`. 한 컴포넌트 Props는 그 파일에 둔다.
+- 상태·역할은 문자열 리터럴 유니온만 쓴다. 분기에서 한글 라벨을 비교하지 않는다.
+- 150줄을 넘으면 하위 컴포넌트로 나눈다. 페이지는 조회와 액션, `src/components/`는 표시.
+- API enum 이름이 아래와 다르면 API를 따르고, 이 목록과 `src/lib/labels.ts`를 함께 고친다.
+
+## 코드
+
+```ts
+type Role = "SUPER_ADMIN" | "ORDER_MANAGER" | "PRODUCTION_MANAGER" | "VIEWER";
+
+type OrderStatus =
+  | "WAITING"            // 대기
+  | "ON_HOLD"            // 생산보류
+  | "CONFIRMED"          // 확정. 선금 웹훅이 바꾸고, 이때 작업지시서를 만든다
+  | "IN_PRODUCTION"      // 생산중
+  | "PACKING"            // 포장중
+  | "PACKED"             // 포장완료
+  | "SHIPPING"           // 배송중
+  | "COMPLETED"          // 완료
+  | "CANCELLED";         // 취소
+
+type WorkOrderStatus =
+  | "READY"           // 준비. 수주가 확정일 때 생성한다
+  | "IN_PRODUCTION"   // 생산중
+  | "PAUSED"          // 일시중지
+  | "COMPLETED"       // 생산완료
+  | "CANCELLED";      // 취소
+
+type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID";
+type LineStatus = "AVAILABLE" | "RUNNING" | "MAINTENANCE" | "BROKEN";
+```
+
+입금: 미입금 `UNPAID`(50% 미만), 부분입금 `PARTIAL`(50% 이상), 입금완료 `PAID`(100% 이상).
+라인: 가동가능 `AVAILABLE`, 가동중 `RUNNING`, 점검중 `MAINTENANCE`, 고장 `BROKEN`. 라인에는 `dailyCapacity`(개/일)가 있다. 라인 등록과 이 숫자 수정은 `SUPER_ADMIN`만 하고, 상태 변경은 `PRODUCTION_MANAGER`와 `SUPER_ADMIN`만 한다.
+거래처 키 `businessNumber`는 숫자 10자리. 품목 키는 `productName`과 `modelName`이다. `designImageUrl`은 품목에만 있다. `OrderDetail.lines`는 길이 제한이 없는 배열이고, 원소가 1개 이상이다. 수주에는 희망 납기일 `requestedDueDate`, 확정 납기일 `dueDate`, 등록 때 잡는 `plannedStartDate`, `plannedEndDate`가 있다. 작업지시서는 선금 때 그 예정일을 그대로 받고, `issuedAt`은 작업지시가 생긴 시각이다. 생산 시작을 누른 시각은 `startedAt`이다.
+
+한글 라벨은 `src/lib/labels.ts` 한곳에 둔다.
+
+## 파일명
+
+- 컴포넌트 TSX는 PascalCase (`OrderStatusBadge.tsx`)
+- 훅·API·스토어는 camelCase (`useAuthStore.ts`, `orderApi.ts`)
+
+```tsx
+// ❌
+if (order.status === "생산중") {}
+
+// ✅
+if (order.status === "IN_PRODUCTION") {
+  return <span>{orderStatusLabel.IN_PRODUCTION}</span>;
+}
+```

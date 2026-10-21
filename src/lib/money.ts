@@ -1,0 +1,38 @@
+import type { OrderLine, PaymentStatus } from "@/types/domain.ts";
+
+export function lineAmount(line: Pick<OrderLine, "quantity" | "unitPrice" | "vatIncluded">): number {
+  const base = line.quantity * line.unitPrice;
+  return line.vatIncluded ? base : Math.round(base * 1.1);
+}
+
+export function orderTotal(lines: OrderLine[]): number {
+  return lines.reduce((sum, line) => sum + lineAmount(line), 0);
+}
+
+export function orderQuantity(lines: OrderLine[]): number {
+  return lines.reduce((sum, line) => sum + line.quantity, 0);
+}
+
+export function depositTarget(total: number): number {
+  return Math.round(total * 0.5);
+}
+
+export function paymentStatusOf(paid: number, total: number): PaymentStatus {
+  if (total <= 0 || paid <= 0) return "UNPAID";
+  if (paid >= total) return "PAID";
+  if (paid >= depositTarget(total)) return "PARTIAL";
+  return "UNPAID";
+}
+
+export function formatWon(amount: number): string {
+  return `${amount.toLocaleString("ko-KR")}원`;
+}
+
+export function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+export function productKey(productName: string, modelName: string): string {
+  const collapse = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+  return `${collapse(productName)}|${collapse(modelName)}`;
+}
