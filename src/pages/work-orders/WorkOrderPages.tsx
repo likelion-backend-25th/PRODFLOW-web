@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { Check, ChevronLeft, ChevronRight, Download, Package, Pause, Play, RotateCcw, Save, Search } from "lucide-react";
 import { Button } from "@/components/ui.tsx";
+import { cn } from "@/lib/cn.ts";
 import { localDate, localDateTime, todayISO, toISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { orderItems, orderItemsText } from "@/lib/orderText.ts";
@@ -50,6 +51,44 @@ function stepsOf(status: WorkOrderStatus, orderStatus: OrderStatus | undefined):
     : status === "IN_PRODUCTION" || status === "PAUSED" ? 1
     : packedOrLater ? 4 : 2;
   return labels.map((label, index) => ({ label, state: index < current ? "done" : index === current ? "current" : "todo" }));
+}
+
+function WorkStatusStepper({ status, orderStatus, overdue }: { status: WorkOrderStatus; orderStatus: OrderStatus | undefined; overdue: boolean }) {
+  const steps = stepsOf(status, orderStatus);
+  const warnCurrent = status === "PAUSED" || overdue;
+  return (
+    <div>
+      {status === "CANCELLED" ? <p className="mb-2 text-xs font-semibold text-danger">이 작업지시는 취소되었습니다.</p> : null}
+      {overdue && status !== "CANCELLED" ? <p className="mb-2 text-xs font-semibold text-danger">완료 예정일을 지났습니다.</p> : null}
+      <ol className="flex w-full items-start">
+        {steps.map((step, index) => (
+          <li key={`${step.label}-${index}`} className="relative flex flex-1 flex-col items-center text-center">
+            {index < steps.length - 1 ? (
+              <span className={cn("absolute top-3.5 left-[calc(50%+14px)] right-[calc(-50%+14px)] h-0.5", step.state === "done" ? "bg-primary" : "bg-line")} aria-hidden />
+            ) : null}
+            <span
+              className={cn(
+                "relative z-10 flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold",
+                step.state === "done" && "bg-primary text-white",
+                step.state === "current" && (warnCurrent ? "bg-warning-soft text-warning ring-2 ring-warning" : "bg-primary-soft text-primary ring-2 ring-primary"),
+                step.state === "todo" && "bg-canvas text-muted ring-1 ring-line",
+              )}
+            >
+              {step.state === "done" ? <Check size={14} /> : index + 1}
+            </span>
+            <span className={cn(
+              "mt-1.5 whitespace-nowrap text-[11px] font-semibold",
+              step.state === "done" && "text-primary",
+              step.state === "current" && (warnCurrent ? "text-warning" : "text-primary"),
+              step.state === "todo" && "text-muted",
+            )}>
+              {step.label}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }
 
 function historyTitle(from: string, to: string): string {
@@ -361,15 +400,11 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
     <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.8fr)]">
       <section className="rounded-xl border border-line bg-white p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <h2 className="font-semibold">작업지시 상세</h2>
-            <span className={`rounded-full px-2 py-1 text-xs font-semibold ${view.className}`}>{view.label}</span>
-          </div>
-          <Button onClick={save}><Save size={15} className="mr-1" />저장</Button>
-        </div>
-        <div className="mt-5 flex items-center justify-between">
           <h3 className="text-sm font-semibold">기본정보</h3>
-          <p className="text-xs text-muted"><span className="text-danger">*</span> 필수 입력</p>
+          <div className="flex items-center gap-3">
+            <p className="text-xs text-muted"><span className="text-danger">*</span> 필수 입력</p>
+            <Button onClick={save}><Save size={15} className="mr-1" />저장</Button>
+          </div>
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <Field label="작업지시번호"><input className={readOnlyClass} value={number} disabled /></Field>
@@ -432,12 +467,14 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
       </section>
 
       <section className="rounded-xl border border-line bg-white p-5">
-        <h2 className="font-semibold">생산 진행현황</h2>
-        <ol className="mt-4 grid grid-cols-4 gap-1 text-center text-xs">
-          {stepsOf(workOrder.status, order?.status).map((step) => (
-            <li key={step.label} className={`rounded-lg px-1 py-2 font-semibold ${step.state === "done" ? "bg-primary text-white" : step.state === "current" ? "bg-primary-soft text-primary ring-1 ring-primary" : "bg-canvas text-muted"}`}>{step.label}</li>
-          ))}
-        </ol>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold">작업지시 상세</h2>
+            <span className={`rounded-full px-2 py-1 text-xs font-semibold ${view.className}`}>{view.label}</span>
+          </div>
+          <WorkStatusStepper status={workOrder.status} orderStatus={order?.status} overdue={overdue} />
+        </div>
+        <h2 className="mt-5 font-semibold">생산 진행현황</h2>
         <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
           <div><dt className="text-xs text-muted">지시수량</dt><dd className="mt-1 text-lg font-semibold">{workOrder.quantity.toLocaleString("ko-KR")}개</dd></div>
           <div><dt className="text-xs text-muted">생산라인</dt><dd className="mt-1 text-lg font-semibold">{line?.name ?? "미배정"}</dd></div>

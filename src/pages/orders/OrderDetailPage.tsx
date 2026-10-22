@@ -5,7 +5,7 @@ import { Badge, Button, Card, PageHeader, TextField } from "@/components/ui.tsx"
 import { localDateTime, todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, registrationLabel, registrationTone, workOrderStatusLabel } from "@/lib/labels.ts";
-import type { OrderStatus, WorkOrderStatus } from "@/types/domain.ts";
+import type { OrderStatus } from "@/types/domain.ts";
 import { activeWorkOrder, delayOf, delayTone } from "@/lib/delay.ts";
 import { depositTarget, formatWon, orderQuantity, orderTotal } from "@/lib/money.ts";
 import { DueDateError, cancelOrder, completeDelivery, completePacking, recordPayment, shipOrder, updateOrderPrices, updateOrderQuantities, updateShippingAddress } from "@/lib/workflow.ts";
@@ -31,6 +31,8 @@ export function OrderDetailPage() {
 
   const client = db.clients.find((item) => item.id === order.clientId);
   const workOrder = activeWorkOrder(db.workOrders, order.id);
+  const assignee = workOrder ? db.users.find((item) => item.id === workOrder.assigneeId) : undefined;
+  const orderHistory = db.histories.filter((item) => item.entity === "ORDER" && item.entityId === order.id);
   const delay = delayOf(order, workOrder, todayISO());
   const total = orderTotal(order.lines);
   const qtyMap = Object.fromEntries(order.lines.map((line) => [line.id, quantities[line.id] ?? line.quantity]));
@@ -116,18 +118,32 @@ export function OrderDetailPage() {
         ) : <Button tone="danger" onClick={() => { setCancelling(true); setCancelReason(""); }}>취소</Button>
       ) : null}
       <Card>
+        <h2 className="mb-3 font-semibold">작업지시</h2>
+        {workOrder ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <p>
+              {workOrderStatusLabel[workOrder.status]}
+              <span className="text-muted"> · 담당 {assignee?.name ?? "미배정"}</span>
+            </p>
+            <Link className="font-semibold text-primary" to={`/work-orders/${workOrder.id}`}>작업 이력 보기</Link>
+          </div>
+        ) : (
+          <p className="text-sm text-muted">작업지시서는 선금 확인 후 생성됩니다.</p>
+        )}
+      </Card>
+      <Card>
         <h2 className="mb-3 font-semibold">처리 이력</h2>
         <ul className="space-y-2 text-sm">
-          {db.histories.filter((item) => item.entityId === order.id || item.entityId === workOrder?.id).map((item) => (
+          {orderHistory.map((item) => (
             <li key={item.id} className="border-t border-line pt-2 first:border-0 first:pt-0">
               <p>
                 <span className="text-muted">{localDateTime(item.at)} · {item.actorName} · </span>
-                {item.entity === "WORK_ORDER" ? "작업지시 " : ""}
-                {item.fromStatus === item.toStatus ? "정보 변경" : `${statusText(item.fromStatus, item.entity)} → ${statusText(item.toStatus, item.entity)}`}
+                {item.fromStatus === item.toStatus ? "정보 변경" : `${statusText(item.fromStatus)} → ${statusText(item.toStatus)}`}
               </p>
               {item.note ? <p className="text-xs text-muted">{item.note}</p> : null}
             </li>
           ))}
+          {orderHistory.length === 0 ? <li className="text-sm text-muted">아직 처리 이력이 없습니다.</li> : null}
         </ul>
       </Card>
       </div>
@@ -151,7 +167,16 @@ export function OrderDetailPage() {
         <p>납기 {order.dueDate}</p>
         {delay ? <p className={`rounded-lg px-3 py-2 text-sm font-semibold ${delayTone(delay.level)}`}>{delay.level === "late" ? "지연" : "주의"} · {delay.reason}</p> : null}
         <p>작업지시 수량 {order.coveredQuantity.toLocaleString("ko-KR")} / {orderQuantity(order.lines).toLocaleString("ko-KR")}개</p>
-        {workOrder ? <Link className="font-semibold text-primary" to={`/work-orders/${workOrder.id}`}>작업지시 {workOrderStatusLabel[workOrder.status]}</Link> : <p className="text-muted">작업지시서는 선금 확인 후 생성됩니다.</p>}
+        {workOrder ? (
+          <p>
+            작업지시 {workOrderStatusLabel[workOrder.status]}
+            <span className="text-muted"> · {assignee?.name ?? "미배정"}</span>
+            {" · "}
+            <Link className="font-semibold text-primary" to={`/work-orders/${workOrder.id}`}>상세</Link>
+          </p>
+        ) : (
+          <p className="text-muted">작업지시서는 선금 확인 후 생성됩니다.</p>
+        )}
         {canManageOrders(user.role) && order.paymentStatus !== "PAID" && order.status !== "CANCELLED" ? (
           <>
             <TextField label="입금 금액" type="number" value={amount || ""} onChange={(event) => setAmount(Number(event.target.value))} />
@@ -164,9 +189,8 @@ export function OrderDetailPage() {
   );
 }
 
-function statusText(value: string, entity: "ORDER" | "WORK_ORDER"): string {
+function statusText(value: string): string {
   if (value === "NONE") return "등록";
-  if (entity === "WORK_ORDER" && value in workOrderStatusLabel) return workOrderStatusLabel[value as WorkOrderStatus];
   if (value in orderStatusLabel) return orderStatusLabel[value as OrderStatus];
   return value;
 }

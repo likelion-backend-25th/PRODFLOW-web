@@ -151,7 +151,8 @@ export function OrderFormPage() {
     }
   }, [quantity, db]);
   const capacity = values.requestedDueDate ? capacityUntil(values.requestedDueDate, todayISO(), db.lines, db.holidays.map((holiday) => holiday.date), db.orders) : null;
-  const earliest = preview && typeof preview !== "string" ? preview.earliestDueDate : null;
+  const schedule = preview && typeof preview !== "string" ? preview : null;
+  const earliest = schedule?.earliestDueDate ?? null;
   const feasible = Boolean(earliest && values.requestedDueDate && values.requestedDueDate >= earliest);
 
   const steps = [
@@ -393,7 +394,6 @@ export function OrderFormPage() {
               <label className="block text-sm">
                 <FieldLabel>납기일 *</FieldLabel>
                 <input type="date" min={todayISO()} className="h-10 w-full rounded-lg border border-line bg-white px-3" {...form.register("requestedDueDate")} />
-                <span className="mt-1 block text-xs text-muted">{typeof preview === "string" ? preview : earliest ? `가장 빠른 납기일 ${earliest}` : "품목 수량을 입력하면 가장 빠른 납기일을 계산합니다."}</span>
               </label>
               <label className="block text-sm">
                 <FieldLabel>배송 수신 연락처 *</FieldLabel>
@@ -402,6 +402,41 @@ export function OrderFormPage() {
                   <Phone size={15} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
                 </span>
               </label>
+            </div>
+            <div className={cn(
+              "mt-3 rounded-xl border p-4",
+              typeof preview === "string" ? "border-warning/40 bg-warning-soft" : schedule ? "border-primary/30 bg-primary-soft" : "border-line bg-canvas",
+            )}>
+              {typeof preview === "string" ? (
+                <p className="text-sm font-semibold text-warning">{preview}</p>
+              ) : schedule ? (
+                <>
+                  <p className="text-xs font-semibold text-primary">수량 기준으로 계산한 공장 일정</p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <div>
+                      <p className="text-xs text-muted">가장 빠른 납기일</p>
+                      <p className="mt-1 text-lg font-bold text-primary">{schedule.earliestDueDate}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted">생산 시작 예정일</p>
+                      <p className="mt-1 text-base font-semibold">{schedule.plannedStartDate}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted">생산 완료 예정일</p>
+                      <p className="mt-1 text-base font-semibold">{schedule.plannedEndDate}</p>
+                    </div>
+                  </div>
+                  {values.requestedDueDate !== schedule.earliestDueDate ? (
+                    <button type="button" className="mt-3 text-xs font-semibold text-primary" onClick={() => form.setValue("requestedDueDate", schedule.earliestDueDate)}>
+                      가장 빠른 납기일로 넣기
+                    </button>
+                  ) : (
+                    <p className="mt-3 text-xs font-semibold text-success">선택한 납기일이 가장 빠른 납기일과 같습니다.</p>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-muted">품목 수량을 입력하면 가장 빠른 납기일, 생산 시작 예정일, 생산 완료 예정일을 보여 줍니다.</p>
+              )}
             </div>
             <div className="mt-3">
               <div className="mb-1 flex items-center justify-end">
@@ -467,6 +502,9 @@ export function OrderFormPage() {
             <dl className="mt-4 space-y-3 text-sm">
               <SummaryRow label="등록일" value={todayISO()} />
               <SummaryRow label="납품일" value={values.requestedDueDate || "납기일 선택 전"} muted={!values.requestedDueDate} />
+              <SummaryRow label="가장 빠른 납기" value={earliest ?? "수량 입력 전"} muted={!earliest} />
+              <SummaryRow label="생산 시작 예정" value={schedule?.plannedStartDate ?? "수량 입력 전"} muted={!schedule} />
+              <SummaryRow label="생산 완료 예정" value={schedule?.plannedEndDate ?? "수량 입력 전"} muted={!schedule} />
               <div className="border-t border-line" />
               <SummaryRow label="공급가액" value={formatWon(supply)} />
               <SummaryRow label="부가세 (10%)" value={formatWon(total - supply)} />
