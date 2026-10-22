@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { addDays, todayISO } from "@/lib/dates.ts";
 import { integrityIssues } from "@/lib/integrity.ts";
 import { depositTarget, orderQuantity, orderTotal, paymentStatusOf } from "@/lib/money.ts";
-import { isWorkingDay } from "@/lib/schedule.ts";
+import { isWorkingDay, splitQuantityByLines } from "@/lib/schedule.ts";
 import type {
   Client,
   Database,
@@ -329,6 +329,7 @@ function seed(): Database {
         assigneeId: plan.assignee.id,
         lineId: plan.lineId,
         quantity,
+        allocations: allocations.map((slot) => ({ ...slot })),
         issuedAt: confirmedAt,
         plannedStartDate: allocations[0].date,
         plannedEndDate: allocations[allocations.length - 1].date,
@@ -463,6 +464,50 @@ function repair(db: Database): boolean {
     client.id = crypto.randomUUID();
     changed = true;
   });
+  db.workOrders.forEach((workOrder) => {
+    if (Array.isArray(workOrder.allocations)) return;
+    workOrder.allocations = [];
+    changed = true;
+  });
+  const holidays = db.holidays.map((holiday) => holiday.date);
+  [...db.orders]
+    .sort((left, right) => left.plannedStartDate.localeCompare(right.plannedStartDate) || left.createdAt.localeCompare(right.createdAt))
+    .forEach((order) => {
+      const wos = db.workOrders.filter((item) => item.orderId === order.id && item.status !== "CANCELLED");
+      if (wos.length === 0 || wos.every((item) => item.allocations.length > 0)) return;
+      if (wos.length === 1) {
+        wos[0].allocations = order.allocations.map((slot) => ({ ...slot }));
+        changed = true;
+        return;
+      }
+      try {
+        const occupying = db.workOrders.filter(
+          (item) => item.status !== "CANCELLED" && item.lineId && item.orderId !== order.id,
+        );
+        const chunks = splitQuantityByLines(
+          order.allocations,
+          wos.reduce((sum, item) => sum + item.quantity, 0),
+          db.lines,
+          holidays,
+          occupying,
+        );
+        const used = new Set<string>();
+        wos.forEach((workOrder) => {
+          const chunk =
+            chunks.find((item) => item.lineId === workOrder.lineId && !used.has(item.lineId)) ??
+            chunks.find((item) => !used.has(item.lineId));
+          if (!chunk) return;
+          used.add(chunk.lineId);
+          workOrder.allocations = chunk.allocations.map((slot) => ({ ...slot }));
+          workOrder.plannedStartDate = chunk.plannedStartDate;
+          workOrder.plannedEndDate = chunk.plannedEndDate;
+          if (workOrder.status === "READY") workOrder.quantity = chunk.quantity;
+          changed = true;
+        });
+      } catch {
+        return;
+      }
+    });
   const firstEvent = [...db.histories.map((item) => item.at), ...db.orders.map((order) => order.createdAt)].sort()[0] ?? new Date().toISOString();
   let lastNo = Math.max(0, ...db.users.map((user) => Number(user.accountNo?.slice(3)) || 0));
   db.users.forEach((user) => {

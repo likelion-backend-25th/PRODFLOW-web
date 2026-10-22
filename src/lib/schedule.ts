@@ -1,5 +1,5 @@
 import { addDays, isWeekend } from "@/lib/dates.ts";
-import type { DayAllocation, Line, Order } from "@/types/domain.ts";
+import type { DayAllocation, Line, Order, WorkOrder } from "@/types/domain.ts";
 
 export interface ScheduleResult {
   plannedStartDate: string;
@@ -105,4 +105,142 @@ export function scheduleQuantity(
     earliestDueDate: addWorkingDays(plannedEndDate, 2, holidays),
     allocations,
   };
+}
+
+export interface LineWorkChunk {
+  lineId: string;
+  quantity: number;
+  plannedStartDate: string;
+  plannedEndDate: string;
+  allocations: DayAllocation[];
+}
+
+export function usableLines(lines: Line[]): Line[] {
+  return lines.filter((line) => line.status === "AVAILABLE" || line.status === "RUNNING");
+}
+
+function lineOf(lines: Line[], lineId: string | null): Line | undefined {
+  return lineId ? lines.find((line) => line.id === lineId) : undefined;
+}
+
+export function quantityOnDate(workOrder: WorkOrder, iso: string, lines: Line[], holidays: string[]): number {
+  if (workOrder.status === "CANCELLED" || workOrder.quantity <= 0) return 0;
+  if (workOrder.allocations?.length) {
+    return workOrder.allocations.find((slot) => slot.date === iso)?.quantity ?? 0;
+  }
+  const line = lineOf(lines, workOrder.lineId);
+  if (!line || iso < workOrder.plannedStartDate || iso > workOrder.plannedEndDate || !isWorkingDay(iso, holidays)) return 0;
+  let left = workOrder.quantity;
+  for (let cursor = workOrder.plannedStartDate; cursor <= workOrder.plannedEndDate; cursor = addDays(cursor, 1)) {
+    if (!isWorkingDay(cursor, holidays)) continue;
+    const take = Math.min(left, line.dailyCapacity);
+    if (cursor === iso) return take;
+    left -= take;
+    if (left <= 0) return 0;
+  }
+  return 0;
+}
+
+export function lineOccupiedOn(
+  iso: string,
+  lineId: string,
+  workOrders: WorkOrder[],
+  lines: Line[],
+  holidays: string[],
+): number {
+  return workOrders
+    .filter((item) => item.lineId === lineId && item.status !== "CANCELLED")
+    .reduce((sum, item) => sum + quantityOnDate(item, iso, lines, holidays), 0);
+}
+
+function leftoverAllocations(
+  allocations: DayAllocation[],
+  locked: WorkOrder[],
+  lines: Line[],
+  holidays: string[],
+): DayAllocation[] {
+  return allocations
+    .map((slot) => {
+      const used = locked.reduce((sum, item) => sum + quantityOnDate(item, slot.date, lines, holidays), 0);
+      return { date: slot.date, quantity: Math.max(0, slot.quantity - used) };
+    })
+    .filter((slot) => slot.quantity > 0);
+}
+
+function trimAllocations(allocations: DayAllocation[], quantity: number): DayAllocation[] {
+  let left = quantity;
+  const next: DayAllocation[] = [];
+  for (const slot of allocations) {
+    if (left <= 0) break;
+    const take = Math.min(left, slot.quantity);
+    next.push({ date: slot.date, quantity: take });
+    left -= take;
+  }
+  if (left > 0) throw new Error("남은 일정에 작업지시 수량을 나누지 못했습니다.");
+  return next;
+}
+
+export function splitQuantityByLines(
+  allocations: DayAllocation[],
+  quantity: number,
+  lines: Line[],
+  holidays: string[],
+  occupying: WorkOrder[],
+  locked: WorkOrder[] = [],
+): LineWorkChunk[] {
+  if (quantity <= 0) return [];
+  const pool = usableLines(lines);
+  if (pool.length === 0) throw new Error("가동할 수 있는 라인이 없어 작업지시를 나눌 수 없습니다.");
+  const days = trimAllocations(leftoverAllocations(allocations, locked, lines, holidays), quantity);
+  const byLine = new Map<string, LineWorkChunk>();
+
+  for (const slot of days) {
+    let left = slot.quantity;
+    const ranked = [...pool].sort((leftLine, rightLine) => {
+      const leftFree = Math.max(0, leftLine.dailyCapacity - lineOccupiedOn(slot.date, leftLine.id, occupying, lines, holidays));
+      const rightFree = Math.max(0, rightLine.dailyCapacity - lineOccupiedOn(slot.date, rightLine.id, occupying, lines, holidays));
+      return rightFree - leftFree || leftLine.name.localeCompare(rightLine.name, "ko");
+    });
+    for (const line of ranked) {
+      if (left <= 0) break;
+      const occupied = lineOccupiedOn(slot.date, line.id, occupying, lines, holidays);
+      const take = Math.min(left, Math.max(0, line.dailyCapacity - occupied));
+      if (take <= 0) continue;
+      const current = byLine.get(line.id);
+      if (current) {
+        current.quantity += take;
+        current.plannedEndDate = slot.date;
+        current.allocations.push({ date: slot.date, quantity: take });
+      } else {
+        byLine.set(line.id, {
+          lineId: line.id,
+          quantity: take,
+          plannedStartDate: slot.date,
+          plannedEndDate: slot.date,
+          allocations: [{ date: slot.date, quantity: take }],
+        });
+      }
+      occupying = [
+        ...occupying,
+        {
+          id: `split-${line.id}-${slot.date}`,
+          orderId: "",
+          status: "READY",
+          assigneeId: null,
+          lineId: line.id,
+          quantity: take,
+          allocations: [{ date: slot.date, quantity: take }],
+          issuedAt: "",
+          plannedStartDate: slot.date,
+          plannedEndDate: slot.date,
+          startedAt: null,
+          completedAt: null,
+        },
+      ];
+      left -= take;
+    }
+    if (left > 0) throw new Error("라인별 남은 용량으로 작업지시를 나누지 못했습니다.");
+  }
+
+  return [...byLine.values()];
 }

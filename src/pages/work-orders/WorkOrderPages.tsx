@@ -31,7 +31,7 @@ function monthRange(): Pick<Filters, "from" | "to"> {
 function workOrderNo(item: WorkOrder, orderNo: string | undefined): string {
   const issued = localDate(item.issuedAt).replaceAll("-", "");
   const tail = orderNo?.split("-").at(-1) ?? "000";
-  return `WO-${issued.slice(0, 6)}-${tail}`;
+  return `WO-${issued.slice(0, 6)}-${tail}-${item.id.slice(0, 4)}`;
 }
 
 function statusView(status: WorkOrderStatus, overdue: boolean): { label: string; className: string } {
@@ -362,6 +362,7 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
   const conditions = [
     order ? `납기 ${order.dueDate}` : "",
     order ? `수주번호 ${order.orderNo}` : "",
+    `이번 지시 ${workOrder.quantity.toLocaleString("ko-KR")}개`,
     `생산 예정 ${workOrder.plannedStartDate} ~ ${workOrder.plannedEndDate}`,
     product?.description ? `품목 설명: ${product.description}` : "",
   ].filter(Boolean);
@@ -381,7 +382,9 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
     if (!current || !actor) return;
     act(() => {
       if (canManageOrders(actor.role) && assigneeId && assigneeId !== current.assigneeId) reassign(current.id, assigneeId, actor);
-      if ((current.status === "IN_PRODUCTION" || current.status === "PAUSED") && lineId && lineId !== current.lineId) changeLine(current.id, lineId, actor);
+      if ((current.status === "READY" || current.status === "IN_PRODUCTION" || current.status === "PAUSED") && lineId && lineId !== current.lineId) {
+        changeLine(current.id, lineId, actor);
+      }
     }, current.status === "READY" ? "생산 라인을 배정했습니다. 작업 시작을 누르면 생산이 시작됩니다." : "저장했습니다.");
   }
 

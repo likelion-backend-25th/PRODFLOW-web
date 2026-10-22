@@ -2,19 +2,17 @@ import { depositTarget, orderQuantity, orderTotal, paymentStatusOf, productKey }
 import { addWorkingDays, factoryCapacity, isWorkingDay } from "@/lib/schedule.ts";
 import type { Database, OrderStatus, WorkOrderStatus } from "@/types/domain.ts";
 
-const expectedWorkOrder: Record<OrderStatus, WorkOrderStatus | null> = {
-  WAITING: null,
-  CONFIRMED: "READY",
-  IN_PRODUCTION: "IN_PRODUCTION",
-  ON_HOLD: "PAUSED",
-  PACKING: "COMPLETED",
-  PACKED: "COMPLETED",
-  SHIPPING: "COMPLETED",
-  COMPLETED: "COMPLETED",
-  CANCELLED: null,
-};
-
 const producedAll: OrderStatus[] = ["PACKING", "PACKED", "SHIPPING", "COMPLETED"];
+
+function workOrdersMatchOrder(status: OrderStatus, active: { status: WorkOrderStatus }[]): boolean {
+  const open = active.filter((item) => item.status !== "COMPLETED");
+  if (status === "WAITING" || status === "CANCELLED") return active.length === 0;
+  if (status === "CONFIRMED") return open.length > 0 && open.every((item) => item.status === "READY");
+  if (status === "IN_PRODUCTION") return active.some((item) => item.status === "IN_PRODUCTION");
+  if (status === "ON_HOLD") return active.some((item) => item.status === "PAUSED") && !active.some((item) => item.status === "IN_PRODUCTION");
+  if (producedAll.includes(status)) return active.length > 0 && active.every((item) => item.status === "COMPLETED");
+  return false;
+}
 
 export function integrityIssues(db: Database): string[] {
   const issues: string[] = [];
@@ -63,7 +61,7 @@ export function integrityIssues(db: Database): string[] {
     if (order.status === "WAITING" && order.coveredQuantity !== 0) issues.push(`${tag}: 예정 수주에 작업 수량이 잡혀 있습니다.`);
     if (order.status !== "WAITING" && order.status !== "CANCELLED" && order.coveredQuantity !== quantity) issues.push(`${tag}: 작업 수량이 수주 수량과 다릅니다.`);
     if (producedAll.includes(order.status) && order.producedQuantity !== quantity) issues.push(`${tag}: 생산 완료 이후인데 실적이 부족합니다.`);
-    if ((order.status === "WAITING" || order.status === "CONFIRMED") && order.producedQuantity !== 0) issues.push(`${tag}: 생산 전인데 실적이 있습니다.`);
+    if (order.status === "WAITING" && order.producedQuantity !== 0) issues.push(`${tag}: 생산 전인데 실적이 있습니다.`);
     if (order.producedQuantity > quantity) issues.push(`${tag}: 실적이 수주 수량을 넘습니다.`);
 
     if (order.status !== "CANCELLED") {
@@ -79,12 +77,18 @@ export function integrityIssues(db: Database): string[] {
     }
 
     const active = db.workOrders.filter((item) => item.orderId === order.id && item.status !== "CANCELLED");
-    const expected = expectedWorkOrder[order.status];
-    if (active.length > 1) issues.push(`${tag}: 작업지시가 ${active.length}건입니다.`);
-    if (expected === null && active.length > 0) issues.push(`${tag}: 작업지시가 없어야 하는 상태입니다.`);
-    if (expected !== null && active[0]?.status !== expected) issues.push(`${tag}: 작업지시 상태가 ${expected}여야 합니다.`);
-    if (active[0] && active[0].quantity !== order.coveredQuantity) issues.push(`${tag}: 작업지시 수량이 작업 수량과 다릅니다.`);
-    if (active[0] && (active[0].plannedStartDate !== order.plannedStartDate || active[0].plannedEndDate !== order.plannedEndDate)) issues.push(`${tag}: 작업지시 일정이 수주 일정과 다릅니다.`);
+    if (!workOrdersMatchOrder(order.status, active)) issues.push(`${tag}: 작업지시 구성이 수주 상태와 맞지 않습니다.`);
+    const workQty = active.reduce((sum, item) => sum + item.quantity, 0);
+    if (order.status !== "WAITING" && order.status !== "CANCELLED" && workQty !== order.coveredQuantity) {
+      issues.push(`${tag}: 작업지시 수량 합(${workQty})이 작업 수량(${order.coveredQuantity})과 다릅니다.`);
+    }
+    const completedQty = active.filter((item) => item.status === "COMPLETED").reduce((sum, item) => sum + item.quantity, 0);
+    if (order.producedQuantity !== completedQty) issues.push(`${tag}: 실적이 완료된 작업지시 수량과 다릅니다.`);
+    active.forEach((item) => {
+      if (item.plannedStartDate < order.plannedStartDate || item.plannedEndDate > order.plannedEndDate) {
+        issues.push(`${tag}: 작업지시 일정이 수주 예정 구간을 벗어납니다.`);
+      }
+    });
 
     const last = db.histories.filter((item) => item.entity === "ORDER" && item.entityId === order.id).sort((a, b) => b.at.localeCompare(a.at))[0];
     if (last && last.toStatus !== order.status) issues.push(`${tag}: 마지막 상태 이력이 현재 상태와 다릅니다.`);
@@ -103,7 +107,15 @@ export function integrityIssues(db: Database): string[] {
     const open = workOrder.status === "READY" || workOrder.status === "IN_PRODUCTION" || workOrder.status === "PAUSED";
     if (open && workOrder.assigneeId && !activeManagers.has(workOrder.assigneeId)) issues.push(`${tag}: 진행 중인 작업의 담당자 계정이 활성 상태가 아닙니다.`);
     if (workOrder.lineId && !lineIds.has(workOrder.lineId)) issues.push(`${tag}: 없는 라인을 참조합니다.`);
-    if (workOrder.status === "READY" && (workOrder.lineId || workOrder.startedAt)) issues.push(`${tag}: 시작 전인데 라인이나 시작 시각이 있습니다.`);
+    const allocated = (workOrder.allocations ?? []).reduce((sum, slot) => sum + slot.quantity, 0);
+    if (workOrder.status !== "CANCELLED" && allocated !== workOrder.quantity) {
+      issues.push(`${tag}: 일자별 수량 합(${allocated})이 지시 수량(${workOrder.quantity})과 다릅니다.`);
+    }
+    const dates = (workOrder.allocations ?? []).map((slot) => slot.date).sort();
+    if (dates.length > 0 && (dates[0] !== workOrder.plannedStartDate || dates.at(-1) !== workOrder.plannedEndDate)) {
+      issues.push(`${tag}: 작업지시 예정일이 일자별 수량과 다릅니다.`);
+    }
+    if (workOrder.status === "READY" && workOrder.startedAt) issues.push(`${tag}: 시작 전인데 시작 시각이 있습니다.`);
     if (workOrder.status !== "READY" && workOrder.status !== "CANCELLED" && (!workOrder.lineId || !workOrder.startedAt)) issues.push(`${tag}: 생산 라인이나 시작 시각이 없습니다.`);
     if ((workOrder.status === "COMPLETED") !== Boolean(workOrder.completedAt)) issues.push(`${tag}: 완료 시각과 상태가 맞지 않습니다.`);
     if ((workOrder.status === "IN_PRODUCTION" || workOrder.status === "PAUSED") && workOrder.lineId) holders.set(workOrder.lineId, (holders.get(workOrder.lineId) ?? 0) + 1);

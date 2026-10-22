@@ -6,7 +6,7 @@ import { localDateTime, todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, registrationLabel, registrationTone, workOrderStatusLabel } from "@/lib/labels.ts";
 import type { OrderStatus } from "@/types/domain.ts";
-import { activeWorkOrder, delayOf, delayTone } from "@/lib/delay.ts";
+import { delayOf, delayTone, workOrdersOf } from "@/lib/delay.ts";
 import { depositTarget, formatWon, orderQuantity, orderTotal } from "@/lib/money.ts";
 import { DueDateError, cancelOrder, completeDelivery, completePacking, recordPayment, shipOrder, updateOrderPrices, updateOrderQuantities, updateShippingAddress } from "@/lib/workflow.ts";
 import { canManageOrders, canProduce, useAuthStore } from "@/stores/useAuthStore.ts";
@@ -30,10 +30,9 @@ export function OrderDetailPage() {
   if (!order || !user) return <p>수주를 찾을 수 없습니다.</p>;
 
   const client = db.clients.find((item) => item.id === order.clientId);
-  const workOrder = activeWorkOrder(db.workOrders, order.id);
-  const assignee = workOrder ? db.users.find((item) => item.id === workOrder.assigneeId) : undefined;
+  const workOrders = workOrdersOf(db.workOrders, order.id);
   const orderHistory = db.histories.filter((item) => item.entity === "ORDER" && item.entityId === order.id);
-  const delay = delayOf(order, workOrder, todayISO());
+  const delay = delayOf(order, workOrders.find((item) => item.status === "READY" && !item.assigneeId) ?? workOrders[0], todayISO());
   const total = orderTotal(order.lines);
   const qtyMap = Object.fromEntries(order.lines.map((line) => [line.id, quantities[line.id] ?? line.quantity]));
   const priceMap = Object.fromEntries(order.lines.map((line) => [line.id, prices[line.id] ?? line.unitPrice]));
@@ -119,14 +118,22 @@ export function OrderDetailPage() {
       ) : null}
       <Card>
         <h2 className="mb-3 font-semibold">작업지시</h2>
-        {workOrder ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-            <p>
-              {workOrderStatusLabel[workOrder.status]}
-              <span className="text-muted"> · 담당 {assignee?.name ?? "미배정"}</span>
-            </p>
-            <Link className="font-semibold text-primary" to={`/work-orders/${workOrder.id}`}>작업 이력 보기</Link>
-          </div>
+        {workOrders.length > 0 ? (
+          <ul className="space-y-2 text-sm">
+            {workOrders.map((item) => {
+              const assignee = db.users.find((user) => user.id === item.assigneeId);
+              const line = db.lines.find((line) => line.id === item.lineId);
+              return (
+                <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2 first:border-0 first:pt-0">
+                  <p>
+                    {workOrderStatusLabel[item.status]}
+                    <span className="text-muted"> · {item.quantity.toLocaleString("ko-KR")}개 · {line?.name ?? "라인 미정"} · 담당 {assignee?.name ?? "미배정"}</span>
+                  </p>
+                  <Link className="font-semibold text-primary" to={`/work-orders/${item.id}`}>작업 이력 보기</Link>
+                </li>
+              );
+            })}
+          </ul>
         ) : (
           <p className="text-sm text-muted">작업지시서는 선금 확인 후 생성됩니다.</p>
         )}
@@ -167,13 +174,20 @@ export function OrderDetailPage() {
         <p>납기 {order.dueDate}</p>
         {delay ? <p className={`rounded-lg px-3 py-2 text-sm font-semibold ${delayTone(delay.level)}`}>{delay.level === "late" ? "지연" : "주의"} · {delay.reason}</p> : null}
         <p>작업지시 수량 {order.coveredQuantity.toLocaleString("ko-KR")} / {orderQuantity(order.lines).toLocaleString("ko-KR")}개</p>
-        {workOrder ? (
-          <p>
-            작업지시 {workOrderStatusLabel[workOrder.status]}
-            <span className="text-muted"> · {assignee?.name ?? "미배정"}</span>
-            {" · "}
-            <Link className="font-semibold text-primary" to={`/work-orders/${workOrder.id}`}>상세</Link>
-          </p>
+        {workOrders.length > 0 ? (
+          <ul className="space-y-1 text-sm">
+            {workOrders.map((item) => {
+              const assignee = db.users.find((user) => user.id === item.assigneeId);
+              return (
+                <li key={item.id}>
+                  작업지시 {workOrderStatusLabel[item.status]}
+                  <span className="text-muted"> · {item.quantity.toLocaleString("ko-KR")}개 · {assignee?.name ?? "미배정"}</span>
+                  {" · "}
+                  <Link className="font-semibold text-primary" to={`/work-orders/${item.id}`}>상세</Link>
+                </li>
+              );
+            })}
+          </ul>
         ) : (
           <p className="text-muted">작업지시서는 선금 확인 후 생성됩니다.</p>
         )}

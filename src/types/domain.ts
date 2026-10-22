@@ -106,6 +106,7 @@ export interface WorkOrder {
   assigneeId: string | null;
   lineId: string | null;
   quantity: number;
+  allocations: DayAllocation[];
   issuedAt: string;
   plannedStartDate: string;
   plannedEndDate: string;

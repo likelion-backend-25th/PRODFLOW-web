@@ -30,6 +30,17 @@ export function delayTone(level: DelaySignal["level"]): string {
   return level === "late" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800";
 }
 
+export function workOrdersOf(workOrders: WorkOrder[], orderId: string): WorkOrder[] {
+  return workOrders.filter((item) => item.orderId === orderId && item.status !== "CANCELLED");
+}
+
 export function activeWorkOrder(workOrders: WorkOrder[], orderId: string): WorkOrder | undefined {
-  return workOrders.find((item) => item.orderId === orderId && item.status !== "CANCELLED");
+  const list = workOrdersOf(workOrders, orderId);
+  return (
+    list.find((item) => item.status === "IN_PRODUCTION") ??
+    list.find((item) => item.status === "PAUSED") ??
+    list.find((item) => item.status === "READY" && !item.assigneeId) ??
+    list.find((item) => item.status === "READY") ??
+    list[0]
+  );
 }
