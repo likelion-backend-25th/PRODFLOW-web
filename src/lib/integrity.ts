@@ -1,5 +1,5 @@
 import { depositTarget, orderQuantity, orderTotal, paymentStatusOf, productKey } from "@/lib/money.ts";
-import { addWorkingDays, factoryCapacity, isWorkingDay } from "@/lib/schedule.ts";
+import { addWorkingDays, factoryCapacity, isWorkingDay, occupiesFactory } from "@/lib/schedule.ts";
 import type { Database, OrderStatus, WorkOrderStatus } from "@/types/domain.ts";
 
 const producedAll: OrderStatus[] = ["PACKING", "PACKED", "SHIPPING", "COMPLETED"];
@@ -69,11 +69,13 @@ export function integrityIssues(db: Database): string[] {
       if (allocated !== quantity) issues.push(`${tag}: 일정 배분 수량(${allocated})이 수주 수량(${quantity})과 다릅니다.`);
       order.allocations.forEach((slot) => {
         if (!isWorkingDay(slot.date, holidays)) issues.push(`${tag}: 휴무일 ${slot.date}에 생산이 잡혀 있습니다.`);
-        daily.set(slot.date, (daily.get(slot.date) ?? 0) + slot.quantity);
+        if (occupiesFactory(order.status)) daily.set(slot.date, (daily.get(slot.date) ?? 0) + slot.quantity);
       });
       const dates = order.allocations.map((slot) => slot.date).sort();
       if (dates[0] !== order.plannedStartDate || dates.at(-1) !== order.plannedEndDate) issues.push(`${tag}: 생산 예정일이 일정 배분과 다릅니다.`);
-      if (order.dueDate < addWorkingDays(order.plannedEndDate, 2, holidays)) issues.push(`${tag}: 납기가 생산 종료 후 2영업일보다 빠릅니다.`);
+      if (order.status !== "WAITING" && order.dueDate < addWorkingDays(order.plannedEndDate, 2, holidays)) {
+        issues.push(`${tag}: 납기가 생산 종료 후 2영업일보다 빠릅니다.`);
+      }
     }
 
     const active = db.workOrders.filter((item) => item.orderId === order.id && item.status !== "CANCELLED");

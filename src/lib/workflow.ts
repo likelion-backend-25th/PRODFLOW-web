@@ -1,7 +1,7 @@
 import { readDb, updateDb } from "@/lib/db.ts";
 import { nowStamp, todayISO } from "@/lib/dates.ts";
 import { depositTarget, digitsOnly, orderQuantity, orderTotal, paymentStatusOf, productKey } from "@/lib/money.ts";
-import { scheduleQuantity, splitQuantityByLines } from "@/lib/schedule.ts";
+import { capacityUntil, mergeAllocations, packJobs, splitQuantityByLines, type OccupyingOrder, type PackJob, type ScheduleResult } from "@/lib/schedule.ts";
 import type { Database, LineStatus, NotifyChannel, Order, OrderLine, OrderStatus, Role, User, WorkOrder } from "@/types/domain.ts";
 
 export class DueDateError extends Error {
@@ -65,18 +65,98 @@ function refreshPayment(order: Order): void {
   order.paymentStatus = paymentStatusOf(order.paidAmount, orderTotal(order.lines));
 }
 
-function applySchedule(order: Order, db: Database, fromDate: string, requestedDueDate: string, acceptLaterDue: boolean, actor: Actor): void {
+function byCreated(left: Order, right: Order): number {
+  return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+}
+
+function lockedWorkOrders(db: Database, orderId: string): WorkOrder[] {
+  return orderWorkOrders(db, orderId).filter((item) => item.status !== "READY");
+}
+
+function lockedAllocations(db: Database, orderId: string): ReturnType<typeof mergeAllocations> {
+  return mergeAllocations(lockedWorkOrders(db, orderId).flatMap((item) => item.allocations ?? []));
+}
+
+function lockedQuantity(db: Database, orderId: string): number {
+  return lockedWorkOrders(db, orderId).reduce((sum, item) => sum + item.quantity, 0);
+}
+
+function applyPacked(order: Order, packed: ScheduleResult | undefined, locked: ReturnType<typeof mergeAllocations>): void {
+  const allocations = mergeAllocations([...(locked ?? []), ...(packed?.allocations ?? [])]);
+  order.allocations = allocations;
+  order.plannedStartDate = allocations[0]?.date ?? order.plannedStartDate;
+  order.plannedEndDate = allocations.at(-1)?.date ?? order.plannedEndDate;
+}
+
+function floorOccupying(db: Database): OccupyingOrder[] {
+  return db.orders
+    .filter((order) => order.status === "IN_PRODUCTION" || order.status === "ON_HOLD")
+    .map((order) => ({
+      id: `${order.id}-locked`,
+      status: order.status,
+      allocations: lockedAllocations(db, order.id),
+    }));
+}
+
+function queueJobs(db: Database, ignoreOrderId?: string, overrideQuantity?: number): PackJob[] {
+  const qtyOf = (order: Order) => {
+    if (ignoreOrderId && order.id === ignoreOrderId) {
+      if (order.status === "IN_PRODUCTION" || order.status === "ON_HOLD") return Math.max(0, (overrideQuantity ?? 0) - lockedQuantity(db, order.id));
+      return overrideQuantity ?? 0;
+    }
+    if (order.status === "IN_PRODUCTION" || order.status === "ON_HOLD") return Math.max(0, order.coveredQuantity - lockedQuantity(db, order.id));
+    return orderQuantity(order.lines);
+  };
+  return [
+    ...db.orders.filter((order) => order.status === "IN_PRODUCTION" || order.status === "ON_HOLD").sort(byCreated),
+    ...db.orders.filter((order) => order.status === "WAITING" || order.status === "CONFIRMED").sort(byCreated),
+  ].map((order) => ({ id: order.id, quantity: qtyOf(order) }));
+}
+
+function rescheduleFactory(db: Database, actor: Actor, focus?: { orderId: string; requestedDueDate: string; acceptLaterDue: boolean }): void {
   const holidays = db.holidays.map((holiday) => holiday.date);
-  const schedule = scheduleQuantity(orderQuantity(order.lines), fromDate, db.lines, holidays, db.orders, order.id);
-  if (requestedDueDate < schedule.earliestDueDate && !acceptLaterDue) {
-    throw new DueDateError(schedule.earliestDueDate);
+  const fromDate = todayISO();
+  const occupying = floorOccupying(db);
+
+  const floor = db.orders
+    .filter((order) => order.status === "IN_PRODUCTION" || order.status === "ON_HOLD")
+    .sort(byCreated)
+    .map((order) => ({ order, quantity: Math.max(0, order.coveredQuantity - lockedQuantity(db, order.id)), locked: lockedAllocations(db, order.id) }));
+  const queued = db.orders
+    .filter((order) => order.status === "WAITING" || order.status === "CONFIRMED")
+    .sort(byCreated)
+    .map((order) => ({ order, quantity: orderQuantity(order.lines), locked: [] as ReturnType<typeof mergeAllocations> }));
+  const jobs = [...floor, ...queued];
+  const packed = packJobs(
+    jobs.map((job) => ({ id: job.order.id, quantity: job.quantity })),
+    fromDate,
+    db.lines,
+    holidays,
+    occupying,
+  );
+
+  if (focus) {
+    const result = packed.get(focus.orderId);
+    if (result && focus.requestedDueDate < result.earliestDueDate && !focus.acceptLaterDue) {
+      throw new DueDateError(result.earliestDueDate);
+    }
   }
-  order.plannedStartDate = schedule.plannedStartDate;
-  order.plannedEndDate = schedule.plannedEndDate;
-  order.allocations = schedule.allocations;
-  order.requestedDueDate = acceptLaterDue ? schedule.earliestDueDate : requestedDueDate;
-  order.dueDate = order.requestedDueDate;
-  if (order.coveredQuantity > 0) rebuildReadyWorkOrders(db, order, actor);
+
+  const pendingReady = new Set(jobs.filter((job) => job.order.coveredQuantity > 0).map((job) => job.order.id));
+  for (const job of jobs) {
+    applyPacked(job.order, packed.get(job.order.id), job.locked);
+    if (focus && job.order.id === focus.orderId) {
+      const result = packed.get(job.order.id);
+      const earliest = result?.earliestDueDate ?? job.order.dueDate;
+      job.order.requestedDueDate = focus.acceptLaterDue ? earliest : focus.requestedDueDate;
+      job.order.dueDate = job.order.requestedDueDate;
+    }
+    if (job.order.coveredQuantity > 0) {
+      rebuildReadyWorkOrders(db, job.order, actor, pendingReady);
+      pendingReady.delete(job.order.id);
+    }
+  }
+  assignOne(db);
 }
 
 function orderWorkOrders(db: Database, orderId: string): WorkOrder[] {
@@ -129,13 +209,20 @@ function assignOne(db: Database): void {
   }
 }
 
-function occupyingWorkOrders(db: Database, orderId: string): WorkOrder[] {
-  return db.workOrders.filter(
-    (item) => item.status !== "CANCELLED" && item.lineId && !(item.orderId === orderId && item.status === "READY"),
-  );
+function occupiesLineCapacity(status: WorkOrder["status"]): boolean {
+  return status === "READY" || status === "IN_PRODUCTION" || status === "PAUSED";
 }
 
-function rebuildReadyWorkOrders(db: Database, order: Order, actor: Actor): void {
+function occupyingWorkOrders(db: Database, orderId: string, pendingReady: Set<string>): WorkOrder[] {
+  return db.workOrders.filter((item) => {
+    if (!item.lineId || !occupiesLineCapacity(item.status)) return false;
+    if (item.orderId === orderId && item.status === "READY") return false;
+    if (item.status === "READY" && pendingReady.has(item.orderId)) return false;
+    return true;
+  });
+}
+
+function rebuildReadyWorkOrders(db: Database, order: Order, actor: Actor, pendingReady: Set<string>): void {
   if (order.coveredQuantity <= 0) return;
   const locked = orderWorkOrders(db, order.id).filter((item) => item.status !== "READY");
   const lockedQty = locked.reduce((sum, item) => sum + item.quantity, 0);
@@ -151,7 +238,7 @@ function rebuildReadyWorkOrders(db: Database, order: Order, actor: Actor): void 
     readyQty,
     db.lines,
     holidays,
-    occupyingWorkOrders(db, order.id),
+    occupyingWorkOrders(db, order.id, pendingReady),
     locked,
   );
   const issuedAt = nowStamp();
@@ -175,12 +262,10 @@ function rebuildReadyWorkOrders(db: Database, order: Order, actor: Actor): void 
   }
 }
 
-function syncCoveredQuantity(db: Database, order: Order, actor: Actor): void {
+function syncCoveredQuantity(order: Order): void {
   const totalQty = orderQuantity(order.lines);
-  const previous = order.coveredQuantity;
   const covered = order.paidAmount >= depositTarget(orderTotal(order.lines)) ? totalQty : order.coveredQuantity;
   order.coveredQuantity = Math.min(covered, totalQty);
-  if (order.coveredQuantity > 0 && order.coveredQuantity !== previous) rebuildReadyWorkOrders(db, order, actor);
 }
 
 function lineCandidates(db: Database): string[] {
@@ -193,14 +278,29 @@ function lineCandidates(db: Database): string[] {
 export function previewSchedule(quantity: number, ignoreOrderId?: string): { earliestDueDate: string; plannedStartDate: string; plannedEndDate: string } {
   const db = readDb();
   const holidays = db.holidays.map((holiday) => holiday.date);
-  const fromDate = ignoreOrderId ? scheduleFrom(db, ignoreOrderId) : todayISO();
-  return scheduleQuantity(quantity, fromDate, db.lines, holidays, db.orders, ignoreOrderId);
+  const jobs = queueJobs(db, ignoreOrderId, quantity);
+  if (!ignoreOrderId) jobs.push({ id: "preview-new", quantity });
+  const packed = packJobs(jobs, todayISO(), db.lines, holidays, floorOccupying(db));
+  const result = packed.get(ignoreOrderId ?? "preview-new");
+  if (!result) throw new Error("가용 생산량 안에서 완료 예정일을 계산하지 못했습니다.");
+  return result;
 }
 
-function scheduleFrom(db: Database, orderId: string): string {
-  const order = db.orders.find((item) => item.id === orderId);
-  if (!order) return todayISO();
-  return order.plannedStartDate > todayISO() ? order.plannedStartDate : todayISO();
+export function previewCapacity(dueDate: string, ignoreOrderId?: string): { total: number; available: number; lastProductionDate: string | null } {
+  const db = readDb();
+  const holidays = db.holidays.map((holiday) => holiday.date);
+  const occupying = floorOccupying(db);
+  const jobs = queueJobs(db, ignoreOrderId);
+  const packed = packJobs(jobs, todayISO(), db.lines, holidays, occupying);
+  const placed: OccupyingOrder[] = [
+    ...occupying,
+    ...jobs.map((job) => ({
+      id: job.id,
+      status: "CONFIRMED" as const,
+      allocations: packed.get(job.id)?.allocations ?? [],
+    })),
+  ];
+  return capacityUntil(dueDate, todayISO(), db.lines, holidays, placed);
 }
 
 export function createOrder(input: {
@@ -245,7 +345,7 @@ export function createOrder(input: {
       completedAt: null,
     };
     db.orders.unshift(order);
-    applySchedule(order, db, todayISO(), input.requestedDueDate, false, input.actor);
+    rescheduleFactory(db, input.actor, { orderId: order.id, requestedDueDate: input.requestedDueDate, acceptLaterDue: false });
     pushHistory(db, "ORDER", order.id, "NONE", "WAITING", input.actor);
     createdId = order.id;
   });
@@ -267,7 +367,9 @@ export function recordPayment(orderId: string, amount: number, actor: Actor): vo
     if (wasWaiting && order.paidAmount >= depositTarget(total)) {
       setOrderStatus(db, order, "CONFIRMED", actor, `${note} · 선금 확인`);
     }
-    syncCoveredQuantity(db, order, actor);
+    const previousCovered = order.coveredQuantity;
+    syncCoveredQuantity(order);
+    if ((wasWaiting && order.status === "CONFIRMED") || order.coveredQuantity !== previousCovered) rescheduleFactory(db, actor);
     assignOne(db);
   });
 }
@@ -311,10 +413,9 @@ export function updateOrderQuantities(orderId: string, quantities: Record<string
     });
     if (changes.length === 0) throw new Error("바뀐 수량이 없습니다.");
     const previousDue = order.dueDate;
-    const fromDate = order.plannedStartDate > todayISO() ? order.plannedStartDate : todayISO();
-    applySchedule(order, db, fromDate, order.dueDate, acceptLaterDue, actor);
     refreshPayment(order);
-    syncCoveredQuantity(db, order, actor);
+    syncCoveredQuantity(order);
+    rescheduleFactory(db, actor, { orderId: order.id, requestedDueDate: order.dueDate, acceptLaterDue });
     assignOne(db);
     if (order.dueDate !== previousDue) changes.push(`납기 ${previousDue} → ${order.dueDate}`);
     logOrderChange(db, order, actor, changes.join(", "));
@@ -340,6 +441,7 @@ export function cancelOrder(orderId: string, reason: string, actor: Actor): void
     if (order.status !== "WAITING" || order.paidAmount > 0) throw new Error("입금 전 대기 수주만 취소할 수 있습니다.");
     order.allocations = [];
     setOrderStatus(db, order, "CANCELLED", actor, note);
+    rescheduleFactory(db, actor);
   });
 }
 
@@ -434,6 +536,7 @@ export function completeProduction(workOrderId: string, actor: Actor): void {
     if (line && line.status === "RUNNING") line.status = "AVAILABLE";
     syncOrderFromWorkOrders(db, order, actor);
     pushHistory(db, "WORK_ORDER", workOrder.id, from, "COMPLETED", actor);
+    rescheduleFactory(db, actor);
     assignOne(db);
   });
 }

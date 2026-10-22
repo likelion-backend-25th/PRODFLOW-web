@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { Button, Card, PageHeader } from "@/components/ui.tsx";
 import { useDb } from "@/lib/db.ts";
 import { orderStatusLabel } from "@/lib/labels.ts";
-import { factoryCapacity, isWorkingDay, occupiedOn } from "@/lib/schedule.ts";
+import { factoryCapacity, isWorkingDay, occupiedOn, occupiesFactory } from "@/lib/schedule.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 
 export function CalendarPage() {
@@ -23,7 +23,7 @@ export function CalendarPage() {
     const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     return iso;
   });
-  const selectedOrders = selected ? db.orders.filter((order) => order.allocations.some((slot) => slot.date === selected)) : [];
+  const selectedOrders = selected ? db.orders.filter((order) => occupiesFactory(order.status) && order.allocations.some((slot) => slot.date === selected)) : [];
   const selectedWorking = selected ? isWorkingDay(selected, holidays) : false;
   const selectedCapacity = selectedWorking ? factoryCapacity(db.lines) : 0;
   const selectedUsed = selected ? occupiedOn(selected, db.orders) : 0;
@@ -46,7 +46,7 @@ export function CalendarPage() {
               const working = isWorkingDay(iso, holidays);
               const capacity = working ? factoryCapacity(db.lines) : 0;
               const used = occupiedOn(iso, db.orders);
-              const orders = db.orders.filter((order) => order.allocations.some((slot) => slot.date === iso));
+              const orders = db.orders.filter((order) => occupiesFactory(order.status) && order.allocations.some((slot) => slot.date === iso));
               return (
                 <button key={iso} type="button" className={`min-h-28 bg-white p-2 text-left ${selected === iso ? "ring-2 ring-primary ring-inset" : ""}`} onClick={() => setSelected(iso)}>
                   <p className="font-semibold">{Number(iso.slice(8))}</p>

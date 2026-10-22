@@ -430,9 +430,9 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
               {order ? <Link className="absolute top-1/2 right-3 -translate-y-1/2 text-muted" to={`/orders/${order.id}`} aria-label="수주 상세"><Search size={15} /></Link> : null}
             </span>
           </Field>
-          <Field label="완료예정일"><input className={readOnlyClass} type="date" value={workOrder.plannedEndDate} disabled /></Field>
           <Field label="거래처명"><input className={readOnlyClass} value={client?.companyName ?? ""} disabled /></Field>
-          <Field label="수주순번"><input className={readOnlyClass} value="1" disabled /></Field>
+          <Field label="생산 시작 예정일"><input className={readOnlyClass} type="date" value={workOrder.plannedStartDate} disabled /></Field>
+          <Field label="생산 완료 예정일"><input className={readOnlyClass} type="date" value={workOrder.plannedEndDate} disabled /></Field>
           <Field label="제품명" required>
             <span className="relative block">
               <input className={`${readOnlyClass} pr-10`} value={product ? `${product.productName} ${product.modelName}` : ""} disabled />

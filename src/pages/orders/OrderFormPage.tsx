@@ -10,8 +10,7 @@ import { cn } from "@/lib/cn.ts";
 import { todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount } from "@/lib/money.ts";
-import { capacityUntil } from "@/lib/schedule.ts";
-import { DueDateError, createOrder, previewSchedule } from "@/lib/workflow.ts";
+import { DueDateError, createOrder, previewCapacity, previewSchedule } from "@/lib/workflow.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { Database, NotifyChannel } from "@/types/domain.ts";
@@ -150,10 +149,17 @@ export function OrderFormPage() {
       return reason instanceof Error ? reason.message : null;
     }
   }, [quantity, db]);
-  const capacity = values.requestedDueDate ? capacityUntil(values.requestedDueDate, todayISO(), db.lines, db.holidays.map((holiday) => holiday.date), db.orders) : null;
+  const capacity = values.requestedDueDate ? previewCapacity(values.requestedDueDate) : null;
   const schedule = preview && typeof preview !== "string" ? preview : null;
   const earliest = schedule?.earliestDueDate ?? null;
-  const feasible = Boolean(earliest && values.requestedDueDate && values.requestedDueDate >= earliest);
+  const feasible = Boolean(
+    quantity > 0
+    && values.requestedDueDate
+    && capacity
+    && capacity.available >= quantity
+    && earliest
+    && values.requestedDueDate >= earliest,
+  );
 
   const steps = [
     { label: "클라이언트 정보", done: Boolean(client), target: "order-client" },

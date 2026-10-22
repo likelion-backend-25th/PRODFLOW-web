@@ -22,13 +22,59 @@ export function factoryCapacity(lines: Line[]): number {
     .reduce((sum, line) => sum + line.dailyCapacity, 0);
 }
 
-export function occupiedOn(iso: string, orders: Order[], ignoreOrderId?: string): number {
+const occupyingStatus: Order["status"][] = ["WAITING", "CONFIRMED", "IN_PRODUCTION", "ON_HOLD"];
+
+export type OccupyingOrder = Pick<Order, "id" | "status" | "allocations">;
+
+export function occupiesFactory(status: Order["status"]): boolean {
+  return occupyingStatus.includes(status);
+}
+
+export function occupiedOn(iso: string, orders: OccupyingOrder[], ignoreOrderId?: string): number {
   return orders
-    .filter((order) => order.id !== ignoreOrderId && order.status !== "CANCELLED")
+    .filter((order) => order.id !== ignoreOrderId && occupiesFactory(order.status))
     .reduce((sum, order) => {
       const slot = order.allocations.find((item) => item.date === iso);
       return sum + (slot?.quantity ?? 0);
     }, 0);
+}
+
+export function mergeAllocations(slots: DayAllocation[]): DayAllocation[] {
+  const daily = new Map<string, number>();
+  slots.forEach((slot) => {
+    if (slot.quantity <= 0) return;
+    daily.set(slot.date, (daily.get(slot.date) ?? 0) + slot.quantity);
+  });
+  return [...daily.entries()]
+    .sort((left, right) => left[0].localeCompare(right[0]))
+    .map(([date, quantity]) => ({ date, quantity }));
+}
+
+export interface PackJob {
+  id: string;
+  quantity: number;
+}
+
+export function packJobs(
+  jobs: PackJob[],
+  fromDate: string,
+  lines: Line[],
+  holidays: string[],
+  occupying: OccupyingOrder[],
+): Map<string, ScheduleResult> {
+  const placed: OccupyingOrder[] = occupying.map((order) => ({
+    id: order.id,
+    status: order.status,
+    allocations: order.allocations.map((slot) => ({ ...slot })),
+  }));
+  const results = new Map<string, ScheduleResult>();
+  for (const job of jobs) {
+    if (job.quantity <= 0) continue;
+    const result = scheduleQuantity(job.quantity, fromDate, lines, holidays, placed, job.id);
+    results.set(job.id, result);
+    placed.push({ id: job.id, status: "CONFIRMED", allocations: result.allocations });
+  }
+  return results;
 }
 
 export function addWorkingDays(iso: string, count: number, holidays: string[]): string {
@@ -48,7 +94,7 @@ export function capacityUntil(
   fromDate: string,
   lines: Line[],
   holidays: string[],
-  orders: Order[],
+  orders: OccupyingOrder[],
 ): { total: number; available: number; lastProductionDate: string | null } {
   const daily = factoryCapacity(lines);
   let total = 0;
@@ -68,7 +114,7 @@ export function scheduleQuantity(
   fromDate: string,
   lines: Line[],
   holidays: string[],
-  orders: Order[],
+  orders: OccupyingOrder[],
   ignoreOrderId?: string,
 ): ScheduleResult {
   if (quantity <= 0) throw new Error("수량은 1개 이상이어야 합니다.");
