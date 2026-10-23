@@ -40,10 +40,13 @@ export interface Client {
   companyName: string;
   representative: string;
   address: string;
+  postalCode: string;
+  addressDetail: string;
   phone: string;
   contactName: string;
   contactMobile: string;
   taxEmail: string;
+  createdAt: string;
 }
 
 export interface Product {

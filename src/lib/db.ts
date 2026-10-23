@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { sampleAddresses } from "@/lib/addresses.ts";
 import { addDays, todayISO } from "@/lib/dates.ts";
 import { integrityIssues } from "@/lib/integrity.ts";
 import { depositTarget, orderQuantity, orderTotal, paymentStatusOf } from "@/lib/money.ts";
@@ -107,10 +108,13 @@ function seed(): Database {
       companyName: "케이스온",
       representative: "케이스온 대표",
       address: "서울특별시 금천구 가산디지털1로 168",
+      postalCode: "08507",
+      addressDetail: "",
       phone: "02-1234-1000",
       contactName: "케이스온 담당",
       contactMobile: "010-1111-1000",
       taxEmail: "tax@caseon.example",
+      createdAt: stamp(day(-120), "09:00"),
     },
     {
       id: "client-2",
@@ -118,10 +122,13 @@ function seed(): Database {
       companyName: "모빌쉘",
       representative: "모빌쉘 대표",
       address: "경기도 화성시 동탄기흥로 560",
+      postalCode: "18478",
+      addressDetail: "",
       phone: "031-222-2000",
       contactName: "모빌쉘 담당",
       contactMobile: "010-2222-2000",
       taxEmail: "tax@mobileshell.example",
+      createdAt: stamp(day(-60), "09:00"),
     },
     {
       id: "client-3",
@@ -129,10 +136,13 @@ function seed(): Database {
       companyName: "한빛모바일",
       representative: "한빛모바일 대표",
       address: "인천광역시 서구 북항로 32",
+      postalCode: "22853",
+      addressDetail: "",
       phone: "032-333-3000",
       contactName: "한빛모바일 담당",
       contactMobile: "010-3333-3000",
       taxEmail: "tax@hanbit.example",
+      createdAt: stamp(day(-45), "09:00"),
     },
   ];
 
@@ -462,6 +472,22 @@ function repair(db: Database): boolean {
   db.clients.forEach((client) => {
     if (client.id) return;
     client.id = crypto.randomUUID();
+    changed = true;
+  });
+  db.clients.forEach((client) => {
+    if (client.addressDetail !== undefined) return;
+    client.addressDetail = "";
+    changed = true;
+  });
+  db.clients.forEach((client) => {
+    if (client.postalCode !== undefined) return;
+    client.postalCode = sampleAddresses.find((item) => item.road === client.address)?.zonecode ?? "";
+    changed = true;
+  });
+  db.clients.forEach((client) => {
+    if (client.createdAt) return;
+    const firstOrder = db.orders.filter((order) => order.clientId === client.id).map((order) => order.createdAt).sort()[0];
+    client.createdAt = firstOrder ?? new Date().toISOString();
     changed = true;
   });
   db.workOrders.forEach((workOrder) => {

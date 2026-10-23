@@ -614,12 +614,18 @@ export function availableLineIds(): string[] {
   return lineCandidates(readDb());
 }
 
+export function clientFullAddress(client: { postalCode: string; address: string; addressDetail: string }): string {
+  return [client.postalCode, client.address, client.addressDetail].map((part) => part.trim()).filter(Boolean).join(" ");
+}
+
 export function saveClient(input: {
   id?: string;
   businessNumber: string;
   companyName: string;
   representative: string;
   address: string;
+  postalCode: string;
+  addressDetail: string;
   phone: string;
   contactName: string;
   contactMobile: string;
@@ -636,7 +642,7 @@ export function saveClient(input: {
       Object.assign(client, { ...input, businessNumber });
       return;
     }
-    db.clients.unshift({ ...input, id: crypto.randomUUID(), businessNumber });
+    db.clients.unshift({ ...input, id: crypto.randomUUID(), businessNumber, createdAt: new Date().toISOString() });
   });
 }
 
