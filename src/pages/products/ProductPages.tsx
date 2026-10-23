@@ -409,7 +409,6 @@ export function ProductDetailPage() {
               <h2 className="font-semibold">관련 생산 및 수주 이력</h2>
               <p className="mt-1 text-sm text-muted">이 품목에 포함된 최근 수주 {recentRows.length}건 · 수량과 품목 금액은 {product.productName} 기준</p>
             </div>
-            <Link to="/calendar" className="inline-flex items-center text-sm text-primary">생산 캘린더 <ChevronRight size={16} /></Link>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
