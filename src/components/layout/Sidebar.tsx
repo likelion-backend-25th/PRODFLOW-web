@@ -31,7 +31,7 @@ export function Sidebar() {
         <Item to="/orders" icon={ClipboardList} label="수주 및 생산기록" badge={orders} active={location.pathname.startsWith("/work-orders") || location.pathname.startsWith("/shipping")} />
         <Item to="/work-orders" icon={Factory} label="작업지시 관리" nested />
         <Item to="/shipping" icon={Factory} label="배송 관리" nested badge={shipping} />
-        <Item to="/clients" icon={Building2} label="클라이언트 관리" />
+        <Item to="/clients" icon={Building2} label="거래처 관리" />
         <Item to="/products" icon={Box} label="생산품목 관리" />
         <Item to="/lines" icon={Factory} label="생산라인" />
         {user?.role === "SUPER_ADMIN" ? <Item to="/admin" icon={UsersRound} label="계정 관리" /> : null}
@@ -100,7 +100,7 @@ export function crumbs(pathname: string): string[] {
   if (pathname.startsWith("/work-orders")) return ["워크스페이스", "수주 및 생산기록", "작업지시 관리"];
   if (pathname.startsWith("/shipping")) return ["워크스페이스", "수주 및 생산기록", "배송 관리"];
   if (pathname.startsWith("/orders")) return ["워크스페이스", "수주 및 생산기록"];
-  if (pathname.startsWith("/clients")) return ["워크스페이스", "클라이언트 관리"];
+  if (pathname.startsWith("/clients")) return ["워크스페이스", "거래처 관리"];
   if (pathname === "/products/new") return ["워크스페이스", "생산품목 관리", "생산품목 등록"];
   if (pathname.endsWith("/edit") && pathname.startsWith("/products/")) return ["워크스페이스", "생산품목 관리", "생산품목 수정"];
   if (/^\/products\/[^/]+$/.test(pathname)) return ["워크스페이스", "생산품목 관리", "생산품목 상세"];
