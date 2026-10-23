@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { Link } from "react-router";
+import { ScheduleDrawer } from "@/components/ScheduleDrawer.tsx";
 import { Badge } from "@/components/ui.tsx";
 import { useDb } from "@/lib/db.ts";
 import { localDate, todayISO } from "@/lib/dates.ts";
@@ -6,12 +8,14 @@ import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } fr
 import { formatWon, orderQuantity, orderTotal } from "@/lib/money.ts";
 import { activeWorkOrder, delayOf, delayTone, type DelaySignal } from "@/lib/delay.ts";
 import { orderItemsText } from "@/lib/orderText.ts";
+import { factoryCapacity, isWorkingDay, occupiedOn } from "@/lib/schedule.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import type { Order } from "@/types/domain.ts";
 
 export function DashboardPage() {
   const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const today = todayISO();
   const month = today.slice(0, 7);
   const active = db.orders.filter((order) => order.status !== "CANCELLED");
@@ -46,6 +50,9 @@ export function DashboardPage() {
     return { ...share, start, end: start + (share.qty / mixTotal) * 100 };
   });
   const days = weekdays(today);
+  const holidays = db.holidays.map((holiday) => holiday.date);
+  const capacity = factoryCapacity(db.lines);
+  const detailOrder = detailId ? db.orders.find((order) => order.id === detailId) : undefined;
 
   return (
     <div>
@@ -113,18 +120,24 @@ export function DashboardPage() {
         <div className="grid gap-3 md:grid-cols-5">
           {days.map((iso) => {
             const jobs = active.filter((order) => order.allocations.some((slot) => slot.date === iso));
+            const working = isWorkingDay(iso, holidays);
+            const left = Math.max(0, capacity - occupiedOn(iso, db.orders));
             return (
               <div key={iso} className="rounded-xl bg-canvas p-3">
                 <p className="text-sm font-semibold">{weekdayLabel(iso)} {Number(iso.slice(8))} {iso === today ? "오늘" : ""}</p>
-                <p className="text-xs text-muted">{jobs.length}건</p>
+                <p className="text-xs text-muted">
+                  {jobs.length}건 · {working ? <span className={left === 0 ? "font-semibold text-warning" : "font-semibold text-primary"}>가용 생산량 {left.toLocaleString("ko-KR")}개</span> : "휴무"}
+                </p>
                 <ul className="mt-2 space-y-2">
                   {jobs.slice(0, 2).map((order) => {
                     const client = db.clients.find((item) => item.id === order.clientId);
                     return (
                       <li key={order.id}>
-                        <Link to={`/orders/${order.id}`} className="font-semibold text-primary">{client?.companyName}</Link>
-                        <p className="truncate text-xs text-muted">{orderItemsText(db.products, order.lines)}</p>
-                        <Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge>
+                        <button type="button" className="w-full rounded-lg bg-white p-2 text-left hover:ring-1 hover:ring-primary" onClick={() => setDetailId(order.id)}>
+                          <span className="block font-semibold text-primary">{client?.companyName}</span>
+                          <span className="block truncate text-xs text-muted">{orderItemsText(db.products, order.lines)}</span>
+                          <Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge>
+                        </button>
                       </li>
                     );
                   })}
@@ -173,6 +186,17 @@ export function DashboardPage() {
           </table>
         </div>
       </section>
+      {detailOrder ? (
+        <ScheduleDrawer
+          order={detailOrder}
+          clients={db.clients}
+          products={db.products}
+          users={db.users}
+          workOrders={db.workOrders}
+          today={today}
+          onClose={() => setDetailId(null)}
+        />
+      ) : null}
     </div>
   );
 }
