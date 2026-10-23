@@ -11,6 +11,7 @@ import { LoginPage } from "@/pages/LoginPage.tsx";
 import { OrderDetailPage } from "@/pages/orders/OrderDetailPage.tsx";
 import { OrderFormPage } from "@/pages/orders/OrderFormPage.tsx";
 import { OrderListPage } from "@/pages/orders/OrderListPage.tsx";
+import { OrderSchedulePage } from "@/pages/orders/OrderSchedulePage.tsx";
 import { ProductDetailPage, ProductFormPage, ProductListPage } from "@/pages/products/ProductPages.tsx";
 import { ShippingPage } from "@/pages/ShippingPage.tsx";
 import { WorkOrderDetailPage, WorkOrderListPage } from "@/pages/work-orders/WorkOrderPages.tsx";
@@ -36,6 +37,7 @@ export default function App() {
         <Route element={<RootLayout />}>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/orders" element={<OrderListPage />} />
+          <Route path="/orders/schedule" element={<OrderSchedulePage />} />
           <Route path="/orders/new" element={<OrderWriters><OrderFormPage /></OrderWriters>} />
           <Route path="/orders/:orderId" element={<OrderDetailPage />} />
           <Route path="/work-orders" element={<WorkOrderListPage />} />

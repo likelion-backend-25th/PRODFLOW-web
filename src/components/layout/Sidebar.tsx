@@ -28,8 +28,8 @@ export function Sidebar() {
       <p className="mt-5 px-3 text-[11px] font-semibold tracking-wide text-muted">WORKSPACE</p>
       <nav className="mt-2 flex flex-1 flex-col gap-1">
         <Item to="/" end icon={LayoutGrid} label="대시보드" />
-        <Item to="/orders" icon={ClipboardList} label="수주 및 생산기록" badge={orders} active={location.pathname.startsWith("/work-orders") || location.pathname.startsWith("/shipping") || location.pathname.startsWith("/calendar")} />
-        <Item to="/calendar" icon={Factory} label="수주 일정 관리" nested />
+        <Item to="/orders" icon={ClipboardList} label="수주 및 생산기록" badge={orders} active={location.pathname.startsWith("/work-orders") || location.pathname.startsWith("/shipping") || location.pathname.startsWith("/orders/schedule")} />
+        <Item to="/orders/schedule" icon={Factory} label="수주 일정 관리" nested />
         <Item to="/work-orders" icon={Factory} label="작업지시 관리" nested />
         <Item to="/shipping" icon={Factory} label="배송 관리" nested badge={shipping} />
         <Item to="/clients" icon={Building2} label="거래처 관리" />
@@ -98,6 +98,7 @@ function Item({
 }
 
 export function crumbs(pathname: string): string[] {
+  if (pathname.startsWith("/orders/schedule")) return ["워크스페이스", "수주 및 생산기록", "수주 일정 관리"];
   if (pathname.startsWith("/work-orders")) return ["워크스페이스", "수주 및 생산기록", "작업지시 관리"];
   if (pathname.startsWith("/shipping")) return ["워크스페이스", "수주 및 생산기록", "배송 관리"];
   if (pathname.startsWith("/orders")) return ["워크스페이스", "수주 및 생산기록"];
@@ -109,6 +110,6 @@ export function crumbs(pathname: string): string[] {
   if (pathname.startsWith("/lines")) return ["워크스페이스", "생산라인"];
   if (pathname.startsWith("/admin")) return ["워크스페이스", "계정 관리"];
   if (pathname.startsWith("/assistant")) return ["워크스페이스", "AI 챗봇"];
-  if (pathname.startsWith("/calendar")) return ["워크스페이스", "수주 및 생산기록", "수주 일정 관리"];
+  if (pathname.startsWith("/calendar")) return ["워크스페이스", "대시보드", "생산 캘린더"];
   return ["워크스페이스", "대시보드"];
 }
