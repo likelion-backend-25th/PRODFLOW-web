@@ -10,7 +10,7 @@ import { cn } from "@/lib/cn.ts";
 import { todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount } from "@/lib/money.ts";
-import { DueDateError, createOrder, previewCapacity, previewSchedule } from "@/lib/workflow.ts";
+import { DueDateError, clientFullAddress, createOrder, previewCapacity, previewSchedule } from "@/lib/workflow.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { Database, NotifyChannel } from "@/types/domain.ts";
@@ -61,7 +61,7 @@ function blankValues(db: Database, clientId: string | null): FormValues {
     vatSeparate: true,
     requestedDueDate: "",
     receiverPhone: client?.contactMobile ?? "",
-    shippingAddress: client?.address ?? "",
+    shippingAddress: client ? clientFullAddress(client) : "",
     notifyChannel: "SMS",
     memo: "",
   };
@@ -171,7 +171,7 @@ export function OrderFormPage() {
     const picked = db.clients.find((item) => item.id === id);
     if (!picked) return;
     form.setValue("clientId", picked.id);
-    form.setValue("shippingAddress", picked.address);
+    form.setValue("shippingAddress", clientFullAddress(picked));
     form.setValue("receiverPhone", picked.contactMobile);
     setClientQuery(picked.companyName);
     setClientOpen(false);
@@ -283,7 +283,7 @@ export function OrderFormPage() {
                         <button type="button" className={cn("flex w-full items-center justify-between px-3 py-2 text-left hover:bg-canvas", item.id === values.clientId && "bg-primary-soft")} onMouseDown={(event) => event.preventDefault()} onClick={() => pickClient(item.id)}>
                           <span>
                             <span className="block text-sm font-semibold">{item.companyName}</span>
-                            <span className="block text-xs text-muted">{item.representative} · {item.phone} · {item.address}</span>
+                            <span className="block text-xs text-muted">{item.representative} · {item.phone} · {clientFullAddress(item)}</span>
                           </span>
                           {item.id === values.clientId ? <Check size={16} className="text-primary" /> : null}
                         </button>
@@ -301,7 +301,7 @@ export function OrderFormPage() {
               <ReadField label="대표자명" value={client?.representative} />
               <ReadField label="대표전화" value={client?.phone} />
               <ReadField label="담당자 / 휴대번호" value={client ? `${client.contactName} · ${client.contactMobile}` : undefined} />
-              <div className="sm:col-span-2"><ReadField label="회사 주소" value={client?.address} /></div>
+              <div className="sm:col-span-2"><ReadField label="회사 주소" value={client ? clientFullAddress(client) : undefined} /></div>
               <div className="sm:col-span-2"><ReadField label="세금계산서 이메일" value={client?.taxEmail} /></div>
             </div>
             <p className="mt-3 text-xs text-muted">
@@ -447,9 +447,9 @@ export function OrderFormPage() {
             <div className="mt-3">
               <div className="mb-1 flex items-center justify-end">
                 {client ? (
-                  values.shippingAddress === client.address
+                  values.shippingAddress === clientFullAddress(client)
                     ? <span className="text-xs font-semibold text-success">✓ 클라이언트 주소와 동일</span>
-                    : <button type="button" className="text-xs font-semibold text-primary" onClick={() => form.setValue("shippingAddress", client.address)}>클라이언트 주소로 채우기</button>
+                    : <button type="button" className="text-xs font-semibold text-primary" onClick={() => form.setValue("shippingAddress", clientFullAddress(client))}>클라이언트 주소로 채우기</button>
                 ) : null}
               </div>
               <AddressPicker label="배송지 *" value={values.shippingAddress} onChange={(address) => form.setValue("shippingAddress", address)} />

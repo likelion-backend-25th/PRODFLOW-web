@@ -15,17 +15,17 @@ export function AddressPicker({ label, value, onChange }: { label: string; value
       </div>
       {open ? (
         <ul className="mt-2 rounded-lg border border-line bg-white">
-          {sampleAddresses.map((address) => (
-            <li key={address}>
+          {sampleAddresses.map((item) => (
+            <li key={item.road}>
               <button
                 type="button"
                 className="block w-full px-3 py-2 text-left hover:bg-primary-soft"
                 onClick={() => {
-                  onChange(address);
+                  onChange(item.road);
                   setOpen(false);
                 }}
               >
-                {address}
+                {item.road}
               </button>
             </li>
           ))}
