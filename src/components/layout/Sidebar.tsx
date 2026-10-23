@@ -101,6 +101,9 @@ export function crumbs(pathname: string): string[] {
   if (pathname.startsWith("/shipping")) return ["워크스페이스", "수주 및 생산기록", "배송 관리"];
   if (pathname.startsWith("/orders")) return ["워크스페이스", "수주 및 생산기록"];
   if (pathname.startsWith("/clients")) return ["워크스페이스", "클라이언트 관리"];
+  if (pathname === "/products/new") return ["워크스페이스", "생산품목 관리", "생산품목 등록"];
+  if (pathname.endsWith("/edit") && pathname.startsWith("/products/")) return ["워크스페이스", "생산품목 관리", "생산품목 수정"];
+  if (/^\/products\/[^/]+$/.test(pathname)) return ["워크스페이스", "생산품목 관리", "생산품목 상세"];
   if (pathname.startsWith("/products")) return ["워크스페이스", "생산품목 관리"];
   if (pathname.startsWith("/lines")) return ["워크스페이스", "생산라인"];
   if (pathname.startsWith("/admin")) return ["워크스페이스", "계정 관리"];

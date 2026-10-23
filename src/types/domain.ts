@@ -53,6 +53,8 @@ export interface Product {
   description: string;
   unitPrice: number;
   designImageUrl: string;
+  drawingPdfName?: string;
+  drawingPdfUrl?: string;
   createdAt: string;
   updatedAt: string;
   createdByName: string;

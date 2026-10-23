@@ -376,7 +376,7 @@ export function recordPayment(orderId: string, amount: number, actor: Actor): vo
 
 function productLabel(db: Database, productId: string): string {
   const product = db.products.find((item) => item.id === productId);
-  return product ? `${product.productName} ${product.modelName}` : "품목";
+  return product ? [product.productName, product.modelName].filter((part) => part.trim()).join(" ") : "품목";
 }
 
 export function updateOrderPrices(orderId: string, prices: Record<string, number>, actor: Actor): void {
@@ -669,9 +669,11 @@ export function saveProduct(input: {
   description: string;
   unitPrice: number;
   designImageUrl: string;
+  drawingPdfName?: string;
+  drawingPdfUrl?: string;
   actorName: string;
 }): string {
-  if (!input.productName.trim() || !input.modelName.trim()) throw new Error("제품명과 모델명을 입력하세요.");
+  if (!input.productName.trim()) throw new Error("품목명을 입력하세요.");
   if (!Number.isFinite(input.unitPrice) || input.unitPrice < 0) throw new Error("단가를 확인하세요.");
   let savedId = input.id ?? "";
   updateDb((db) => {
@@ -681,11 +683,17 @@ export function saveProduct(input: {
     if (input.id) {
       const product = db.products.find((item) => item.id === input.id);
       if (!product) throw new Error("품목을 찾을 수 없습니다.");
+      // 등록 화면은 품목명만 받는다. 이미 모델명이 있는 품목은 수정할 때 모델명을 비우지 않는다.
+      if (product.modelName.trim() && !input.modelName.trim()) throw new Error("모델명을 입력하세요.");
       product.productName = input.productName.trim();
       product.modelName = input.modelName.trim();
       product.description = input.description;
       product.unitPrice = input.unitPrice;
       if (input.designImageUrl) product.designImageUrl = input.designImageUrl;
+      if (input.drawingPdfUrl !== undefined) {
+        product.drawingPdfName = input.drawingPdfName ?? "";
+        product.drawingPdfUrl = input.drawingPdfUrl;
+      }
       product.updatedAt = nowStamp();
       return;
     }
@@ -697,6 +705,8 @@ export function saveProduct(input: {
       description: input.description,
       unitPrice: input.unitPrice,
       designImageUrl: input.designImageUrl,
+      drawingPdfName: input.drawingPdfName ?? "",
+      drawingPdfUrl: input.drawingPdfUrl ?? "",
       createdAt: nowStamp(),
       updatedAt: nowStamp(),
       createdByName: input.actorName,

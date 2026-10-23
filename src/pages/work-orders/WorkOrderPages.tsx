@@ -435,7 +435,7 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
           <Field label="생산 완료 예정일"><input className={readOnlyClass} type="date" value={workOrder.plannedEndDate} disabled /></Field>
           <Field label="제품명" required>
             <span className="relative block">
-              <input className={`${readOnlyClass} pr-10`} value={product ? `${product.productName} ${product.modelName}` : ""} disabled />
+              <input className={`${readOnlyClass} pr-10`} value={product ? [product.productName, product.modelName].filter((part) => part.trim()).join(" ") : ""} disabled />
               {product ? <Link className="absolute top-1/2 right-3 -translate-y-1/2 text-muted" to={`/products/${product.id}`} aria-label="품목 상세"><Search size={15} /></Link> : null}
             </span>
           </Field>
