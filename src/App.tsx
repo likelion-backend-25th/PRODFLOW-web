@@ -55,7 +55,7 @@ export default function App() {
           <Route path="/lines/:lineId/edit" element={<AdminOnly><LineFormPage /></AdminOnly>} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/admin" element={<AdminOnly><AdminPage /></AdminOnly>} />
-          <Route path="/assistant" element={<AdminOnly><AssistantPage /></AdminOnly>} />
+          <Route path="/assistant" element={<AssistantPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

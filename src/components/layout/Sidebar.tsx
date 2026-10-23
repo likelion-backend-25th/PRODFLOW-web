@@ -28,14 +28,15 @@ export function Sidebar() {
       <p className="mt-5 px-3 text-[11px] font-semibold tracking-wide text-muted">WORKSPACE</p>
       <nav className="mt-2 flex flex-1 flex-col gap-1">
         <Item to="/" end icon={LayoutGrid} label="대시보드" />
-        <Item to="/orders" icon={ClipboardList} label="수주 및 생산기록" badge={orders} active={location.pathname.startsWith("/work-orders") || location.pathname.startsWith("/shipping")} />
+        <Item to="/orders" icon={ClipboardList} label="수주 및 생산기록" badge={orders} active={location.pathname.startsWith("/work-orders") || location.pathname.startsWith("/shipping") || location.pathname.startsWith("/calendar")} />
+        <Item to="/calendar" icon={Factory} label="수주 일정 관리" nested />
         <Item to="/work-orders" icon={Factory} label="작업지시 관리" nested />
         <Item to="/shipping" icon={Factory} label="배송 관리" nested badge={shipping} />
         <Item to="/clients" icon={Building2} label="거래처 관리" />
         <Item to="/products" icon={Box} label="생산품목 관리" />
         <Item to="/lines" icon={Factory} label="생산라인" />
+        <Item to="/assistant" icon={Sparkles} label="AI 챗봇" />
         {user?.role === "SUPER_ADMIN" ? <Item to="/admin" icon={UsersRound} label="계정 관리" /> : null}
-        {user?.role === "SUPER_ADMIN" ? <Item to="/assistant" icon={Sparkles} label="AI" /> : null}
       </nav>
       <div className="space-y-2 px-1 pb-3 text-xs text-muted">
         <div className="rounded-xl bg-canvas p-3">
@@ -107,7 +108,7 @@ export function crumbs(pathname: string): string[] {
   if (pathname.startsWith("/products")) return ["워크스페이스", "생산품목 관리"];
   if (pathname.startsWith("/lines")) return ["워크스페이스", "생산라인"];
   if (pathname.startsWith("/admin")) return ["워크스페이스", "계정 관리"];
-  if (pathname.startsWith("/assistant")) return ["워크스페이스", "AI"];
-  if (pathname.startsWith("/calendar")) return ["워크스페이스", "생산 일정"];
+  if (pathname.startsWith("/assistant")) return ["워크스페이스", "AI 챗봇"];
+  if (pathname.startsWith("/calendar")) return ["워크스페이스", "수주 및 생산기록", "수주 일정 관리"];
   return ["워크스페이스", "대시보드"];
 }
