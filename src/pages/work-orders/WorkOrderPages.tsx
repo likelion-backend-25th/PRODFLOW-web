@@ -1,11 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
-import { Check, ChevronLeft, ChevronRight, Download, Package, Pause, Play, RotateCcw, Save, Search } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Download, Pause, Play, RotateCcw, Save, Search } from "lucide-react";
 import { Button } from "@/components/ui.tsx";
 import { cn } from "@/lib/cn.ts";
 import { localDate, localDateTime, todayISO, toISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
-import { orderItems, orderItemsText } from "@/lib/orderText.ts";
+import { orderItems, orderItemsText, productTitle } from "@/lib/orderText.ts";
 import { availableLineIds, changeLine, clockIn, clockOut, completePacking, completeProduction, holdProduction, reassign, resumeProduction, startProduction, stopProduction } from "@/lib/workflow.ts";
 import { canManageOrders, canProduce, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
@@ -338,7 +338,6 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
   const order = db.orders.find((item) => item.id === workOrder.orderId);
   const client = db.clients.find((item) => item.id === order?.clientId);
   const assignee = db.users.find((item) => item.id === workOrder.assigneeId);
-  const product = db.products.find((item) => item.id === order?.lines[0]?.productId);
   const overdue = workOrder.plannedEndDate < todayISO() && workOrder.status !== "COMPLETED" && workOrder.status !== "CANCELLED";
   const view = statusView(workOrder.status, overdue);
   const line = db.lines.find((item) => item.id === workOrder.lineId);
@@ -352,19 +351,18 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
   const canHold = canFinish;
   const canResume = canRun && workOrder.status === "PAUSED";
   const canPack = canRun && order?.status === "PACKING";
+  // 수주는 모든 작업지시가 생산 완료돼야 포장중이 되므로, 그 전에는 포장 단계 완료를 막는다.
+  const waitingOthers = canRun && workOrder.status === "COMPLETED" && order !== undefined && ["CONFIRMED", "IN_PRODUCTION", "ON_HOLD"].includes(order.status);
   const canAssignLine = (mine && canProduce(user.role) && ["READY", "IN_PRODUCTION", "PAUSED"].includes(workOrder.status))
     || (canManageOrders(user.role) && ["IN_PRODUCTION", "PAUSED"].includes(workOrder.status));
   const number = workOrderNo(workOrder, order?.orderNo);
-  const workText = order?.lines.map((line) => {
-    const item = db.products.find((product) => product.id === line.productId);
-    return `${item?.productName ?? "품목"} ${item?.modelName ?? ""} ${line.quantity.toLocaleString("ko-KR")}개 생산`;
-  }).join("\n") ?? "";
+  const workItems = (order?.lines ?? []).map((line) => ({ line, product: db.products.find((item) => item.id === line.productId) }));
   const conditions = [
     order ? `납기 ${order.dueDate}` : "",
     order ? `수주번호 ${order.orderNo}` : "",
     `이번 지시 ${workOrder.quantity.toLocaleString("ko-KR")}개`,
     `생산 예정 ${workOrder.plannedStartDate} ~ ${workOrder.plannedEndDate}`,
-    product?.description ? `품목 설명: ${product.description}` : "",
+    ...workItems.map(({ product: item }) => (item?.description ? `품목 설명(${item.productName}): ${item.description}` : "")),
   ].filter(Boolean);
 
   function act(action: () => void, success: string) {
@@ -399,6 +397,17 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
     act(() => startProduction(current.id, lineId, actor), "생산을 시작했습니다.");
   }
 
+  function finish() {
+    const current = workOrder;
+    const actor = user;
+    if (!current || !actor) return;
+    if (canFinish) {
+      act(() => completeProduction(current.id, actor), "생산을 완료하고 라인을 비웠습니다.");
+      return;
+    }
+    if (canPack && order) act(() => completePacking(order.id, actor), "포장 완료로 변경했습니다. 배송 관리에서 출고할 수 있습니다.");
+  }
+
   return (
     <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.8fr)]">
       <section className="rounded-xl border border-line bg-white p-5">
@@ -424,6 +433,8 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
               {managers.map((item) => <option key={item.id} value={item.id}>{item.name}{item.clockedIn ? "" : " · 미출근"}</option>)}
             </select>
           </Field>
+          <Field label="생산 시작 예정일"><input className={readOnlyClass} type="date" value={workOrder.plannedStartDate} disabled /></Field>
+          <Field label="생산 완료 예정일"><input className={readOnlyClass} type="date" value={workOrder.plannedEndDate} disabled /></Field>
           <Field label="수주번호" required>
             <span className="relative block">
               <input className={`${readOnlyClass} pr-10`} value={order?.orderNo ?? ""} disabled />
@@ -431,22 +442,8 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
             </span>
           </Field>
           <Field label="거래처명"><input className={readOnlyClass} value={client?.companyName ?? ""} disabled /></Field>
-          <Field label="생산 시작 예정일"><input className={readOnlyClass} type="date" value={workOrder.plannedStartDate} disabled /></Field>
-          <Field label="생산 완료 예정일"><input className={readOnlyClass} type="date" value={workOrder.plannedEndDate} disabled /></Field>
-          <Field label="제품명" required>
-            <span className="relative block">
-              <input className={`${readOnlyClass} pr-10`} value={product ? [product.productName, product.modelName].filter((part) => part.trim()).join(" ") : ""} disabled />
-              {product ? <Link className="absolute top-1/2 right-3 -translate-y-1/2 text-muted" to={`/products/${product.id}`} aria-label="품목 상세"><Search size={15} /></Link> : null}
-            </span>
-          </Field>
           <Field label="상태">
             <input className={readOnlyClass} value={view.label} disabled />
-          </Field>
-          <Field label="생산수량" required>
-            <span className="relative block">
-              <input className={`${readOnlyClass} pr-8`} value={workOrder.quantity.toLocaleString("ko-KR")} disabled />
-              <span className="absolute top-1/2 right-3 -translate-y-1/2 text-sm text-muted">개</span>
-            </span>
           </Field>
         </div>
 
@@ -454,12 +451,20 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
         <div className="mt-3 space-y-3 text-sm">
           <div className="grid gap-3 md:grid-cols-[88px_minmax(0,1fr)]">
             <p className="pt-3 text-muted">작업내용</p>
-            <p className="min-h-16 whitespace-pre-line rounded-lg bg-canvas px-3 py-3">{workText || "등록된 작업내용이 없습니다."}</p>
+            <div className="space-y-2">
+              {workItems.map(({ line, product: item }) => (
+                <span key={line.id} className="relative block">
+                  <input className={`${readOnlyClass} pr-10`} value={`${item ? productTitle(item) : "삭제된 품목"} · ${line.quantity.toLocaleString("ko-KR")}개`} disabled />
+                  {item ? <Link className="absolute top-1/2 right-3 -translate-y-1/2 text-muted" to={`/products/${item.id}`} aria-label={`${item.productName} 품목 상세`}><Search size={15} /></Link> : null}
+                </span>
+              ))}
+              {workItems.length === 0 ? <p className="rounded-lg bg-canvas px-3 py-3 text-muted">등록된 작업내용이 없습니다.</p> : null}
+            </div>
           </div>
           <div className="grid gap-3 md:grid-cols-[88px_minmax(0,1fr)]">
             <p className="pt-3 text-muted">작업 조건</p>
             <ul className="list-disc space-y-1 rounded-lg px-8 py-2 text-ink">
-              {conditions.map((item) => <li key={item}>{item}</li>)}
+              {conditions.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
             </ul>
           </div>
         </div>
@@ -488,7 +493,7 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
           <button type="button" className="inline-flex h-10 items-center justify-center gap-1 rounded-lg border border-line bg-white text-sm font-semibold disabled:opacity-40" disabled={!canStart} onClick={start}>
             <Play size={14} /> 작업 시작
           </button>
-          <button type="button" className="inline-flex h-10 items-center justify-center gap-1 rounded-lg bg-primary text-sm font-semibold text-white disabled:opacity-40" disabled={!canFinish} onClick={() => act(() => completeProduction(workOrder.id, user), "생산을 완료하고 라인을 비웠습니다.")}>
+          <button type="button" className="inline-flex h-10 items-center justify-center gap-1 rounded-lg bg-primary text-sm font-semibold text-white disabled:opacity-40" disabled={!canFinish && !canPack} onClick={finish}>
             <Check size={14} /> 작업 완료
           </button>
           {canResume ? (
@@ -501,11 +506,7 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
             </button>
           )}
         </div>
-        {canPack ? (
-          <button type="button" className="mt-2 inline-flex h-10 w-full items-center justify-center gap-1 rounded-lg bg-primary text-sm font-semibold text-white" onClick={() => order && act(() => completePacking(order.id, user), "포장 완료로 변경했습니다. 배송 관리에서 출고할 수 있습니다.")}>
-            <Package size={14} /> 포장 완료
-          </button>
-        ) : null}
+        {waitingOthers ? <p className="mt-2 text-xs text-muted">이 수주의 다른 작업지시가 모두 생산 완료되면 포장 단계에서 작업 완료를 누를 수 있습니다.</p> : null}
         {canFinish ? (
           <button type="button" className="mt-2 text-xs text-muted underline" onClick={() => { setReasonFor("stop"); setReason(""); }}>생산 중지</button>
         ) : null}
