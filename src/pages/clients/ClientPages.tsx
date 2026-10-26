@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Ellipsis, FileSpreadsheet, Info, MapPin, Pencil, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui.tsx";
-import { sampleAddresses } from "@/lib/addresses.ts";
 import type { Client } from "@/types/domain.ts";
 import { cn } from "@/lib/cn.ts";
 import { localDate, todayISO } from "@/lib/dates.ts";
@@ -366,7 +365,6 @@ export function ClientFormPage() {
   const current = db.clients.find((client) => client.id === clientId);
   const [form, setForm] = useState(current ?? emptyClient);
   const [checked, setChecked] = useState(false);
-  const [addressOpen, setAddressOpen] = useState(false);
   const [duplicates, setDuplicates] = useState<Client[]>([]);
   const editing = Boolean(current);
   // 비활성·삭제 계정은 거래처 담당으로 새로 고르지 않는다.
@@ -514,11 +512,19 @@ export function ClientFormPage() {
             postalCode={form.postalCode}
             road={form.address}
             detail={form.addressDetail}
-            open={addressOpen}
-            onToggle={() => setAddressOpen((current) => !current)}
-            onPick={(item) => {
-              patch({ postalCode: item.zonecode, address: item.road });
-              setAddressOpen(false);
+            onSearch={() => {
+              if (!window.daum?.Postcode) {
+                show("우편번호 서비스를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+                return;
+              }
+              new window.daum.Postcode({
+                oncomplete: (data) => {
+                  patch({
+                    postalCode: data.zonecode,
+                    address: data.roadAddress || data.address,
+                  });
+                },
+              }).open();
             }}
             onDetail={(addressDetail) => patch({ addressDetail })}
           />
@@ -589,46 +595,28 @@ function CompanyAddress({
   postalCode,
   road,
   detail,
-  open,
-  onToggle,
-  onPick,
+  onSearch,
   onDetail,
 }: {
   postalCode: string;
   road: string;
   detail: string;
-  open: boolean;
-  onToggle: () => void;
-  onPick: (item: (typeof sampleAddresses)[number]) => void;
+  onSearch: () => void;
   onDetail: (value: string) => void;
 }) {
-  const jibun = sampleAddresses.find((item) => item.road === road)?.jibun ?? "";
   return (
     <div className="space-y-[7px]">
       <p className="text-xs font-medium">회사 주소 *</p>
       <div className="flex items-center gap-2">
         <input readOnly value={postalCode} placeholder="우편번호" className={inputClass} />
-        <button type="button" className="h-[41px] shrink-0 rounded-[7px] border border-line bg-white px-4 text-[13px] font-medium" onClick={onToggle}>
+        <button type="button" className="h-[41px] shrink-0 rounded-[7px] border border-line bg-white px-4 text-[13px] font-medium" onClick={onSearch}>
           우편번호 찾기
         </button>
       </div>
-      {open ? (
-        <ul className="rounded-[7px] border border-line bg-white">
-          {sampleAddresses.map((item) => (
-            <li key={item.road}>
-              <button type="button" className="block w-full px-3 py-2 text-left text-xs hover:bg-primary-soft" onClick={() => onPick(item)}>
-                <span className="mr-2 text-muted">{item.zonecode}</span>
-                {item.road}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
       <span className="relative block">
         <input readOnly value={road} placeholder="도로명 주소를 입력하세요" className={`${inputClass} pr-9`} />
         <MapPin size={15} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
       </span>
-      {jibun ? <p className="text-[10px] text-muted">(예상 지번 주소 : {jibun})</p> : null}
       <input placeholder="건물명, 층, 호수 등 상세 주소를 입력하세요" value={detail} className={inputClass} onChange={(event) => onDetail(event.target.value)} />
       <p className="text-[10px] text-muted">수주 작성 시 기본 배송지로 불러옵니다. 실제 배송지는 수주별로 변경할 수 있습니다.</p>
     </div>
