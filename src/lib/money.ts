@@ -32,6 +32,14 @@ export function digitsOnly(value: string): string {
   return value.replace(/\D/g, "");
 }
 
+export function nextModelCode(codes: string[]): string {
+  const max = codes.reduce((highest, code) => {
+    const match = /^PM-(\d+)$/.exec(code);
+    return Math.max(highest, match ? Number(match[1]) : 0);
+  }, 0);
+  return `PM-${String(max + 1).padStart(4, "0")}`;
+}
+
 export function productKey(productName: string, modelName: string): string {
   const collapse = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
   return `${collapse(productName)}|${collapse(modelName)}`;
