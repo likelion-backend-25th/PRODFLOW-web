@@ -44,7 +44,7 @@ function statusView(status: WorkOrderStatus, overdue: boolean): { label: string;
 }
 
 function stepsOf(status: WorkOrderStatus, orderStatus: OrderStatus | undefined): Array<{ label: string; state: "done" | "current" | "todo" }> {
-  const labels = ["생산대기", status === "PAUSED" ? "일시정지" : "생산중", "포장중", "출고대기"];
+  const labels = ["준비", status === "PAUSED" ? "일시정지" : "생산", "포장", "포장완료"];
   const packedOrLater = orderStatus === "PACKED" || orderStatus === "SHIPPING" || orderStatus === "COMPLETED";
   const current = status === "CANCELLED" ? -1
     : status === "READY" ? 0
@@ -405,7 +405,7 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
       act(() => completeProduction(current.id, actor), "생산을 완료하고 라인을 비웠습니다.");
       return;
     }
-    if (canPack && order) act(() => completePacking(order.id, actor), "출고 대기로 변경했습니다. 배송 관리에서 출고할 수 있습니다.");
+    if (canPack && order) act(() => completePacking(order.id, actor), "포장 완료로 변경했습니다. 배송 관리에서 출고할 수 있습니다.");
   }
 
   return (
