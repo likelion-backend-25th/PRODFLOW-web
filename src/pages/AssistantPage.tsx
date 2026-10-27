@@ -1,5 +1,5 @@
-import { Bot, ChevronRight, Plus, Search, Send, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Bot, ChevronRight, MoreVertical, Plus, Search, Send } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Badge } from "@/components/ui.tsx";
 import { answerQuestion, suggestedQuestions, type AnswerTable, type AssistantContext } from "@/lib/assistant.ts";
@@ -30,6 +30,10 @@ export function AssistantPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
   const [draft, setDraft] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editPlace, setEditPlace] = useState<"header" | "list" | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const skipTitleCommit = useRef(false);
   const active = chats.find((chat) => chat.id === activeId) ?? chats[0];
   const visible = chats.filter((chat) => chat.title.includes(keyword.trim()));
   const stats = useMemo(() => todayStats(db), [db]);
@@ -42,7 +46,7 @@ export function AssistantPage() {
     const now = timestamp();
     const next: Chat = {
       ...current,
-      title: current.messages.length === 0 ? text : current.title,
+      title: current.messages.length === 0 && current.title === "새 대화" ? text : current.title,
       context: answer.context,
       updatedAt: now,
       messages: [
@@ -63,16 +67,30 @@ export function AssistantPage() {
     setDraft("");
   }
 
-  function removeChat(id: string) {
-    const next = chats.filter((chat) => chat.id !== id);
-    if (next.length === 0) {
-      const chat = blankChat();
-      setChats([chat]);
-      setActiveId(chat.id);
+  function renameChat(id: string, title: string) {
+    const next = title.trim() || "새 대화";
+    setChats((list) => list.map((chat) => (chat.id === id ? { ...chat, title: next } : chat)));
+  }
+
+  function commitTitle() {
+    if (skipTitleCommit.current) {
+      skipTitleCommit.current = false;
       return;
     }
-    setChats(next);
-    if (active?.id === id) setActiveId(next[0]?.id ?? null);
+    if (editingId) renameChat(editingId, titleDraft);
+    setEditingId(null);
+    setEditPlace(null);
+  }
+
+  function startRename(chat: Chat, place: "header" | "list") {
+    setActiveId(chat.id);
+    setEditingId(chat.id);
+    setEditPlace(place);
+    setTitleDraft(chat.title);
+  }
+
+  function clearChat(id: string) {
+    setChats((list) => list.map((chat) => (chat.id === id ? { ...chat, messages: [], context: { orderIds: [] } } : chat)));
   }
 
   return (
@@ -88,15 +106,35 @@ export function AssistantPage() {
           </label>
         </div>
         <div className="flex-1 space-y-4 overflow-y-auto px-3 pb-4">
-          <ChatGroup label="오늘" chats={visible.filter((chat) => sameDay(chat.updatedAt, openedAt))} activeId={active?.id} onSelect={setActiveId} />
-          <ChatGroup label="지난 7일" chats={visible.filter((chat) => !sameDay(chat.updatedAt, openedAt) && openedAt - chat.updatedAt < 7 * 86_400_000)} activeId={active?.id} onSelect={setActiveId} />
+          <ChatGroup label="오늘" chats={visible.filter((chat) => sameDay(chat.updatedAt, openedAt))} activeId={active?.id} editingId={editPlace === "list" ? editingId : null} titleDraft={titleDraft} onTitleDraft={setTitleDraft} onCommitTitle={commitTitle} onCancelTitle={() => { skipTitleCommit.current = true; setEditingId(null); setEditPlace(null); }} onSelect={setActiveId} onRename={startRename} onClear={clearChat} />
+          <ChatGroup label="지난 7일" chats={visible.filter((chat) => !sameDay(chat.updatedAt, openedAt) && openedAt - chat.updatedAt < 7 * 86_400_000)} activeId={active?.id} editingId={editPlace === "list" ? editingId : null} titleDraft={titleDraft} onTitleDraft={setTitleDraft} onCommitTitle={commitTitle} onCancelTitle={() => { skipTitleCommit.current = true; setEditingId(null); setEditPlace(null); }} onSelect={setActiveId} onRename={startRename} onClear={clearChat} />
         </div>
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center justify-between border-b border-line bg-white px-5 py-3">
-          <h1 className="truncate font-semibold">{active?.title || "새 대화"}</h1>
-          {active ? <button type="button" className="text-muted" aria-label="대화 삭제" onClick={() => removeChat(active.id)}><Trash2 size={16} /></button> : null}
+          {active && editingId === active.id && editPlace === "header" ? (
+            <input
+              className="h-9 min-w-0 flex-1 rounded-lg border border-line px-2 font-semibold"
+              value={titleDraft}
+              autoFocus
+              aria-label="대화 제목"
+              onChange={(event) => setTitleDraft(event.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitTitle();
+                }
+                if (event.key === "Escape") {
+                  skipTitleCommit.current = true;
+                  setEditingId(null);
+                  setEditPlace(null);
+                }
+              }}
+            />
+          ) : <h1 className="truncate font-semibold">{active?.title || "새 대화"}</h1>}
+          {active ? <ChatMenu onRename={() => startRename(active, "header")} onClear={() => clearChat(active.id)} /> : null}
         </div>
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
           {active && active.messages.length === 0 ? (
@@ -182,22 +220,95 @@ export function AssistantPage() {
   );
 }
 
-function ChatGroup({ label, chats, activeId, onSelect }: { label: string; chats: Chat[]; activeId: string | undefined; onSelect: (id: string) => void }) {
+function ChatGroup({
+  label,
+  chats,
+  activeId,
+  editingId,
+  titleDraft,
+  onTitleDraft,
+  onCommitTitle,
+  onCancelTitle,
+  onSelect,
+  onRename,
+  onClear,
+}: {
+  label: string;
+  chats: Chat[];
+  activeId: string | undefined;
+  editingId: string | null;
+  titleDraft: string;
+  onTitleDraft: (value: string) => void;
+  onCommitTitle: () => void;
+  onCancelTitle: () => void;
+  onSelect: (id: string) => void;
+  onRename: (chat: Chat, place: "list") => void;
+  onClear: (id: string) => void;
+}) {
   if (chats.length === 0) return null;
   return (
     <div>
       <p className="px-2 text-xs font-semibold text-muted">{label}</p>
       <ul className="mt-1 space-y-1">
         {chats.map((chat) => (
-          <li key={chat.id}>
-            <button type="button" className={cn("w-full rounded-lg px-2 py-2 text-left", chat.id === activeId ? "bg-primary-soft" : "hover:bg-canvas")} onClick={() => onSelect(chat.id)}>
-              <span className="block truncate text-sm font-semibold">{chat.title}</span>
-              <span className="text-xs text-muted">{clock(chat.updatedAt)}</span>
-            </button>
+          <li key={chat.id} className={cn("flex items-center gap-1 rounded-lg pr-1", chat.id === activeId ? "bg-primary-soft" : "hover:bg-canvas")}>
+            {editingId === chat.id ? (
+              <input
+                className="m-1 h-8 min-w-0 flex-1 rounded-lg border border-line bg-white px-2 text-sm font-semibold"
+                value={titleDraft}
+                autoFocus
+                aria-label="대화 제목"
+                onChange={(event) => onTitleDraft(event.target.value)}
+                onBlur={onCommitTitle}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    onCommitTitle();
+                  }
+                  if (event.key === "Escape") onCancelTitle();
+                }}
+              />
+            ) : (
+              <button type="button" className="min-w-0 flex-1 px-2 py-2 text-left" onClick={() => onSelect(chat.id)}>
+                <span className="block truncate text-sm font-semibold">{chat.title}</span>
+                <span className="text-xs text-muted">{clock(chat.updatedAt)}</span>
+              </button>
+            )}
+            <ChatMenu onRename={() => onRename(chat, "list")} onClear={() => onClear(chat.id)} />
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+function ChatMenu({ onRename, onClear }: { onRename: () => void; onClear: () => void }) {
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-white"
+        aria-label="대화 메뉴"
+        aria-expanded={position !== null}
+        onClick={(event) => {
+          event.stopPropagation();
+          const rect = event.currentTarget.getBoundingClientRect();
+          setPosition(position ? null : { top: rect.bottom + 4, left: Math.max(8, rect.right - 144) });
+        }}
+      >
+        <MoreVertical size={16} />
+      </button>
+      {position ? (
+        <>
+          <button type="button" className="fixed inset-0 z-20 cursor-default" aria-label="메뉴 닫기" onClick={() => setPosition(null)} />
+          <div className="fixed z-30 w-36 rounded-lg border border-line bg-white py-1 shadow-lg" style={{ top: position.top, left: position.left }} role="menu">
+            <button type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-canvas" role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => { setPosition(null); onRename(); }}>제목 수정</button>
+            <button type="button" className="block w-full px-3 py-2 text-left text-sm text-danger hover:bg-canvas" role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => { setPosition(null); onClear(); }}>대화 내용 삭제</button>
+          </div>
+        </>
+      ) : null}
+    </>
   );
 }
 

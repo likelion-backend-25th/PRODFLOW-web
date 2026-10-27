@@ -412,6 +412,17 @@ function seed(): Database {
       { id: "line-2", name: "2라인", dailyCapacity: 500, status: "AVAILABLE" },
       { id: "line-3", name: "3라인", dailyCapacity: 300, status: "MAINTENANCE" },
     ],
+    lineCapacityLogs: [
+      {
+        id: "line-log-1",
+        lineId: "line-1",
+        beforeCapacity: 400,
+        afterCapacity: 500,
+        reason: "금형 교체 후 하루 생산량을 올렸습니다.",
+        userId: "user-admin",
+        changedAt: stamp(day(-12), "14:00"),
+      },
+    ],
     holidays: HOLIDAYS,
     histories: histories.sort((left, right) => right.at.localeCompare(left.at)),
     notifications: notifications.reverse(),
@@ -450,6 +461,10 @@ const departmentOf: Record<User["role"], string> = {
 
 function repair(db: Database): boolean {
   let changed = false;
+  if (!Array.isArray(db.lineCapacityLogs)) {
+    db.lineCapacityLogs = [];
+    changed = true;
+  }
   if (!Array.isArray(db.attendance)) {
     db.attendance = db.users.filter((user) => user.clockedIn).map((user) => ({
       id: crypto.randomUUID(),

@@ -128,6 +128,21 @@ export function integrityIssues(db: Database): string[] {
     if (held > 1) issues.push(`${line.name}: 작업 ${held}건이 동시에 점유합니다.`);
     if ((line.status === "RUNNING") !== (held > 0)) issues.push(`${line.name}: 라인 상태와 점유 작업이 맞지 않습니다.`);
   }
+  const nowForLogs = new Date().toISOString();
+  for (const log of db.lineCapacityLogs) {
+    const tag = `생산량 이력 ${log.id}`;
+    if (!lineIds.has(log.lineId)) issues.push(`${tag}: 없는 라인을 참조합니다.`);
+    if (!userIds.has(log.userId)) issues.push(`${tag}: 없는 계정을 참조합니다.`);
+    if (log.reason.trim().length < 2) issues.push(`${tag}: 변경 사유가 없습니다.`);
+    if (log.beforeCapacity === log.afterCapacity) issues.push(`${tag}: 변경 전후 생산량이 같습니다.`);
+    if (log.changedAt > nowForLogs) issues.push(`${tag}: 아직 오지 않은 시각에 기록되어 있습니다.`);
+  }
+  for (const line of db.lines) {
+    const latest = db.lineCapacityLogs
+      .filter((log) => log.lineId === line.id)
+      .sort((left, right) => right.changedAt.localeCompare(left.changedAt))[0];
+    if (latest && latest.afterCapacity !== line.dailyCapacity) issues.push(`${line.name}: 마지막 생산량 이력과 현재 하루 생산량이 다릅니다.`);
+  }
   runners.forEach((count, userId) => {
     if (count > 1) issues.push(`${userId}: 한 담당자가 생산중 작업 ${count}건을 맡고 있습니다.`);
   });

@@ -127,6 +127,16 @@ export interface Line {
   status: LineStatus;
 }
 
+export interface LineCapacityLog {
+  id: string;
+  lineId: string;
+  beforeCapacity: number;
+  afterCapacity: number;
+  reason: string;
+  userId: string;
+  changedAt: string;
+}
+
 export interface Holiday {
   id: string;
   date: string;
@@ -167,6 +177,7 @@ export interface Database {
   orders: Order[];
   workOrders: WorkOrder[];
   lines: Line[];
+  lineCapacityLogs: LineCapacityLog[];
   holidays: Holiday[];
   histories: StatusHistory[];
   notifications: NotificationLog[];
