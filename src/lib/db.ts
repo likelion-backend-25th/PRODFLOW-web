@@ -150,12 +150,12 @@ function seed(): Database {
   const users: User[] = [
     { id: "user-admin", ...account(1, "admin", "경영지원팀"), password: "admin1234", name: "김하늘", role: "SUPER_ADMIN", status: "ACTIVE", clockedIn: false, lastLoginAt: ago(5) },
     { id: office.id, ...account(2, "order", "영업팀"), password: "order1234", name: office.name, role: "ORDER_MANAGER", status: "ACTIVE", clockedIn: false, lastLoginAt: ago(40) },
-    { id: floor1.id, ...account(3, "floor1", "사출 생산팀"), password: "floor1234", name: floor1.name, role: "PRODUCTION_MANAGER", status: "ACTIVE", clockedIn: true, lastLoginAt: ago(95) },
-    { id: floor2.id, ...account(4, "floor2", "사출 생산팀"), password: "floor1234", name: floor2.name, role: "PRODUCTION_MANAGER", status: "ACTIVE", clockedIn: true, lastLoginAt: ago(110) },
+    { id: floor1.id, ...account(3, "floor1", "생산팀"), password: "floor1234", name: floor1.name, role: "PRODUCTION_MANAGER", status: "ACTIVE", clockedIn: true, lastLoginAt: ago(95) },
+    { id: floor2.id, ...account(4, "floor2", "생산팀"), password: "floor1234", name: floor2.name, role: "PRODUCTION_MANAGER", status: "ACTIVE", clockedIn: true, lastLoginAt: ago(110) },
     { id: "user-viewer", ...account(5, "viewer", "경영지원팀"), password: "viewer1234", name: "한예린", role: "VIEWER", status: "ACTIVE", clockedIn: false, lastLoginAt: ago(60 * 26) },
-    { id: "user-floor-3", ...account(6, "floor3", "사출 생산팀"), password: "floor1234", name: "오세훈", role: "PRODUCTION_MANAGER", status: "INACTIVE", clockedIn: false, lastLoginAt: null },
+    { id: "user-floor-3", ...account(6, "floor3", "생산팀"), password: "floor1234", name: "오세훈", role: "PRODUCTION_MANAGER", status: "INACTIVE", clockedIn: false, lastLoginAt: null },
     { id: "user-order-2", ...account(7, "order2", "영업팀"), password: "order1234", name: "이서준", role: "ORDER_MANAGER", status: "ACTIVE", clockedIn: false, lastLoginAt: ago(180) },
-    { id: floor4.id, ...account(8, "floor4", "사출 생산팀"), password: "floor1234", name: floor4.name, role: "PRODUCTION_MANAGER", status: "ACTIVE", clockedIn: false, lastLoginAt: ago(60 * 8) },
+    { id: floor4.id, ...account(8, "floor4", "생산팀"), password: "floor1234", name: floor4.name, role: "PRODUCTION_MANAGER", status: "ACTIVE", clockedIn: false, lastLoginAt: ago(60 * 8) },
     { id: "user-viewer-2", ...account(9, "viewer2", "경영지원팀"), password: "viewer1234", name: "배수빈", role: "VIEWER", status: "ACTIVE", clockedIn: false, lastLoginAt: ago(60 * 50) },
     { id: "user-order-3", ...account(10, "order3", "영업팀"), password: "order1234", name: "김태리", role: "ORDER_MANAGER", status: "INACTIVE", clockedIn: false, lastLoginAt: null },
   ];
@@ -912,30 +912,28 @@ function repair(db: Database): boolean {
     db.lineCapacityLogs = [];
     changed = true;
   }
-  const legacyLineNames: Record<string, string> = {
-    "사출 1라인": "1라인",
-    "사출 2라인": "2라인",
-    "사출 3라인": "3라인",
-  };
-  const droppedLineNames = new Set(["사출 4라인", "사출 5라인", "인쇄 1라인", "인쇄 2라인", "조립 1라인", "조립 2라인", "포장 1라인"]);
-  if (db.lines.some((line) => legacyLineNames[line.name] || droppedLineNames.has(line.name))) {
-    const droppedIds = new Set(db.lines.filter((line) => droppedLineNames.has(line.name)).map((line) => line.id));
+  const sampleLineNames: Record<string, string> = { "line-1": "1라인", "line-2": "2라인", "line-3": "3라인" };
+  const extraLineIds = new Set(["line-4", "line-5", "line-6", "line-7", "line-8", "line-9", "line-10"]);
+  if (db.lines.some((line) => sampleLineNames[line.id] !== undefined && line.name !== sampleLineNames[line.id]) || db.lines.some((line) => extraLineIds.has(line.id))) {
     db.lines.forEach((line) => {
-      const nextName = legacyLineNames[line.name];
-      if (nextName) line.name = nextName;
+      const nextName = sampleLineNames[line.id];
+      if (nextName && line.name !== nextName) line.name = nextName;
     });
-    db.lines = db.lines.filter((line) => !droppedLineNames.has(line.name));
+    db.lines = db.lines.filter((line) => !extraLineIds.has(line.id));
     const kept = new Set(db.lines.map((line) => line.id));
     const fallback = db.lines.find((line) => line.status === "AVAILABLE")?.id ?? db.lines[0]?.id ?? null;
     db.workOrders.forEach((workOrder) => {
       if (!workOrder.lineId || kept.has(workOrder.lineId)) return;
-      if (droppedIds.has(workOrder.lineId) || !kept.has(workOrder.lineId)) {
-        workOrder.lineId = workOrder.status === "READY" || workOrder.status === "CANCELLED" ? null : fallback;
-      }
+      workOrder.lineId = workOrder.status === "READY" || workOrder.status === "CANCELLED" ? null : fallback;
     });
     db.lineCapacityLogs = db.lineCapacityLogs.filter((log) => kept.has(log.lineId));
     changed = true;
   }
+  db.users.forEach((user) => {
+    if (!["floor1", "floor2", "floor3", "floor4"].includes(user.loginId) || user.department === "생산팀") return;
+    user.department = "생산팀";
+    changed = true;
+  });
   if (!Array.isArray(db.quotations)) {
     const author = db.users.find((user) => user.role === "ORDER_MANAGER") ?? db.users[0];
     const holidays = db.holidays.map((holiday) => holiday.date);
