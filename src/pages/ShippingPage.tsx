@@ -8,16 +8,17 @@ import { activeWorkOrder, delayOf, delayTone } from "@/lib/delay.ts";
 import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } from "@/lib/labels.ts";
 import { formatWon, orderQuantity, orderTotal } from "@/lib/money.ts";
 import { orderItems, orderItemsText } from "@/lib/orderText.ts";
-import { completeDelivery, completePacking, recordPayment, shipOrder } from "@/lib/workflow.ts";
+import { completeDelivery, completePacking, markReadyToShip, recordPayment, shipOrder } from "@/lib/workflow.ts";
 import { canManageOrders, canProduce, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { Order } from "@/types/domain.ts";
 
-type Tab = "PACKING" | "PACKED" | "SHIPPING" | "BALANCE";
+type Tab = "PACKING" | "PACKED" | "READY_TO_SHIP" | "SHIPPING" | "BALANCE";
 
 const tabs: Array<{ id: Tab; label: string; hint: string }> = [
   { id: "PACKING", label: "포장중", hint: "생산이 끝나 포장 중인 수주" },
-  { id: "PACKED", label: "출고 대기", hint: "포장 완료 · 운송장 입력 후 출고" },
+  { id: "PACKED", label: "포장완료", hint: "포장 끝 · 출고 대기로 넘김" },
+  { id: "READY_TO_SHIP", label: "출고대기", hint: "운송장 입력 후 출고" },
   { id: "SHIPPING", label: "배송중", hint: "출고 후 거래처 도착 전" },
   { id: "BALANCE", label: "잔금 대기", hint: "배송 완료 · 거래처 확인 후 잔금 입금 대기" },
 ];
@@ -33,7 +34,7 @@ export function ShippingPage() {
   const db = useDb();
   const user = useAuthStore((state) => state.user);
   const show = useToastStore((state) => state.show);
-  const [tab, setTab] = useState<Tab>("PACKED");
+  const [tab, setTab] = useState<Tab>("READY_TO_SHIP");
   const [carriers, setCarriers] = useState<Record<string, string>>({});
   const [tracking, setTracking] = useState<Record<string, string>>({});
   const [payments, setPayments] = useState<Record<string, string>>({});
@@ -54,10 +55,10 @@ export function ShippingPage() {
     <div>
       <div>
         <h1 className="text-2xl font-semibold">배송 관리</h1>
-        <p className="mt-1 text-sm text-muted">포장 완료부터 출고, 배송 완료, 잔금 입금 확인까지 한 화면에서 처리합니다. 잔금은 거래처가 물건을 확인한 뒤 입금합니다.</p>
+        <p className="mt-1 text-sm text-muted">포장 완료 후 출고대기·출고·배송 완료·잔금 입금까지 한 화면에서 처리합니다. 잔금은 거래처가 물건을 확인한 뒤 입금합니다.</p>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
+      <div className="mt-4 grid gap-3 md:grid-cols-5">
         {tabs.map((item) => {
           const count = db.orders.filter((order) => inTab(order, item.id)).length;
           return (
@@ -128,6 +129,9 @@ export function ShippingPage() {
                         canProduce(user.role) ? <Button onClick={() => act(() => completePacking(order.id, user), "포장 완료로 변경했습니다.")}>포장 완료</Button> : <span className="text-xs text-muted">현장 관리자가 처리</span>
                       ) : null}
                       {tab === "PACKED" ? (
+                        canManageOrders(user.role) ? <Button onClick={() => act(() => markReadyToShip(order.id, user), "출고대기로 변경했습니다.")}>출고 대기로</Button> : <span className="text-xs text-muted">수주 관리자가 처리</span>
+                      ) : null}
+                      {tab === "READY_TO_SHIP" ? (
                         canManageOrders(user.role) ? (
                           <div className="flex flex-wrap items-center gap-2">
                             <select className="h-10 rounded-lg border border-line bg-white px-2" value={carriers[order.id] ?? CARRIERS[0]} onChange={(event) => setCarriers({ ...carriers, [order.id]: event.target.value })} aria-label="택배사">

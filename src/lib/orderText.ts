@@ -27,3 +27,18 @@ export function orderItemsText(products: Product[], lines: OrderLine[]): string 
   const summary = orderItems(products, lines);
   return summary.extra ? `${summary.first} 외 ${summary.extra}개 품목` : summary.first;
 }
+
+export function workItems(products: Product[], items: Array<{ productId: string; quantity: number }>): OrderItemsSummary {
+  return orderItems(products, items.map((item, index) => ({
+    id: `${item.productId}-${index}`,
+    productId: item.productId,
+    quantity: item.quantity,
+    unitPrice: 0,
+    vatIncluded: true,
+  })));
+}
+
+export function workItemsText(products: Product[], items: Array<{ productId: string; quantity: number }>): string {
+  const summary = workItems(products, items);
+  return summary.extra ? `${summary.first} 외 ${summary.extra}개 품목` : summary.first;
+}

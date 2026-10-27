@@ -1,9 +1,7 @@
 ---
 description: PRODFLOW Spring Boot REST 연동 (/api/v1, JWT, 상태 전이)
-globs: src/**/*.{ts,tsx}
 alwaysApply: false
 ---
-
 # Backend API
 
 지금은 업무 데이터를 Axios로 보내지 않는다. 쓰기는 `src/lib/workflow.ts`, 저장은 `localStorage`다. `src/lib/apiClient.ts`는 연동용 스텁이다(`baseURL: /api/v1`, 세션 토큰 Bearer). Spring 코드는 이 저장소에 두지 않는다.

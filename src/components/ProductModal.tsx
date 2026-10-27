@@ -8,11 +8,13 @@ const MAX_IMAGE_BYTES = 1024 * 1024;
 export function ProductModal({
   initialName,
   actorName,
+  note = "등록하면 생산품목 관리에도 바로 추가되고, 이 수주의 품목 줄에 선택됩니다.",
   onClose,
   onSaved,
 }: {
   initialName: string;
   actorName: string;
+  note?: string;
   onClose: () => void;
   onSaved: (productId: string, unitPrice: number) => void;
 }) {
@@ -50,7 +52,7 @@ export function ProductModal({
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <div>
             <h2 id="product-modal-title" className="font-semibold">신규 생산품목 등록</h2>
-            <p className="text-xs text-muted">등록하면 생산품목 관리에도 바로 추가되고, 이 수주의 품목 줄에 선택됩니다.</p>
+            <p className="text-xs text-muted">{note}</p>
           </div>
           <button type="button" className="rounded-lg p-1 text-muted hover:bg-canvas" aria-label="닫기" onClick={onClose}><X size={18} /></button>
         </div>

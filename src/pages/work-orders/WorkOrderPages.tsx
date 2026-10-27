@@ -5,7 +5,7 @@ import { Button } from "@/components/ui.tsx";
 import { cn } from "@/lib/cn.ts";
 import { localDate, localDateTime, todayISO, toISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
-import { orderItems, orderItemsText, productTitle } from "@/lib/orderText.ts";
+import { orderItems, orderItemsText, productTitle, workItems, workItemsText } from "@/lib/orderText.ts";
 import { availableLineIds, changeLine, clockIn, clockOut, completePacking, completeProduction, holdProduction, reassign, resumeProduction, startProduction, stopProduction } from "@/lib/workflow.ts";
 import { canManageOrders, canProduce, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
@@ -45,7 +45,7 @@ function statusView(status: WorkOrderStatus, overdue: boolean): { label: string;
 
 function stepsOf(status: WorkOrderStatus, orderStatus: OrderStatus | undefined): Array<{ label: string; state: "done" | "current" | "todo" }> {
   const labels = ["준비", status === "PAUSED" ? "일시정지" : "생산", "포장", "포장완료"];
-  const packedOrLater = orderStatus === "PACKED" || orderStatus === "SHIPPING" || orderStatus === "COMPLETED";
+  const packedOrLater = orderStatus === "PACKED" || orderStatus === "READY_TO_SHIP" || orderStatus === "SHIPPING" || orderStatus === "COMPLETED";
   const current = status === "CANCELLED" ? -1
     : status === "READY" ? 0
     : status === "IN_PRODUCTION" || status === "PAUSED" ? 1
@@ -170,7 +170,7 @@ export function WorkOrderListPage() {
         workOrderNo(item, order?.orderNo),
         order?.orderNo ?? "",
         client?.companyName ?? "",
-        order ? orderItems(db.products, order.lines).names.join(" / ") : "",
+        item.items?.length ? workItems(db.products, item.items).names.join(" / ") : order ? orderItems(db.products, order.lines).names.join(" / ") : "",
         String(item.quantity),
         line?.name ?? "",
         assignee?.name ?? "",
@@ -281,7 +281,7 @@ export function WorkOrderListPage() {
                     <td className="py-3 font-semibold">{workOrderNo(item, order?.orderNo)}</td>
                     <td>{order?.orderNo}</td>
                     <td>{client?.companyName}</td>
-                    <td title={order ? orderItems(db.products, order.lines).names.join("\n") : ""}>{order ? orderItemsText(db.products, order.lines) : ""}</td>
+                    <td title={item.items?.length ? workItems(db.products, item.items).names.join("\n") : order ? orderItems(db.products, order.lines).names.join("\n") : ""}>{item.items?.length ? workItemsText(db.products, item.items) : order ? orderItemsText(db.products, order.lines) : ""}</td>
                     <td>{item.quantity.toLocaleString("ko-KR")}</td>
                     <td>{line?.name ?? "-"}</td>
                     <td>{assignee?.name ?? "미배정"}</td>
@@ -338,6 +338,11 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
   const order = db.orders.find((item) => item.id === workOrder.orderId);
   const client = db.clients.find((item) => item.id === order?.clientId);
   const assignee = db.users.find((item) => item.id === workOrder.assigneeId);
+  const orderProducts = (workOrder.items?.length ? workOrder.items : []).map((item, index) => ({
+    key: `${item.productId}-${index}`,
+    product: db.products.find((product) => product.id === item.productId),
+    quantity: item.quantity,
+  }));
   const overdue = workOrder.plannedEndDate < todayISO() && workOrder.status !== "COMPLETED" && workOrder.status !== "CANCELLED";
   const view = statusView(workOrder.status, overdue);
   const line = db.lines.find((item) => item.id === workOrder.lineId);
@@ -356,13 +361,14 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
   const canAssignLine = (mine && canProduce(user.role) && ["READY", "IN_PRODUCTION", "PAUSED"].includes(workOrder.status))
     || (canManageOrders(user.role) && ["IN_PRODUCTION", "PAUSED"].includes(workOrder.status));
   const number = workOrderNo(workOrder, order?.orderNo);
-  const workItems = (order?.lines ?? []).map((line) => ({ line, product: db.products.find((item) => item.id === line.productId) }));
   const conditions = [
     order ? `납기 ${order.dueDate}` : "",
     order ? `수주번호 ${order.orderNo}` : "",
     `이번 지시 ${workOrder.quantity.toLocaleString("ko-KR")}개`,
     `생산 예정 ${workOrder.plannedStartDate} ~ ${workOrder.plannedEndDate}`,
-    ...workItems.map(({ product: item }) => (item?.description ? `품목 설명(${item.productName}): ${item.description}` : "")),
+    ...orderProducts.flatMap(({ product }) => (
+      product?.description ? [`품목 설명(${product.productName}): ${product.description}`] : []
+    )),
   ].filter(Boolean);
 
   function act(action: () => void, success: string) {
@@ -451,15 +457,22 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
         <div className="mt-3 space-y-3 text-sm">
           <div className="grid gap-3 md:grid-cols-[88px_minmax(0,1fr)]">
             <p className="pt-3 text-muted">작업내용</p>
-            <div className="space-y-2">
-              {workItems.map(({ line, product: item }) => (
-                <span key={line.id} className="relative block">
-                  <input className={`${readOnlyClass} pr-10`} value={`${item ? productTitle(item) : "삭제된 품목"} · ${line.quantity.toLocaleString("ko-KR")}개`} disabled />
-                  {item ? <Link className="absolute top-1/2 right-3 -translate-y-1/2 text-muted" to={`/products/${item.id}`} aria-label={`${item.productName} 품목 상세`}><Search size={15} /></Link> : null}
-                </span>
-              ))}
-              {workItems.length === 0 ? <p className="rounded-lg bg-canvas px-3 py-3 text-muted">등록된 작업내용이 없습니다.</p> : null}
-            </div>
+            {orderProducts.length === 0 ? (
+              <p className="min-h-16 rounded-lg bg-canvas px-3 py-3 text-muted">등록된 작업내용이 없습니다.</p>
+            ) : (
+              <ul className="space-y-2">
+                {orderProducts.map(({ key, product, quantity }) => (
+                  <li key={key} className="relative">
+                    <input
+                      className={`${readOnlyClass} pr-10`}
+                      value={product ? `${productTitle(product)} · ${quantity.toLocaleString("ko-KR")}개` : "삭제된 품목"}
+                      disabled
+                    />
+                    {product ? <Link className="absolute top-1/2 right-3 -translate-y-1/2 text-muted" to={`/products/${product.id}`} aria-label={`${product.productName} 상세`}><Search size={15} /></Link> : null}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <div className="grid gap-3 md:grid-cols-[88px_minmax(0,1fr)]">
             <p className="pt-3 text-muted">작업 조건</p>

@@ -1,5 +1,6 @@
 export type Role = "SUPER_ADMIN" | "ORDER_MANAGER" | "PRODUCTION_MANAGER" | "VIEWER";
 
+/** 수주 진행 상태. VARCHAR(20). 본선: WAITING→CONFIRMED→IN_PRODUCTION→PACKING→PACKED→READY_TO_SHIP→SHIPPING→COMPLETED. 예외: ON_HOLD, CANCELLED. */
 export type OrderStatus =
   | "WAITING"
   | "ON_HOLD"
@@ -7,6 +8,7 @@ export type OrderStatus =
   | "IN_PRODUCTION"
   | "PACKING"
   | "PACKED"
+  | "READY_TO_SHIP"
   | "SHIPPING"
   | "COMPLETED"
   | "CANCELLED";
@@ -36,7 +38,6 @@ export interface User {
 
 export interface Client {
   id: string;
-  businessNumber: string;
   companyName: string;
   representative: string;
   address: string;
@@ -77,17 +78,54 @@ export interface DayAllocation {
   quantity: number;
 }
 
+export interface WorkOrderItem {
+  productId: string;
+  quantity: number;
+}
+
 export type NotifyChannel = "SMS" | "EMAIL";
+
+export type QuotationStatus = "SENT" | "APPROVED" | "REJECTED" | "CANCELLED" | "EXPIRED";
+
+export type TempPlanStatus = "ACTIVE" | "RECALCULATED" | "CANCELLED" | "EXPIRED";
+
+export interface QuotationPlan {
+  id: string;
+  status: TempPlanStatus;
+  plannedStartDate: string;
+  plannedEndDate: string;
+  estimatedDueDate: string;
+  quantity: number;
+  createdAt: string;
+}
+
+export interface Quotation {
+  id: string;
+  quotationNo: string;
+  clientId: string;
+  userId: string;
+  lines: OrderLine[];
+  requestedDueDate: string;
+  estimatedDueDate: string;
+  validUntil: string;
+  status: QuotationStatus;
+  vatIncluded: boolean;
+  plans: QuotationPlan[];
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface Order {
   id: string;
   orderNo: string;
+  quotationId?: string;
   clientId: string;
   lines: OrderLine[];
   requestedDueDate: string;
   dueDate: string;
   plannedStartDate: string;
   plannedEndDate: string;
+  depositDueDate: string;
   allocations: DayAllocation[];
   shippingAddress: string;
   receiverPhone: string;
@@ -112,6 +150,7 @@ export interface WorkOrder {
   assigneeId: string | null;
   lineId: string | null;
   quantity: number;
+  items: WorkOrderItem[];
   allocations: DayAllocation[];
   issuedAt: string;
   plannedStartDate: string;
@@ -174,6 +213,7 @@ export interface Database {
   users: User[];
   clients: Client[];
   products: Product[];
+  quotations: Quotation[];
   orders: Order[];
   workOrders: WorkOrder[];
   lines: Line[];

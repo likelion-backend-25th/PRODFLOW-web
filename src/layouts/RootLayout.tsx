@@ -3,6 +3,7 @@ import { Bell } from "lucide-react";
 import { Link, Navigate, Outlet, useLocation } from "react-router";
 import { crumbs, Sidebar } from "@/components/layout/Sidebar.tsx";
 import { useDb } from "@/lib/db.ts";
+import { expireUnpaidOrders } from "@/lib/workflow.ts";
 import { todayISO } from "@/lib/dates.ts";
 import { activeWorkOrder, delayOf } from "@/lib/delay.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
@@ -21,6 +22,11 @@ export function RootLayout() {
   const alerts = db.orders.filter((order) => delayOf(order, activeWorkOrder(db.workOrders, order.id), today)).length;
   const account = db.users.find((item) => item.id === user?.id);
   const revoked = Boolean(user) && account?.status !== "ACTIVE";
+
+  useEffect(() => {
+    const expired = expireUnpaidOrders();
+    if (expired > 0) show(`계약금 입금 마감일이 지난 대기 수주 ${expired}건을 취소하고 일정을 되돌렸습니다.`);
+  }, [show]);
 
   useEffect(() => {
     if (revoked) {
