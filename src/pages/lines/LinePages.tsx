@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { Badge, Button, Card, PageHeader, TextField } from "@/components/ui.tsx";
+import { Badge, Button, Card, PageHeader, tableClass, TextField } from "@/components/ui.tsx";
 import { useDb } from "@/lib/db.ts";
+import { localDateTime } from "@/lib/dates.ts";
 import { lineStatusLabel, lineTone } from "@/lib/labels.ts";
 import { orderItemsText } from "@/lib/orderText.ts";
 import { saveLine, setLineStatus } from "@/lib/workflow.ts";
@@ -64,24 +65,28 @@ export function LineFormPage() {
   const db = useDb();
   const navigate = useNavigate();
   const show = useToastStore((state) => state.show);
+  const actorId = useAuthStore((state) => state.user?.id);
   const current = db.lines.find((line) => line.id === lineId);
   const [name, setName] = useState(current?.name ?? "");
   const [dailyCapacity, setDailyCapacity] = useState(current?.dailyCapacity ?? 500);
+  const [reason, setReason] = useState("");
+  const capacityChanged = Boolean(current) && current.dailyCapacity !== dailyCapacity;
   return (
     <div>
       <PageHeader title={current ? "라인 정보 수정" : "라인 등록"} />
       <form className="grid max-w-md gap-3" onSubmit={(event) => {
         event.preventDefault();
         try {
-          saveLine({ id: current?.id, name, dailyCapacity });
+          saveLine({ id: current?.id, name, dailyCapacity, reason, actorId });
           show("라인 정보를 저장했습니다.");
-          navigate("/lines");
+          navigate(current ? `/lines/${current.id}` : "/lines");
         } catch (error: unknown) {
           show(error instanceof Error ? error.message : "저장하지 못했습니다.");
         }
       }}>
         <TextField label="라인 이름" value={name} onChange={(event) => setName(event.target.value)} />
         <TextField label="하루 생산량" type="number" value={dailyCapacity} onChange={(event) => setDailyCapacity(Number(event.target.value))} />
+        {capacityChanged ? <TextField label="변경 사유" value={reason} onChange={(event) => setReason(event.target.value)} /> : null}
         <Button type="submit">저장</Button>
       </form>
     </div>
@@ -96,8 +101,12 @@ export function LineDetailPage() {
   const line = db.lines.find((item) => item.id === lineId);
   if (!line) return <p>라인을 찾을 수 없습니다.</p>;
   const current = db.workOrders.find((item) => item.lineId === line.id && (item.status === "IN_PRODUCTION" || item.status === "PAUSED"));
+  const logs = db.lineCapacityLogs
+    .filter((log) => log.lineId === line.id)
+    .sort((left, right) => right.changedAt.localeCompare(left.changedAt));
   return (
     <div className="space-y-4">
+      <Link to="/lines" className="inline-flex text-sm font-semibold text-primary">← 생산라인</Link>
       <PageHeader title={line.name} action={role === "SUPER_ADMIN" ? <Link to={`/lines/${line.id}/edit`}><Button tone="ghost">생산량 수정</Button></Link> : null} />
       <Card>
         <p>하루 생산량 {line.dailyCapacity.toLocaleString("ko-KR")}개</p>
@@ -116,6 +125,35 @@ export function LineDetailPage() {
             ))}
           </div>
         ) : null}
+      </Card>
+      <Card>
+        <h2 className="font-semibold">하루 생산량 변경 이력</h2>
+        {logs.length === 0 ? <p className="mt-3 text-sm text-muted">변경 이력이 없습니다.</p> : (
+          <div className="mt-3 overflow-x-auto">
+            <table className={tableClass}>
+              <thead>
+                <tr className="border-b border-line text-sm text-muted">
+                  <th>변경 일시</th>
+                  <th>변경 전</th>
+                  <th>변경 후</th>
+                  <th>변경 사유</th>
+                  <th>담당자</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((log) => (
+                  <tr key={log.id}>
+                    <td>{localDateTime(log.changedAt)}</td>
+                    <td>{log.beforeCapacity.toLocaleString("ko-KR")}개</td>
+                    <td>{log.afterCapacity.toLocaleString("ko-KR")}개</td>
+                    <td>{log.reason}</td>
+                    <td>{db.users.find((user) => user.id === log.userId)?.name ?? "알 수 없음"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </div>
   );

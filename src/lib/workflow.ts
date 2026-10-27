@@ -721,16 +721,34 @@ export function saveProduct(input: {
   return savedId;
 }
 
-export function saveLine(input: { id?: string; name: string; dailyCapacity: number }): void {
+export function saveLine(input: { id?: string; name: string; dailyCapacity: number; reason?: string; actorId?: string }): void {
   updateDb((db) => {
+    const name = input.name.trim();
+    if (!name) throw new Error("라인 이름을 입력하세요.");
+    if (!Number.isInteger(input.dailyCapacity) || input.dailyCapacity < 1) throw new Error("하루 생산량은 1개 이상 정수로 입력하세요.");
     if (input.id) {
       const line = db.lines.find((item) => item.id === input.id);
       if (!line) throw new Error("라인을 찾을 수 없습니다.");
-      line.name = input.name;
+      // 하루 생산량이 바뀐 경우에만 변경 이력을 남긴다. 이름만 고치면 용량 이력은 그대로다.
+      if (line.dailyCapacity !== input.dailyCapacity) {
+        const reason = input.reason?.trim() ?? "";
+        if (reason.length < 2) throw new Error("하루 생산량 변경 사유를 2자 이상 입력하세요.");
+        if (!input.actorId || !db.users.some((user) => user.id === input.actorId)) throw new Error("변경한 계정을 확인할 수 없습니다.");
+        db.lineCapacityLogs.unshift({
+          id: crypto.randomUUID(),
+          lineId: line.id,
+          beforeCapacity: line.dailyCapacity,
+          afterCapacity: input.dailyCapacity,
+          reason,
+          userId: input.actorId,
+          changedAt: nowStamp(),
+        });
+      }
+      line.name = name;
       line.dailyCapacity = input.dailyCapacity;
       return;
     }
-    db.lines.push({ id: crypto.randomUUID(), name: input.name, dailyCapacity: input.dailyCapacity, status: "AVAILABLE" });
+    db.lines.push({ id: crypto.randomUUID(), name, dailyCapacity: input.dailyCapacity, status: "AVAILABLE" });
   });
 }
 
