@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { sampleAddresses } from "@/lib/addresses.ts";
 import { addDays, todayISO } from "@/lib/dates.ts";
 import { integrityIssues } from "@/lib/integrity.ts";
-import { depositTarget, orderQuantity, orderTotal, paymentStatusOf } from "@/lib/money.ts";
+import { depositTarget, nextModelCode, orderQuantity, orderTotal, paymentStatusOf } from "@/lib/money.ts";
 import { isWorkingDay, splitQuantityByLines } from "@/lib/schedule.ts";
 import type {
   Client,
@@ -150,6 +150,7 @@ function seed(): Database {
   const products: Product[] = [
     {
       id: "product-1",
+      modelCode: "PM-0001",
       productName: "클리어 케이스",
       modelName: "iPhone 16",
       description: "투명 하드 케이스",
@@ -161,6 +162,7 @@ function seed(): Database {
     },
     {
       id: "product-2",
+      modelCode: "PM-0002",
       productName: "맥세이프 케이스",
       modelName: "iPhone 16 Pro",
       description: "자석 링 케이스",
@@ -172,6 +174,7 @@ function seed(): Database {
     },
     {
       id: "product-3",
+      modelCode: "PM-0003",
       productName: "카드 케이스",
       modelName: "Galaxy S25",
       description: "카드 수납 케이스",
@@ -183,6 +186,7 @@ function seed(): Database {
     },
     {
       id: "product-4",
+      modelCode: "PM-0004",
       productName: "젤리 케이스",
       modelName: "Galaxy S24",
       description: "말랑한 젤리 케이스",
@@ -547,6 +551,13 @@ function repair(db: Database): boolean {
     legacy.department ??= departmentOf[user.role];
     legacy.createdAt ??= firstEvent;
     legacy.lastLoginAt ??= null;
+    changed = true;
+  });
+  const issued = db.products.map((product) => product.modelCode).filter((code) => code);
+  db.products.forEach((product) => {
+    if (product.modelCode) return;
+    product.modelCode = nextModelCode(issued);
+    issued.push(product.modelCode);
     changed = true;
   });
   return changed;

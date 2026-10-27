@@ -51,6 +51,7 @@ export interface Client {
 
 export interface Product {
   id: string;
+  modelCode: string;
   productName: string;
   modelName: string;
   description: string;

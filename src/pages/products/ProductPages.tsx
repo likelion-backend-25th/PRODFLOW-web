@@ -15,7 +15,7 @@ export function ProductListPage() {
   const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
   const [keyword, setKeyword] = useState("");
-  const rows = db.products.filter((product) => `${product.productName} ${product.modelName} ${product.description}`.includes(keyword.trim()));
+  const rows = db.products.filter((product) => `${product.modelCode} ${product.productName} ${product.modelName} ${product.description}`.includes(keyword.trim()));
   const [selectedId, setSelectedId] = useState(rows[0]?.id ?? "");
   const selected = db.products.find((product) => product.id === selectedId) ?? rows[0];
   const related = (productId: string) => db.orders.filter((order) => order.lines.some((line) => line.productId === productId) && order.status !== "CANCELLED");
@@ -36,17 +36,19 @@ export function ProductListPage() {
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <section className="overflow-hidden rounded-xl border border-line bg-white">
           <div className="flex items-center justify-between px-5 py-4"><h2 className="font-semibold">등록된 생산품목</h2><span className="text-sm text-muted">총 {rows.length}종</span></div>
-          <div className="px-5 pb-3"><input className="h-10 w-full rounded-lg border border-line px-3" value={keyword} placeholder="품목명, 설명, 카테고리 검색" onChange={(event) => setKeyword(event.target.value)} /></div>
+          <div className="px-5 pb-3"><input className="h-10 w-full rounded-lg border border-line px-3" value={keyword} placeholder="모델코드, 품목명, 기종명, 설명 검색" onChange={(event) => setKeyword(event.target.value)} /></div>
           <table className="w-full text-left text-sm">
-            <thead className="bg-primary-soft/40 text-muted"><tr><th className="px-5 py-3 font-medium">품목명</th><th className="py-3 font-medium">모델</th><th className="py-3 font-medium">설명</th><th className="py-3 font-medium">단가</th><th className="py-3 font-medium">최근 수정</th><th className="w-12 py-3 pr-3 font-medium"><span className="sr-only">상세</span></th></tr></thead>
+            <thead className="bg-primary-soft/40 text-muted"><tr><th className="px-5 py-3 font-medium">모델코드</th><th className="py-3 font-medium">품목명</th><th className="py-3 font-medium">기종명</th><th className="py-3 font-medium">설명</th><th className="py-3 font-medium">단가</th><th className="py-3 font-medium">최근 수정</th><th className="py-3 font-medium">상태</th><th className="w-12 py-3 pr-3 font-medium"><span className="sr-only">상세</span></th></tr></thead>
             <tbody>
               {rows.map((product) => (
                 <tr key={product.id} className={`cursor-pointer border-t border-line ${selected?.id === product.id ? "bg-primary-soft" : ""}`} onClick={() => setSelectedId(product.id)}>
-                  <td className="px-5 py-3 font-semibold">{product.productName}</td>
+                  <td className="px-5 py-3">{product.modelCode}</td>
+                  <td className="font-semibold">{product.productName}</td>
                   <td>{product.modelName}</td>
                   <td className="max-w-48 truncate">{product.description}</td>
-                  <td>{formatWon(product.unitPrice)}</td>
+                  <td className="whitespace-nowrap">{formatWon(product.unitPrice)}</td>
                   <td className="whitespace-nowrap">{localDate(product.updatedAt)}</td>
+                  <td><Badge className="bg-slate-100 text-slate-600">생산 가능</Badge></td>
                   <td className="pr-3">
                     <Link
                       to={`/products/${product.id}`}
@@ -67,8 +69,10 @@ export function ProductListPage() {
             <section className="rounded-xl border border-line bg-white p-5">
               <h2 className="font-semibold">품목 상세</h2>
               {selected.designImageUrl ? <img src={selected.designImageUrl} alt="" className="mt-3 h-16 w-16 rounded-lg object-cover" /> : null}
-              <p className="mt-3 text-lg font-semibold">{selected.productName}</p>
+              <p className="mt-3 text-xs text-muted">{selected.modelCode}</p>
+              <p className="text-lg font-semibold">{selected.productName}</p>
               <p className="text-sm text-muted">{selected.modelName}</p>
+              <Badge className="mt-3 bg-slate-100 text-slate-600">생산 가능</Badge>
               <p className="mt-3 text-sm">{selected.description}</p>
               <p className="mt-3 font-semibold">{formatWon(selected.unitPrice)}</p>
               {selected.drawingPdfName && selected.drawingPdfUrl ? <a className="mt-2 block text-sm text-primary" href={selected.drawingPdfUrl} download={selected.drawingPdfName}>도면 {selected.drawingPdfName}</a> : null}
@@ -391,13 +395,13 @@ export function ProductDetailPage() {
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary"><Package size={18} /></span>
             <div>
               <p className="text-lg font-semibold">{product.productName}</p>
-              <p className="text-sm text-muted">{[product.modelName, `${localDate(product.createdAt)} 등록`].filter(Boolean).join(" · ")}</p>
+              <p className="text-sm text-muted">{[product.modelCode, product.modelName, `${localDate(product.createdAt)} 등록`].filter(Boolean).join(" · ")}</p>
             </div>
           </div>
           <p className="mt-5 text-sm text-muted">설명</p>
           <p className="mt-1">{product.description || "설명이 없습니다."}</p>
           <div className="mt-5 grid gap-4 border-t border-line pt-4 sm:grid-cols-3">
-            <div><p className="text-xs text-muted">모델</p><p className="mt-1 font-semibold">{product.modelName || "-"}</p></div>
+            <div><p className="text-xs text-muted">기종명</p><p className="mt-1 font-semibold">{product.modelName || "-"}</p></div>
             <div><p className="text-xs text-muted">등록자</p><p className="mt-1 font-semibold">{product.createdByName}</p></div>
             <div><p className="text-xs text-muted">기준 단가 · 부가세 별도</p><p className="mt-1 font-semibold">{formatWon(product.unitPrice)}</p></div>
           </div>
