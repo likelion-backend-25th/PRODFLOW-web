@@ -218,7 +218,7 @@ function Detail({ label, value }: { label: string; value: string }) {
 
 function paymentRows(orders: Order[], clients: { id: string; companyName: string }[], histories: StatusHistory[]): PaymentRow[] {
   return orders.flatMap((order) => {
-    const total = orderTotal(order.lines);
+    const total = orderTotal(order.lines, order.vatIncluded);
     const deposit = depositTarget(total);
     const balance = Math.max(0, total - deposit);
     const clientName = clients.find((client) => client.id === order.clientId)?.companyName ?? "삭제된 거래처";
@@ -291,7 +291,7 @@ function matches(row: PaymentRow, filters: Filters): boolean {
 
 function summarize(orders: Order[], today: string) {
   return orders.filter((order) => order.status !== "CANCELLED").reduce((sum, order) => {
-    const total = orderTotal(order.lines);
+    const total = orderTotal(order.lines, order.vatIncluded);
     const unpaid = Math.max(0, total - order.paidAmount);
     const overdue = (order.depositDueDate < today && order.paidAmount < depositTarget(total)) || (order.status === "COMPLETED" && unpaid > 0);
     return {

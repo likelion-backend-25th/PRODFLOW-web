@@ -92,7 +92,7 @@ export function QuoteListPage() {
                     <td className="px-4 py-3">{client?.companyName ?? "-"}</td>
                     <td className="px-4 py-3">{quote.requestedDueDate}</td>
                     <td className="px-4 py-3">{quote.estimatedDueDate}</td>
-                    <td className="px-4 py-3">{formatWon(orderTotal(quote.lines))}</td>
+                    <td className="px-4 py-3">{formatWon(orderTotal(quote.lines, quote.vatIncluded))}</td>
                     <td className="px-4 py-3"><Badge className={quotationStatusTone(quote.status)}>{quotationStatusLabel[quote.status]}</Badge></td>
                     <td className="px-4 py-3">
                       {order ? <Link to={`/orders/${order.id}`} className="text-primary">{order.orderNo}</Link> : quote.status === "APPROVED" ? (canManageOrders(role) ? <Link to={`/orders/new?quotationId=${quote.id}`} className="font-semibold text-primary">수주 대기</Link> : "수주 대기") : "-"}

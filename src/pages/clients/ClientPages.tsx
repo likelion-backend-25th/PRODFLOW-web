@@ -46,7 +46,7 @@ export function ClientListPage() {
     return {
       client,
       orders,
-      amount: orders.reduce((sum, order) => sum + orderTotal(order.lines), 0),
+      amount: orders.reduce((sum, order) => sum + orderTotal(order.lines, order.vatIncluded), 0),
       latest: orders[0] ? localDate(orders[0].createdAt) : "",
     };
   });
@@ -85,7 +85,7 @@ export function ClientListPage() {
                 const lines = text.split(/\r?\n/).slice(1).filter((line) => line.trim());
                 const imported = importClients(lines.map((line) => {
                   const [companyName, representative, address, phone, contactName, contactMobile, taxEmail] = line.split(",");
-                  return { companyName: companyName ?? "", representative: representative ?? "", address: address ?? "", postalCode: "", addressDetail: "", phone: phone ?? "", contactName: contactName ?? "", contactMobile: contactMobile ?? "", taxEmail: taxEmail ?? "" };
+                  return { companyName: companyName ?? "", representative: representative ?? "", zipcode: "", roadAddress: address ?? "", detailAddress: "", phone: phone ?? "", contactName: contactName ?? "", contactMobile: contactMobile ?? "", taxEmail: taxEmail ?? "" };
                 }));
                 setResult(`성공 ${imported.created}건${imported.errors.length ? ` / ${imported.errors.join(" ")}` : ""}`);
                 show("엑셀 등록을 반영했습니다.");
@@ -270,7 +270,7 @@ export function ClientListPage() {
                   <span className="block text-xs font-bold">{orderItemsText(db.products, order.lines)}</span>
                   <span className="flex items-start justify-between">
                     <span className="text-[10px] text-muted">납기 {dotted(order.dueDate)}</span>
-                    <span className="text-xs font-bold">₩{orderTotal(order.lines).toLocaleString("ko-KR")}</span>
+                    <span className="text-xs font-bold">₩{orderTotal(order.lines, order.vatIncluded).toLocaleString("ko-KR")}</span>
                   </span>
                 </Link>
               ))}
@@ -355,7 +355,7 @@ function InfoRow({ label, value, muted = false }: { label: string; value: string
   );
 }
 
-const emptyClient = { companyName: "", representative: "", address: "", postalCode: "", addressDetail: "", phone: "", contactName: "", contactMobile: "", taxEmail: "" };
+const emptyClient = { companyName: "", representative: "", zipcode: "", roadAddress: "", detailAddress: "", phone: "", contactName: "", contactMobile: "", taxEmail: "" };
 
 export function ClientFormPage() {
   const { clientId } = useParams();
@@ -498,9 +498,9 @@ export function ClientFormPage() {
           <hr className="border-line" />
 
           <CompanyAddress
-            postalCode={form.postalCode}
-            road={form.address}
-            detail={form.addressDetail}
+            zipcode={form.zipcode}
+            road={form.roadAddress}
+            detail={form.detailAddress}
             onSearch={() => {
               if (!window.daum?.Postcode) {
                 show("우편번호 서비스를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
@@ -509,13 +509,13 @@ export function ClientFormPage() {
               new window.daum.Postcode({
                 oncomplete: (data) => {
                   patch({
-                    postalCode: data.zonecode,
-                    address: data.roadAddress || data.address,
+                    zipcode: data.zonecode,
+                    roadAddress: data.roadAddress || data.address,
                   });
                 },
               }).open();
             }}
-            onDetail={(addressDetail) => patch({ addressDetail })}
+            onDetail={(detailAddress) => patch({ detailAddress })}
           />
 
           <section className="flex items-start gap-3 rounded-lg bg-primary-soft p-[15px]">
@@ -581,13 +581,13 @@ const currentContact = "current";
 const inputClass = "h-[41px] w-full rounded-[7px] border border-line bg-white px-3 text-xs placeholder:text-muted/70";
 
 function CompanyAddress({
-  postalCode,
+  zipcode,
   road,
   detail,
   onSearch,
   onDetail,
 }: {
-  postalCode: string;
+  zipcode: string;
   road: string;
   detail: string;
   onSearch: () => void;
@@ -597,7 +597,7 @@ function CompanyAddress({
     <div className="space-y-[7px]">
       <p className="text-xs font-medium">회사 주소 *</p>
       <div className="flex items-center gap-2">
-        <input readOnly value={postalCode} placeholder="우편번호" className={inputClass} />
+        <input readOnly value={zipcode} placeholder="우편번호" className={inputClass} />
         <button type="button" className="h-[41px] shrink-0 rounded-[7px] border border-line bg-white px-4 text-[13px] font-medium" onClick={onSearch}>
           우편번호 찾기
         </button>
@@ -683,7 +683,7 @@ export function ClientDetailPage() {
 
       <div className="grid gap-4 md:grid-cols-3">
         <DetailMetric label="누적 수주" icon={<ClipboardList size={20} />} value={`${active.length}건`} caption={breakdown || "아직 수주가 없습니다."} />
-        <DetailMetric label="누적 거래액" icon={<Building2 size={20} />} value={`₩${active.reduce((sum, order) => sum + orderTotal(order.lines), 0).toLocaleString("ko-KR")}`} caption="취소 건을 뺀 수주 금액 합계" />
+        <DetailMetric label="누적 거래액" icon={<Building2 size={20} />} value={`₩${active.reduce((sum, order) => sum + orderTotal(order.lines, order.vatIncluded), 0).toLocaleString("ko-KR")}`} caption="취소 건을 뺀 수주 금액 합계" />
         <DetailMetric
           label="최근 수주일"
           icon={<CalendarDays size={20} />}
@@ -743,7 +743,7 @@ export function ClientDetailPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] text-muted">수주 금액 · VAT 포함</span>
-                  <span className="text-sm font-bold">₩{orderTotal(latest.lines).toLocaleString("ko-KR")}</span>
+                  <span className="text-sm font-bold">₩{orderTotal(latest.lines, latest.vatIncluded).toLocaleString("ko-KR")}</span>
                 </div>
                 <hr className="border-line" />
                 <div className="flex items-center justify-between">
@@ -757,7 +757,7 @@ export function ClientDetailPage() {
           </section>
           <section className="flex items-start justify-between rounded-[10px] border border-line bg-white p-[18px] text-xs">
             <span className="text-muted">진행 중인 수주</span>
-            <span className="font-bold text-primary">{open.length}건 · ₩{open.reduce((sum, order) => sum + orderTotal(order.lines), 0).toLocaleString("ko-KR")}</span>
+            <span className="font-bold text-primary">{open.length}건 · ₩{open.reduce((sum, order) => sum + orderTotal(order.lines, order.vatIncluded), 0).toLocaleString("ko-KR")}</span>
           </section>
         </aside>
       </div>
@@ -796,7 +796,7 @@ export function ClientDetailPage() {
                       {orderItems(db.products, order.lines).names.map((name) => <span key={name} className="block whitespace-nowrap">{name}</span>)}
                     </td>
                     <td className="text-xs font-medium">{orderQuantity(order.lines).toLocaleString("ko-KR")}</td>
-                    <td className="text-xs font-medium">₩{orderTotal(order.lines).toLocaleString("ko-KR")}</td>
+                    <td className="text-xs font-medium">₩{orderTotal(order.lines, order.vatIncluded).toLocaleString("ko-KR")}</td>
                     <td className="text-xs">{dotted(order.dueDate)}</td>
                     <td><StatusPill label={orderStatusLabel[order.status]} tone={orderStatusTone(order.status)} /></td>
                     <td><StatusPill label={paymentStatusLabel[order.paymentStatus]} tone={paymentTone(order.paymentStatus)} /></td>

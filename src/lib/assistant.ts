@@ -93,7 +93,7 @@ function unpaid(db: Database): AssistantAnswer {
         cells: [
           { text: clientName(db, order.clientId) },
           { text: order.orderNo },
-          { text: formatWon(orderTotal(order.lines)) },
+          { text: formatWon(orderTotal(order.lines, order.vatIncluded)) },
           { text: formatWon(order.paidAmount) },
           { text: paymentStatusLabel[order.paymentStatus], className: paymentTone(order.paymentStatus) },
         ],
@@ -118,7 +118,7 @@ function monthSummary(db: Database, today: string): AssistantAnswer {
         { text: orderStatusLabel[status], className: orderStatusTone(status) },
         { text: `${list.length}건` },
         { text: `${list.reduce((sum, order) => sum + orderQuantity(order.lines), 0).toLocaleString("ko-KR")}개` },
-        { text: formatWon(list.reduce((sum, order) => sum + orderTotal(order.lines), 0)) },
+        { text: formatWon(list.reduce((sum, order) => sum + orderTotal(order.lines, order.vatIncluded), 0)) },
       ],
     }));
   return {

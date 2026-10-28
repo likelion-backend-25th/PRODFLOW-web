@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { Button, Card } from "@/components/ui.tsx";
 import { cn } from "@/lib/cn.ts";
-import { todayISO } from "@/lib/dates.ts";
+import { addDays, todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount, orderTotal } from "@/lib/money.ts";
 import { clientFullAddress, createOrder, previewDuePlan, previewSchedule } from "@/lib/workflow.ts";
@@ -28,7 +28,7 @@ export function OrderRegisterPage() {
   const [receiverPhone, setReceiverPhone] = useState(client?.contactMobile ?? "");
   const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>("SMS");
   const [memo, setMemo] = useState("");
-  const [depositDueDate, setDepositDueDate] = useState(todayISO());
+  const depositDueDate = addDays(todayISO(), 3);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [chosenDue, setChosenDue] = useState("");
   const [dueOpen, setDueOpen] = useState(false);
@@ -38,11 +38,11 @@ export function OrderRegisterPage() {
   const current = useMemo(() => {
     if (!quote || quote.status !== "APPROVED" || quantity <= 0) return null;
     try {
-      return previewSchedule(quantity);
+      return previewSchedule(quantity, undefined, depositDueDate || undefined);
     } catch (reason: unknown) {
       return reason instanceof Error ? reason.message : "납기를 계산하지 못했습니다.";
     }
-  }, [db, quantity, quote]);
+  }, [db, depositDueDate, quantity, quote]);
   const selection = useMemo(() => {
     if (!quote || !current || typeof current === "string") return null;
     const slipped = quote.estimatedDueDate < current.earliestDueDate;
@@ -51,12 +51,12 @@ export function OrderRegisterPage() {
       return { slipped, registerDue, earliest: current.earliestDueDate, plannedStartDate: current.plannedStartDate, plannedEndDate: current.plannedEndDate };
     }
     try {
-      const plan = previewDuePlan(quantity, registerDue);
+      const plan = previewDuePlan(quantity, registerDue, depositDueDate || undefined);
       return { slipped, registerDue, earliest: current.earliestDueDate, plannedStartDate: plan.plannedStartDate, plannedEndDate: plan.plannedEndDate };
     } catch {
       return { slipped, registerDue: current.earliestDueDate, earliest: current.earliestDueDate, plannedStartDate: current.plannedStartDate, plannedEndDate: current.plannedEndDate };
     }
-  }, [chosenDue, current, db, quantity, quote]);
+  }, [chosenDue, current, db, depositDueDate, quantity, quote]);
 
   if (!quote || quote.status !== "APPROVED") {
     return (
@@ -73,7 +73,7 @@ export function OrderRegisterPage() {
   const registerDue = selection?.registerDue ?? "";
   const orderLines = quote.lines.map((line) => ({ ...line, quantity: quantities[line.id] ?? line.quantity }));
   const reduced = orderLines.some((line) => line.quantity < (quote.lines.find((item) => item.id === line.id)?.quantity ?? line.quantity));
-  const orderAmount = orderTotal(orderLines);
+  const orderAmount = orderTotal(orderLines, quote.vatIncluded);
   const needsConsent = reduced || slipped;
   const existing = db.orders.find((order) => order.quotationId === quote.id && order.status !== "CANCELLED");
   if (existing) {
@@ -111,7 +111,7 @@ export function OrderRegisterPage() {
       const order = createOrder({
         quotationId: quote.id,
         clientId: quote.clientId,
-        lines: orderLines.map(({ productId, quantity: lineQuantity, unitPrice, vatIncluded }) => ({ productId, quantity: lineQuantity, unitPrice, vatIncluded })),
+        lines: orderLines.map(({ productId, quantity: lineQuantity, unitPrice }) => ({ productId, quantity: lineQuantity, unitPrice })),
         requestedDueDate: quote.requestedDueDate,
         dueDate: registerDue,
         depositDueDate,
@@ -136,7 +136,7 @@ export function OrderRegisterPage() {
         <h1 className="text-2xl font-semibold">수주 등록</h1>
         <p className="mt-1 text-sm text-muted">{quote.quotationNo}의 단가는 그대로입니다. 납기가 늦으면 이 화면에서 수량만 줄여 다시 계산합니다. 견적서의 수량은 바꾸지 않습니다.</p>
       </div>
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <div className="space-y-4">
         <Card>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -182,7 +182,7 @@ export function OrderRegisterPage() {
                         />
                       </td>
                       <td className="tabular-nums">{formatWon(line.unitPrice)}</td>
-                      <td className="text-right font-semibold tabular-nums">{formatWon(lineAmount({ ...line, quantity: nextQuantity }))}</td>
+                      <td className="text-right font-semibold tabular-nums">{formatWon(lineAmount({ ...line, quantity: nextQuantity }, quote.vatIncluded))}</td>
                     </tr>
                   );
                 })}
@@ -251,9 +251,9 @@ export function OrderRegisterPage() {
                   setShippingAddress("");
                   return;
                 }
-                const postal = client?.postalCode ?? "";
-                const road = client?.address ?? "";
-                const detail = client?.addressDetail ?? "";
+                const postal = client?.zipcode ?? "";
+                const road = client?.roadAddress ?? "";
+                const detail = client?.detailAddress ?? "";
                 setPostalCode(postal);
                 setRoadAddress(road);
                 setAddressDetail(detail);
@@ -314,36 +314,54 @@ export function OrderRegisterPage() {
           <label className="block text-sm">업무 메모
             <textarea className="mt-1 min-h-20 w-full rounded-lg border border-line px-3 py-2" value={memo} maxLength={200} onChange={(event) => setMemo(event.target.value)} />
           </label>
-          <label className="block text-sm">계약금 입금 마감
-            <input type="date" className="mt-1 h-10 w-full rounded-lg border border-line px-3" value={depositDueDate} onChange={(event) => setDepositDueDate(event.target.value)} />
-          </label>
         </Card>
       </div>
-      <Card>
-        <p className="text-sm">등록 직후 확정 상태는 예정, 진행 상태는 대기입니다. 작업지시서는 계약금 확인 후에 만들어집니다.</p>
-        <p className="mt-2 text-sm text-muted">지금 계산한 생산 예정 {selection?.plannedStartDate ?? "-"} ~ {selection?.plannedEndDate ?? "-"}</p>
-        <dl className="mt-3 space-y-1 text-sm">
-          <div className="flex justify-between"><dt className="text-muted">견적 총액</dt><dd className="tabular-nums">{formatWon(orderTotal(quote.lines))}</dd></div>
-          <div className="flex justify-between"><dt className="text-muted">수주 총액</dt><dd className="font-semibold tabular-nums">{formatWon(orderAmount)}</dd></div>
-          <div className="flex justify-between"><dt className="text-muted">계약금 50%</dt><dd className="tabular-nums">{formatWon(depositTarget(orderAmount))}</dd></div>
-        </dl>
-        <p className="mt-3 text-sm">등록할 예상 납기 <span className="font-semibold">{registerDue || "-"}</span></p>
-        <div className="mt-3 min-h-16">
-          {needsConsent ? (
-            <label className="flex items-start gap-2 text-sm">
-              <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--color-primary)]" checked={agreed} onChange={(event) => setAgreed(event.target.checked)} />
-              {reduced && slipped
-                ? `거래처가 줄어든 수량과 ${registerDue} 납기에 동의했습니다.`
-                : reduced
-                  ? "거래처가 줄어든 수량에 동의했습니다. 단가는 그대로입니다."
-                  : `거래처가 ${registerDue} 납기에 동의했습니다.`}
-            </label>
-          ) : null}
-        </div>
-        <p className="min-h-5 text-sm text-danger">{error}</p>
-        <Button className="mt-4 w-full" disabled={needsConsent && !agreed} onClick={register}>수주 등록</Button>
+      <Card className="space-y-5">
+        <p className="text-sm leading-6 text-muted">등록 직후 확정 상태는 예정, 진행 상태는 대기입니다. 작업지시서는 계약금 확인 후에 만들어집니다.</p>
+        <section>
+          <h2 className="text-sm font-semibold">일정</h2>
+          <dl className="mt-2 space-y-2.5 text-sm">
+            <SummaryRow label="생산 시작" value={selection?.plannedStartDate ?? "-"} />
+            <SummaryRow label="생산 완료" value={selection?.plannedEndDate ?? "-"} />
+            <SummaryRow label="등록할 납기" value={registerDue || "-"} strong />
+          </dl>
+        </section>
+        <section>
+          <h2 className="text-sm font-semibold">금액</h2>
+          <dl className="mt-2 space-y-2.5 text-sm">
+            <div className="flex justify-between gap-3"><dt className="text-muted">견적 총액</dt><dd className="tabular-nums">{formatWon(orderTotal(quote.lines, quote.vatIncluded))}</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-muted">수주 총액</dt><dd className="font-semibold tabular-nums">{formatWon(orderAmount)}</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-muted">계약금 50%</dt><dd className="tabular-nums">{formatWon(depositTarget(orderAmount))}</dd></div>
+          </dl>
+        </section>
+        <section className="rounded-lg bg-canvas px-3 py-3">
+          <p className="text-xs text-muted">계약금 마감</p>
+          <p className="mt-1 text-sm font-semibold">{depositDueDate}</p>
+          <p className="mt-1 text-xs leading-5 text-muted">등록일부터 3일입니다. 이 날까지 계약금이 전혀 없으면 다음 날 대기 수주가 취소됩니다.</p>
+        </section>
+        {needsConsent ? (
+          <label className="flex items-start gap-2 text-sm leading-6">
+            <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--color-primary)]" checked={agreed} onChange={(event) => setAgreed(event.target.checked)} />
+            {reduced && slipped
+              ? `거래처가 줄어든 수량과 ${registerDue} 납기에 동의했습니다.`
+              : reduced
+                ? "거래처가 줄어든 수량에 동의했습니다. 단가는 그대로입니다."
+                : `거래처가 ${registerDue} 납기에 동의했습니다.`}
+          </label>
+        ) : null}
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        <Button className="w-full" disabled={needsConsent && !agreed} onClick={register}>수주 등록</Button>
       </Card>
       </div>
+    </div>
+  );
+}
+
+function SummaryRow({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="text-muted">{label}</dt>
+      <dd className={strong ? "font-semibold tabular-nums" : "tabular-nums"}>{value}</dd>
     </div>
   );
 }

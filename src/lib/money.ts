@@ -1,15 +1,15 @@
-import type { OrderLine, PaymentStatus } from "@/types/domain.ts";
+import type { PaymentStatus } from "@/types/domain.ts";
 
-export function lineAmount(line: Pick<OrderLine, "quantity" | "unitPrice" | "vatIncluded">): number {
+export function lineAmount(line: { quantity: number; unitPrice: number }, vatIncluded: boolean): number {
   const base = line.quantity * line.unitPrice;
-  return line.vatIncluded ? base : Math.round(base * 1.1);
+  return vatIncluded ? base : Math.round(base * 1.1);
 }
 
-export function orderTotal(lines: OrderLine[]): number {
-  return lines.reduce((sum, line) => sum + lineAmount(line), 0);
+export function orderTotal(lines: Array<{ quantity: number; unitPrice: number }>, vatIncluded: boolean): number {
+  return lines.reduce((sum, line) => sum + lineAmount(line, vatIncluded), 0);
 }
 
-export function orderQuantity(lines: OrderLine[]): number {
+export function orderQuantity(lines: Array<{ quantity: number }>): number {
   return lines.reduce((sum, line) => sum + line.quantity, 0);
 }
 

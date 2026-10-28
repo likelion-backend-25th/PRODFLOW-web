@@ -390,7 +390,7 @@ function ProductEditor({ productId }: { productId?: string }) {
 
 function productionFinished(status: string): boolean {
   // 출고대기는 포장이 끝난 뒤라 누적 생산량에 포함한다.
-  return status === "PACKING" || status === "PACKED" || status === "READY_TO_SHIP" || status === "SHIPPING" || status === "COMPLETED";
+  return status === "PACKING" || status === "READY_TO_SHIP" || status === "SHIPPING" || status === "COMPLETED";
 }
 
 export function ProductDetailPage() {
@@ -406,7 +406,10 @@ export function ProductDetailPage() {
   const lineOf = (orderId: string) => history.find((order) => order.id === orderId)?.lines.find((line) => line.productId === product.id);
   // 생산 완료 전 수량은 실적이 아니므로 포장중 이후만 누적한다.
   const produced = history.reduce((sum, order) => sum + (productionFinished(order.status) ? (lineOf(order.id)?.quantity ?? 0) : 0), 0);
-  const traded = history.reduce((sum, order) => sum + lineAmount(lineOf(order.id) ?? { quantity: 0, unitPrice: 0, vatIncluded: true }), 0);
+  const traded = history.reduce((sum, order) => {
+    const line = lineOf(order.id);
+    return sum + (line ? lineAmount(line, order.vatIncluded) : 0);
+  }, 0);
   const recent = history[0];
   const recentLine = recent ? lineOf(recent.id) : undefined;
   const recentClient = db.clients.find((client) => client.id === recent?.clientId);
@@ -493,7 +496,7 @@ export function ProductDetailPage() {
                       <td>{client?.companyName ?? "거래처 없음"}</td>
                       <td>{line.quantity.toLocaleString("ko-KR")}개</td>
                       <td>{formatWon(line.unitPrice)}</td>
-                      <td>{formatWon(lineAmount(line))}</td>
+                      <td>{formatWon(lineAmount(line, order.vatIncluded))}</td>
                       <td className="whitespace-nowrap">{order.dueDate}</td>
                       <td><Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge></td>
                       <td className="pr-3">
@@ -521,8 +524,8 @@ export function ProductDetailPage() {
                 <p>{recentClient?.companyName ?? "거래처 없음"}</p>
                 <p className="text-muted">{productTitle(product)}</p>
                 <div className="flex justify-between border-t border-line pt-3"><span className="text-muted">이 품목 수량</span><span>{recentLine.quantity.toLocaleString("ko-KR")}개</span></div>
-                <div className="flex justify-between"><span className="text-muted">이 품목 금액 · 부가세 포함</span><span>{formatWon(lineAmount(recentLine))}</span></div>
-                <div className="flex justify-between"><span className="text-muted">전체 수주 금액 · 부가세 포함</span><span>{formatWon(orderTotal(recent.lines))}</span></div>
+                <div className="flex justify-between"><span className="text-muted">이 품목 금액 · 부가세 포함</span><span>{formatWon(lineAmount(recentLine, recent.vatIncluded))}</span></div>
+                <div className="flex justify-between"><span className="text-muted">전체 수주 금액 · 부가세 포함</span><span>{formatWon(orderTotal(recent.lines, recent.vatIncluded))}</span></div>
                 <div className="flex justify-between"><span className="text-muted">납기일</span><span>{recent.dueDate}{recent.dueDate === today ? " · 오늘" : ""}</span></div>
               </div>
             ) : <p className="mt-4 text-sm text-muted">연결된 수주가 없습니다.</p>}

@@ -371,3 +371,136 @@ export function splitQuantityByLines(
 
   return [...byLine.values()];
 }
+
+export interface ProductLineChunk {
+  lineId: string;
+  productId: string;
+  quantity: number;
+  plannedStartDate: string;
+  plannedEndDate: string;
+  allocations: DayAllocation[];
+}
+
+/** 한 작업지시의 날짜별 수량을 품목 순서대로 나눈다. 같은 날은 한 품목이 끝난 뒤 다음 품목이 이어받는다. */
+export function divideAllocationsByProduct(
+  allocations: DayAllocation[],
+  items: WorkOrderItem[],
+): Array<{ productId: string; quantity: number; allocations: DayAllocation[] }> {
+  const slots = allocations.map((slot) => ({ ...slot }));
+  return items.map((item) => {
+    let left = item.quantity;
+    const next: DayAllocation[] = [];
+    for (const slot of slots) {
+      if (left <= 0) break;
+      const take = Math.min(left, slot.quantity);
+      if (take <= 0) continue;
+      next.push({ date: slot.date, quantity: take });
+      slot.quantity -= take;
+      left -= take;
+    }
+    if (left > 0) {
+      const date = next.at(-1)?.date ?? allocations.at(-1)?.date;
+      if (date) {
+        const row = next.find((slot) => slot.date === date);
+        if (row) row.quantity += left;
+        else next.push({ date, quantity: left });
+      }
+    }
+    return { productId: item.productId, quantity: item.quantity, allocations: next };
+  });
+}
+
+/**
+ * 남은 수량을 품목 하나·라인 하나인 작업지시로 나눈다.
+ * 여러 날은 같은 품목·같은 라인이면 한 장이다. 같은 날 같은 라인에 다른 품목이 용량만 남으면 별도 작업지시로 올라간다.
+ */
+export function splitProductsAcrossLines(
+  products: Array<{ productId: string; quantity: number }>,
+  allocations: DayAllocation[],
+  lines: Line[],
+  holidays: string[],
+  occupying: WorkOrder[],
+  locked: WorkOrder[] = [],
+): ProductLineChunk[] {
+  const pool = usableLines(lines);
+  if (pool.length === 0) throw new Error("가동할 수 있는 라인이 없어 작업지시를 나눌 수 없습니다.");
+  const lockedByProduct = new Map<string, number>();
+  for (const workOrder of locked) {
+    for (const item of workOrder.items ?? []) {
+      lockedByProduct.set(item.productId, (lockedByProduct.get(item.productId) ?? 0) + item.quantity);
+    }
+  }
+  const queue = products
+    .map((product) => ({ productId: product.productId, quantity: Math.max(0, product.quantity - (lockedByProduct.get(product.productId) ?? 0)) }))
+    .filter((product) => product.quantity > 0);
+  const days = leftoverAllocations(allocations, locked, lines, holidays).sort((left, right) => left.date.localeCompare(right.date));
+  const productLeft = queue.reduce((sum, product) => sum + product.quantity, 0);
+  const dayLeft = days.reduce((sum, slot) => sum + slot.quantity, 0);
+  if (productLeft !== dayLeft) throw new Error("품목 수량과 날짜별 수량이 맞지 않아 작업지시를 나누지 못했습니다.");
+  const byKey = new Map<string, ProductLineChunk>();
+
+  for (const slot of days) {
+    let dayRemaining = slot.quantity;
+    while (dayRemaining > 0 && queue.length > 0) {
+      const product = queue[0];
+      const want = Math.min(dayRemaining, product.quantity);
+      let left = want;
+      const ranked = [...pool].sort((leftLine, rightLine) => {
+        const leftFree = Math.max(0, leftLine.dailyCapacity - lineOccupiedOn(slot.date, leftLine.id, occupying, lines, holidays));
+        const rightFree = Math.max(0, rightLine.dailyCapacity - lineOccupiedOn(slot.date, rightLine.id, occupying, lines, holidays));
+        return rightFree - leftFree || leftLine.name.localeCompare(rightLine.name, "ko");
+      });
+      for (const line of ranked) {
+        if (left <= 0) break;
+        const occupied = lineOccupiedOn(slot.date, line.id, occupying, lines, holidays);
+        const take = Math.min(left, Math.max(0, line.dailyCapacity - occupied));
+        if (take <= 0) continue;
+        const key = `${line.id}:${product.productId}`;
+        const current = byKey.get(key);
+        if (current) {
+          current.quantity += take;
+          if (slot.date < current.plannedStartDate) current.plannedStartDate = slot.date;
+          if (slot.date > current.plannedEndDate) current.plannedEndDate = slot.date;
+          const sameDay = current.allocations.find((row) => row.date === slot.date);
+          if (sameDay) sameDay.quantity += take;
+          else current.allocations.push({ date: slot.date, quantity: take });
+        } else {
+          byKey.set(key, {
+            lineId: line.id,
+            productId: product.productId,
+            quantity: take,
+            plannedStartDate: slot.date,
+            plannedEndDate: slot.date,
+            allocations: [{ date: slot.date, quantity: take }],
+          });
+        }
+        occupying = [
+          ...occupying,
+          {
+            id: `split-${line.id}-${product.productId}-${slot.date}`,
+            orderId: "",
+            status: "READY",
+            assigneeId: null,
+            lineId: line.id,
+            quantity: take,
+            allocations: [{ date: slot.date, quantity: take }],
+            items: [{ productId: product.productId, quantity: take }],
+            issuedAt: "",
+            plannedStartDate: slot.date,
+            plannedEndDate: slot.date,
+            startedAt: null,
+            completedAt: null,
+          },
+        ];
+        left -= take;
+      }
+      if (left > 0) throw new Error("라인별 남은 용량으로 작업지시를 나누지 못했습니다.");
+      product.quantity -= want;
+      dayRemaining -= want;
+      if (product.quantity <= 0) queue.shift();
+    }
+    if (dayRemaining > 0) throw new Error("라인별 남은 용량으로 작업지시를 나누지 못했습니다.");
+  }
+  if (queue.some((product) => product.quantity > 0)) throw new Error("품목 수량을 작업지시로 나누지 못했습니다.");
+  return [...byKey.values()];
+}

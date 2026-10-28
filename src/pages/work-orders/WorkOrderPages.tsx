@@ -6,7 +6,7 @@ import { cn } from "@/lib/cn.ts";
 import { localDate, localDateTime, todayISO, toISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { orderItems, orderItemsText, productTitle, workItems, workItemsText } from "@/lib/orderText.ts";
-import { availableLineIds, changeLine, clockIn, clockOut, completePacking, completeProduction, holdProduction, reassign, resumeProduction, startProduction, stopProduction } from "@/lib/workflow.ts";
+import { availableLineIds, changeLine, clockIn, clockOut, completeProduction, holdProduction, markReadyToShip, reassign, resumeProduction, startProduction, stopProduction } from "@/lib/workflow.ts";
 import { canManageOrders, canProduce, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import { workOrderStatusLabel } from "@/lib/labels.ts";
@@ -44,12 +44,13 @@ function statusView(status: WorkOrderStatus, overdue: boolean): { label: string;
 }
 
 function stepsOf(status: WorkOrderStatus, orderStatus: OrderStatus | undefined): Array<{ label: string; state: "done" | "current" | "todo" }> {
-  const labels = ["준비", status === "PAUSED" ? "일시정지" : "생산", "포장", "포장완료"];
-  const packedOrLater = orderStatus === "PACKED" || orderStatus === "READY_TO_SHIP" || orderStatus === "SHIPPING" || orderStatus === "COMPLETED";
+  const labels = ["준비", status === "PAUSED" ? "일시정지" : "생산", "포장", "출고"];
   const current = status === "CANCELLED" ? -1
     : status === "READY" ? 0
     : status === "IN_PRODUCTION" || status === "PAUSED" ? 1
-    : packedOrLater ? 4 : 2;
+    : orderStatus === "READY_TO_SHIP" ? 3
+    : orderStatus === "SHIPPING" || orderStatus === "COMPLETED" ? 4
+    : 2;
   return labels.map((label, index) => ({ label, state: index < current ? "done" : index === current ? "current" : "todo" }));
 }
 
@@ -187,7 +188,7 @@ export function WorkOrderListPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">작업지시 관리</h1>
-          <p className="mt-1 text-sm text-muted">작업지시는 선금이 확인된 수주에서 자동으로 만들어집니다. 라인 배정과 생산 진행을 여기서 관리합니다.</p>
+          <p className="mt-1 text-sm text-muted">작업지시는 계약금이 확인된 수주에서 자동으로 만들어집니다. 한 장은 품목 하나와 라인 하나이고, 여러 날은 그 한 장에 둡니다.</p>
         </div>
         <div className="flex gap-2">
           {user?.role === "PRODUCTION_MANAGER" && account ? (
@@ -351,7 +352,8 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
   const managers = db.users.filter((item) => item.role === "PRODUCTION_MANAGER" && item.status === "ACTIVE");
   const mine = workOrder.assigneeId === user.id;
   const canRun = canProduce(user.role) && (mine || user.role === "SUPER_ADMIN");
-  const canStart = canProduce(user.role) && mine && workOrder.status === "READY";
+  const startReady = workOrder.plannedStartDate <= todayISO();
+  const canStart = canProduce(user.role) && mine && workOrder.status === "READY" && startReady;
   const canFinish = canRun && workOrder.status === "IN_PRODUCTION";
   const canHold = canFinish;
   const canResume = canRun && workOrder.status === "PAUSED";
@@ -411,7 +413,7 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
       act(() => completeProduction(current.id, actor), "생산을 완료하고 라인을 비웠습니다.");
       return;
     }
-    if (canPack && order) act(() => completePacking(order.id, actor), "포장 완료로 변경했습니다. 배송 관리에서 출고할 수 있습니다.");
+    if (canPack && order) act(() => markReadyToShip(order.id, actor), "출고 대기로 변경했습니다.");
   }
 
   return (
@@ -547,6 +549,7 @@ function WorkOrderEditor({ workOrderId }: { workOrderId: string }) {
           </form>
         ) : null}
         {!mine && workOrder.status === "READY" ? <p className="mt-2 text-xs text-muted">배정된 담당자만 라인을 정해 작업을 시작할 수 있습니다.</p> : null}
+        {mine && workOrder.status === "READY" && !startReady ? <p className="mt-2 text-xs text-muted">생산 시작 예정일 {workOrder.plannedStartDate}부터 작업을 시작할 수 있습니다.</p> : null}
 
         <h3 className="mt-5 text-sm font-semibold">작업 이력</h3>
         <ul className="mt-2 space-y-2 text-sm">

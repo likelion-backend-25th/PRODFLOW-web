@@ -5,7 +5,7 @@ import { useDb } from "@/lib/db.ts";
 import { localDate, todayISO } from "@/lib/dates.ts";
 import { activeWorkOrder, delayOf, delayTone } from "@/lib/delay.ts";
 import { orderItems, orderItemsText } from "@/lib/orderText.ts";
-import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, registrationLabel, registrationStatus, registrationTone, workStatusOrder } from "@/lib/labels.ts";
+import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, registrationLabel, registrationTone, workStatusOrder } from "@/lib/labels.ts";
 import { formatWon, orderQuantity, orderTotal } from "@/lib/money.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import type { OrderStatus, PaymentStatus } from "@/types/domain.ts";
@@ -15,7 +15,7 @@ export function OrderListPage() {
   const role = useAuthStore((state) => state.user?.role);
   const [tab, setTab] = useState<"open" | "done">("open");
   const [status, setStatus] = useState<OrderStatus | "">("");
-  const [registration, setRegistration] = useState<"" | "RESERVED" | "CONFIRMED">("");
+  const [registration, setRegistration] = useState<"" | "PENDING" | "CONFIRMED">("");
   const [payment, setPayment] = useState<PaymentStatus | "">("");
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(0);
@@ -24,13 +24,13 @@ export function OrderListPage() {
     const client = db.clients.find((item) => item.id === order.clientId);
     const text = `${order.orderNo} ${client?.companyName ?? ""} ${orderItems(db.products, order.lines).names.join(" ")}`.includes(keyword.trim());
     const inTab = tab === "done" ? order.status === "COMPLETED" : order.status !== "COMPLETED" && order.status !== "CANCELLED";
-    const registered = !registration || registrationStatus(order.status) === registration;
+    const registered = !registration || order.confirmationStatus === registration;
     return text && inTab && registered && (!status || order.status === status) && (!payment || order.paymentStatus === payment);
   }), [db, keyword, payment, registration, status, tab]);
   const slice = rows.slice(page * 8, page * 8 + 8);
   const waiting = db.orders.filter((order) => order.status === "CONFIRMED").length;
   const making = db.orders.filter((order) => order.status === "IN_PRODUCTION" || order.status === "PACKING" || order.status === "ON_HOLD").length;
-  const shipping = db.orders.filter((order) => order.status === "PACKED" || order.status === "READY_TO_SHIP" || order.status === "SHIPPING").length;
+  const shipping = db.orders.filter((order) => order.status === "READY_TO_SHIP" || order.status === "SHIPPING").length;
   const done = db.orders.filter((order) => order.status === "COMPLETED" && order.completedAt && localDate(order.completedAt).startsWith(month)).length;
   const finished = db.orders.filter((order) => order.status === "COMPLETED");
 
@@ -38,13 +38,13 @@ export function OrderListPage() {
     <div>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">수주 및 생산기록</h1>
+          <h1 className="text-2xl font-semibold">수주 관리</h1>
           <p className="mt-1 text-muted">생산 예정부터 완료 기록까지, 모든 수주의 흐름을 한곳에서 관리합니다.</p>
         </div>
         <div className="flex gap-2">
           <Button tone="ghost" onClick={() => download(db.orders.map((order) => {
             const client = db.clients.find((item) => item.id === order.clientId);
-            return [order.orderNo, client?.companyName ?? "", order.dueDate, registrationLabel(order.status), orderStatusLabel[order.status], paymentStatusLabel[order.paymentStatus], String(orderTotal(order.lines))].join(",");
+            return [order.orderNo, client?.companyName ?? "", order.dueDate, registrationLabel(order.confirmationStatus), orderStatusLabel[order.status], paymentStatusLabel[order.paymentStatus], String(orderTotal(order.lines, order.vatIncluded))].join(",");
           }).join("\n"), "수주목록.csv")}>엑셀 내보내기</Button>
           {canManageOrders(role) ? <Link to="/quotations?pending=1" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">승인 견적에서 등록</Link> : null}
         </div>
@@ -62,9 +62,9 @@ export function OrderListPage() {
         </div>
         <div className="flex flex-wrap gap-2 p-4">
           <input className="h-10 min-w-56 flex-1 rounded-lg border border-line px-3" value={keyword} placeholder="수주번호, 클라이언트, 품목 검색" onChange={(event) => { setKeyword(event.target.value); setPage(0); }} />
-          <select className="h-10 rounded-lg border border-line bg-white px-3" value={registration} onChange={(event) => { setRegistration(event.target.value as "" | "RESERVED" | "CONFIRMED"); setPage(0); }}>
+          <select className="h-10 rounded-lg border border-line bg-white px-3" value={registration} onChange={(event) => { setRegistration(event.target.value as "" | "PENDING" | "CONFIRMED"); setPage(0); }}>
             <option value="">등록 전체</option>
-            <option value="RESERVED">예정</option>
+            <option value="PENDING">예정</option>
             <option value="CONFIRMED">확정</option>
           </select>
           <select className="h-10 rounded-lg border border-line bg-white px-3" value={status} onChange={(event) => { setStatus(event.target.value as OrderStatus | ""); setPage(0); }}>
@@ -113,7 +113,7 @@ export function OrderListPage() {
                       <>{items.first}<p className="text-muted">{orderQuantity(order.lines).toLocaleString("ko-KR")}개</p></>
                     )}
                   </td>
-                  <td className="font-semibold">{formatWon(orderTotal(order.lines))}</td>
+                  <td className="font-semibold">{formatWon(orderTotal(order.lines, order.vatIncluded))}</td>
                   <td>
                     {order.dueDate}
                     {(() => {
@@ -121,7 +121,7 @@ export function OrderListPage() {
                       return delay ? <span className={`ml-1 rounded px-1.5 py-0.5 text-xs font-semibold ${delayTone(delay.level)}`} title={delay.reason}>{delay.level === "late" ? "지연" : "주의"}</span> : null;
                     })()}
                   </td>
-                  <td><Badge className={registrationTone(order.status)}>{registrationLabel(order.status)}</Badge></td>
+                  <td><Badge className={registrationTone(order.confirmationStatus)}>{registrationLabel(order.confirmationStatus)}</Badge></td>
                   <td><Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge></td>
                   <td><Badge className={paymentTone(order.paymentStatus)}>{paymentStatusLabel[order.paymentStatus]}</Badge></td>
                   <td className="pr-5 text-muted">{order.trackingNo ? `${order.carrier} ${order.trackingNo}` : "발송 대기"}</td>

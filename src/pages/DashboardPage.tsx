@@ -177,7 +177,7 @@ export function DashboardPage() {
                     <td>{client?.companyName} · {orderItemsText(db.products, order.lines)}</td>
                     <td>{order.dueDate}</td>
                     <td><Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge></td>
-                    <td className="pr-5"><Badge className={paymentTone(order.paymentStatus)}>{paymentStatusLabel[order.paymentStatus]}</Badge> · {orderQuantity(order.lines).toLocaleString("ko-KR")}개 · {formatWon(orderTotal(order.lines))}</td>
+                    <td className="pr-5"><Badge className={paymentTone(order.paymentStatus)}>{paymentStatusLabel[order.paymentStatus]}</Badge> · {orderQuantity(order.lines).toLocaleString("ko-KR")}개 · {formatWon(orderTotal(order.lines, order.vatIncluded))}</td>
                   </tr>
                 );
               })}
