@@ -45,7 +45,7 @@ export function QuoteDetailPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-sm text-muted"><Link to="/quotes" className="hover:text-primary">견적 목록</Link></p>
+          <p className="text-sm text-muted"><Link to="/quotations" className="hover:text-primary">견적 목록</Link></p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold">{quote.quotationNo}</h1>
             <Badge className={quotationStatusTone(quote.status)}>{quotationStatusLabel[quote.status]}</Badge>
@@ -62,7 +62,7 @@ export function QuoteDetailPage() {
           {canChange && user ? <Button onClick={() => act(() => setQuotationStatus(quote.id, "APPROVED", user), "견적을 승인했습니다.")}>승인</Button> : null}
           {quote.status === "APPROVED" && !order && canManageOrders(role) ? <Link to={`/orders/new?quotationId=${quote.id}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">수주 등록</Link> : null}
           {order ? <Link to={`/orders/${order.id}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">수주 {order.orderNo}</Link> : null}
-          {quote.status === "EXPIRED" && canManageOrders(role) ? <Link to="/quotes/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">새 견적 작성</Link> : null}
+          {quote.status === "EXPIRED" && canManageOrders(role) ? <Link to="/quotations/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">새 견적 작성</Link> : null}
         </div>
       </div>
 

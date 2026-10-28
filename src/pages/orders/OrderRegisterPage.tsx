@@ -1,13 +1,12 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { AddressPicker } from "@/components/AddressPicker.tsx";
 import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { Button, Card } from "@/components/ui.tsx";
 import { cn } from "@/lib/cn.ts";
 import { todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount, orderTotal } from "@/lib/money.ts";
-import { createOrder, previewDuePlan, previewSchedule } from "@/lib/workflow.ts";
+import { clientFullAddress, createOrder, previewDuePlan, previewSchedule } from "@/lib/workflow.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { NotifyChannel } from "@/types/domain.ts";
@@ -20,6 +19,11 @@ export function OrderRegisterPage() {
   const [params] = useSearchParams();
   const quote = db.quotations.find((item) => item.id === params.get("quotationId"));
   const client = db.clients.find((item) => item.id === quote?.clientId);
+  const companyAddress = client ? clientFullAddress(client) : "";
+  const [useCompanyAddress, setUseCompanyAddress] = useState(false);
+  const [postalCode, setPostalCode] = useState("");
+  const [roadAddress, setRoadAddress] = useState("");
+  const [addressDetail, setAddressDetail] = useState("");
   const [shippingAddress, setShippingAddress] = useState("");
   const [receiverPhone, setReceiverPhone] = useState(client?.contactMobile ?? "");
   const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>("SMS");
@@ -59,7 +63,7 @@ export function OrderRegisterPage() {
       <Card>
         <h1 className="text-xl font-semibold">수주 등록</h1>
         <p className="mt-2 text-sm text-muted">승인된 견적에서만 수주를 등록합니다. 배송지는 이 화면에서 입력합니다.</p>
-        <Link to="/quotes" className="mt-4 inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">견적 목록</Link>
+        <Link to="/quotations" className="mt-4 inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">견적 목록</Link>
       </Card>
     );
   }
@@ -83,6 +87,10 @@ export function OrderRegisterPage() {
 
   function register() {
     if (!actor || !quote) return;
+    if (useCompanyAddress && !companyAddress) {
+      setError("등록된 회사 주소가 없습니다. 체크를 해제하고 배송지를 직접 입력하세요.");
+      return;
+    }
     if (!shippingAddress.trim()) {
       setError("배송지를 입력하세요.");
       return;
@@ -228,7 +236,72 @@ export function OrderRegisterPage() {
         </Card>
         <Card className="space-y-3">
           <h2 className="font-semibold">배송</h2>
-          <AddressPicker label="배송지" value={shippingAddress} onChange={setShippingAddress} />
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={useCompanyAddress}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setUseCompanyAddress(checked);
+                setError("");
+                if (!checked) {
+                  setPostalCode("");
+                  setRoadAddress("");
+                  setAddressDetail("");
+                  setShippingAddress("");
+                  return;
+                }
+                const postal = client?.postalCode ?? "";
+                const road = client?.address ?? "";
+                const detail = client?.addressDetail ?? "";
+                setPostalCode(postal);
+                setRoadAddress(road);
+                setAddressDetail(detail);
+                setShippingAddress([postal, road, detail].map((part) => part.trim()).filter(Boolean).join(" "));
+              }}
+            />
+            등록된 회사 주소로 배송
+          </label>
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input readOnly value={postalCode} placeholder="우편번호" className="h-10 w-28 rounded-lg border border-line bg-white px-3 text-sm" />
+              <Button
+                tone="ghost"
+                className="shrink-0"
+                disabled={useCompanyAddress}
+                onClick={() => {
+                  if (!window.daum?.Postcode) {
+                    show("우편번호 서비스를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+                    return;
+                  }
+                  new window.daum.Postcode({
+                    oncomplete: (data) => {
+                      const postal = data.zonecode;
+                      const road = data.roadAddress || data.address;
+                      setPostalCode(postal);
+                      setRoadAddress(road);
+                      setShippingAddress([postal, road, addressDetail].map((part) => part.trim()).filter(Boolean).join(" "));
+                      setError("");
+                    },
+                  }).open();
+                }}
+              >
+                우편번호 찾기
+              </Button>
+            </div>
+            <input readOnly value={roadAddress} placeholder="우편번호 찾기로 도로명 주소를 선택하세요" className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" />
+            <input
+              readOnly={useCompanyAddress}
+              value={addressDetail}
+              placeholder="건물명, 층, 호수 등 상세 주소"
+              className="h-10 w-full rounded-lg border border-line px-3 text-sm read-only:bg-canvas"
+              onChange={(event) => {
+                const detail = event.target.value;
+                setAddressDetail(detail);
+                setShippingAddress([postalCode, roadAddress, detail].map((part) => part.trim()).filter(Boolean).join(" "));
+              }}
+            />
+          </div>
           <label className="block text-sm">수령 연락처
             <input className="mt-1 h-10 w-full rounded-lg border border-line px-3" value={receiverPhone} onChange={(event) => setReceiverPhone(event.target.value)} />
           </label>

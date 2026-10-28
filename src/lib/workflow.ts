@@ -687,6 +687,7 @@ export function updateOrderQuantities(orderId: string, quantities: Record<string
       const next = quantities[line.id];
       if (next === undefined || next === line.quantity) return;
       if (!Number.isInteger(next) || next <= 0) throw new Error("수량은 1개 이상입니다.");
+      if (next > line.quantity) throw new Error("수량은 줄일 수만 있습니다. 늘리려면 견적을 다시 작성하세요.");
       changes.push(`${productLabel(db, line.productId)} 수량 ${line.quantity.toLocaleString("ko-KR")} → ${next.toLocaleString("ko-KR")}개`);
       line.quantity = next;
     });

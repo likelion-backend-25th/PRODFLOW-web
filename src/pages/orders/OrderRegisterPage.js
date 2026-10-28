@@ -24,7 +24,7 @@ export function OrderRegisterPage() {
     const [depositDueDate, setDepositDueDate] = useState(todayISO());
     const [error, setError] = useState("");
     if (!quote || quote.status !== "APPROVED") {
-        return (_jsxs(Card, { children: [_jsx("h1", { className: "text-xl font-semibold", children: "\uC218\uC8FC \uB4F1\uB85D" }), _jsx("p", { className: "mt-2 text-sm text-muted", children: "\uC2B9\uC778\uB41C \uACAC\uC801\uC5D0\uC11C\uB9CC \uC218\uC8FC\uB97C \uB4F1\uB85D\uD569\uB2C8\uB2E4. \uBC30\uC1A1\uC9C0\uB294 \uC774 \uD654\uBA74\uC5D0\uC11C \uC785\uB825\uD569\uB2C8\uB2E4." }), _jsx(Link, { to: "/quotes", className: "mt-4 inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white", children: "\uACAC\uC801 \uBAA9\uB85D" })] }));
+        return (_jsxs(Card, { children: [_jsx("h1", { className: "text-xl font-semibold", children: "\uC218\uC8FC \uB4F1\uB85D" }), _jsx("p", { className: "mt-2 text-sm text-muted", children: "\uC2B9\uC778\uB41C \uACAC\uC801\uC5D0\uC11C\uB9CC \uC218\uC8FC\uB97C \uB4F1\uB85D\uD569\uB2C8\uB2E4. \uBC30\uC1A1\uC9C0\uB294 \uC774 \uD654\uBA74\uC5D0\uC11C \uC785\uB825\uD569\uB2C8\uB2E4." }), _jsx(Link, { to: "/quotations", className: "mt-4 inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white", children: "\uACAC\uC801 \uBAA9\uB85D" })] }));
     }
     const plan = quote.plans.find((item) => item.status === "ACTIVE");
     const existing = db.orders.find((order) => order.quotationId === quote.id && order.status !== "CANCELLED");

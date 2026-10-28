@@ -46,7 +46,7 @@ export function OrderListPage() {
             const client = db.clients.find((item) => item.id === order.clientId);
             return [order.orderNo, client?.companyName ?? "", order.dueDate, registrationLabel(order.status), orderStatusLabel[order.status], paymentStatusLabel[order.paymentStatus], String(orderTotal(order.lines))].join(",");
           }).join("\n"), "수주목록.csv")}>엑셀 내보내기</Button>
-          {canManageOrders(role) ? <Link to="/quotes?pending=1" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">승인 견적에서 등록</Link> : null}
+          {canManageOrders(role) ? <Link to="/quotations?pending=1" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">승인 견적에서 등록</Link> : null}
         </div>
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-4">
