@@ -3,9 +3,25 @@ import type {
   LineStatus,
   OrderStatus,
   PaymentStatus,
+  QuotationStatus,
   Role,
   WorkOrderStatus,
 } from "@/types/domain.ts";
+
+export const quotationStatusLabel: Record<QuotationStatus, string> = {
+  SENT: "발송완료",
+  APPROVED: "승인",
+  REJECTED: "거절",
+  CANCELLED: "취소",
+  EXPIRED: "만료",
+};
+
+export function quotationStatusTone(status: QuotationStatus): string {
+  if (status === "SENT") return "bg-blue-50 text-blue-700";
+  if (status === "APPROVED") return "bg-emerald-50 text-emerald-700";
+  if (status === "REJECTED" || status === "CANCELLED") return "bg-red-50 text-red-700";
+  return "bg-slate-100 text-slate-600";
+}
 
 export const roleLabel: Record<Role, string> = {
   SUPER_ADMIN: "최고 관리자",
@@ -20,6 +36,7 @@ export const orderStatusLabel: Record<OrderStatus, string> = {
   IN_PRODUCTION: "생산중",
   PACKING: "포장중",
   PACKED: "포장완료",
+  READY_TO_SHIP: "출고대기",
   SHIPPING: "배송중",
   COMPLETED: "완료",
   ON_HOLD: "생산보류",
@@ -32,6 +49,7 @@ export const workStatusOrder: OrderStatus[] = [
   "IN_PRODUCTION",
   "PACKING",
   "PACKED",
+  "READY_TO_SHIP",
   "SHIPPING",
   "COMPLETED",
   "ON_HOLD",
@@ -83,6 +101,7 @@ export function orderStatusTone(status: OrderStatus): string {
   if (status === "IN_PRODUCTION") return "bg-primary-soft text-primary";
   if (status === "PACKING") return "bg-violet-50 text-violet-700";
   if (status === "PACKED") return "bg-indigo-50 text-indigo-700";
+  if (status === "READY_TO_SHIP") return "bg-teal-50 text-teal-800";
   if (status === "SHIPPING") return "bg-sky-50 text-sky-700";
   if (status === "COMPLETED") return "bg-emerald-50 text-emerald-700";
   if (status === "ON_HOLD") return "bg-amber-50 text-amber-800";

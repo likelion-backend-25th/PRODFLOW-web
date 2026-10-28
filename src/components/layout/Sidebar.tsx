@@ -1,4 +1,4 @@
-import { Box, Building2, ChevronRight, ClipboardList, Factory, LayoutGrid, LogOut, Sparkles, UsersRound } from "lucide-react";
+import { Box, Building2, ChevronRight, ClipboardList, Factory, FileText, LayoutGrid, LogOut, Sparkles, UsersRound } from "lucide-react";
 import { NavLink, useLocation } from "react-router";
 import { cn } from "@/lib/cn.ts";
 import { useDb } from "@/lib/db.ts";
@@ -10,7 +10,7 @@ export function Sidebar() {
   const logout = useAuthStore((state) => state.logout);
   const db = useDb();
   const orders = db.orders.filter((order) => order.status !== "CANCELLED").length;
-  const shipping = db.orders.filter((order) => order.status === "PACKING" || order.status === "PACKED" || order.status === "SHIPPING" || (order.status === "COMPLETED" && order.paymentStatus !== "PAID")).length;
+  const shipping = db.orders.filter((order) => order.status === "PACKING" || order.status === "PACKED" || order.status === "READY_TO_SHIP" || order.status === "SHIPPING" || (order.status === "COMPLETED" && order.paymentStatus !== "PAID")).length;
   const location = useLocation();
 
   return (
@@ -28,8 +28,9 @@ export function Sidebar() {
       <p className="mt-5 px-3 text-[11px] font-semibold tracking-wide text-muted">WORKSPACE</p>
       <nav className="mt-2 flex flex-1 flex-col gap-1">
         <Item to="/" end icon={LayoutGrid} label="대시보드" />
+        <Item to="/quotes" icon={FileText} label="견적 관리" active={location.pathname.startsWith("/quotes")} />
         <Item to="/orders" icon={ClipboardList} label="수주 및 생산기록" badge={orders} active={location.pathname.startsWith("/work-orders") || location.pathname.startsWith("/shipping") || location.pathname.startsWith("/orders/schedule")} />
-        <Item to="/orders/schedule" icon={Factory} label="수주 일정 관리" nested />
+        <Item to="/orders/schedule" icon={Factory} label="생산 일정 관리" nested />
         <Item to="/work-orders" icon={Factory} label="작업지시 관리" nested />
         <Item to="/shipping" icon={Factory} label="배송 관리" nested badge={shipping} />
         <Item to="/clients" icon={Building2} label="거래처 관리" />
@@ -98,9 +99,12 @@ function Item({
 }
 
 export function crumbs(pathname: string): string[] {
-  if (pathname.startsWith("/orders/schedule")) return ["워크스페이스", "수주 및 생산기록", "수주 일정 관리"];
+  if (pathname.startsWith("/orders/schedule")) return ["워크스페이스", "수주 및 생산기록", "생산 일정 관리"];
   if (pathname.startsWith("/work-orders")) return ["워크스페이스", "수주 및 생산기록", "작업지시 관리"];
   if (pathname.startsWith("/shipping")) return ["워크스페이스", "수주 및 생산기록", "배송 관리"];
+  if (pathname === "/quotes/new") return ["워크스페이스", "견적 관리", "견적 작성"];
+  if (pathname.startsWith("/quotes")) return ["워크스페이스", "견적 관리"];
+  if (pathname === "/orders/new") return ["워크스페이스", "수주 및 생산기록", "수주 등록"];
   if (pathname.startsWith("/orders")) return ["워크스페이스", "수주 및 생산기록"];
   if (pathname === "/clients/new") return ["워크스페이스", "거래처 관리", "거래처 등록"];
   if (pathname.endsWith("/edit") && pathname.startsWith("/clients/")) return ["워크스페이스", "거래처 관리", "거래처 수정"];

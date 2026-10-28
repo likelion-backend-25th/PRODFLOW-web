@@ -30,7 +30,7 @@ export function OrderListPage() {
   const slice = rows.slice(page * 8, page * 8 + 8);
   const waiting = db.orders.filter((order) => order.status === "CONFIRMED").length;
   const making = db.orders.filter((order) => order.status === "IN_PRODUCTION" || order.status === "PACKING" || order.status === "ON_HOLD").length;
-  const shipping = db.orders.filter((order) => order.status === "PACKED" || order.status === "SHIPPING").length;
+  const shipping = db.orders.filter((order) => order.status === "PACKED" || order.status === "READY_TO_SHIP" || order.status === "SHIPPING").length;
   const done = db.orders.filter((order) => order.status === "COMPLETED" && order.completedAt && localDate(order.completedAt).startsWith(month)).length;
   const finished = db.orders.filter((order) => order.status === "COMPLETED");
 
@@ -46,7 +46,7 @@ export function OrderListPage() {
             const client = db.clients.find((item) => item.id === order.clientId);
             return [order.orderNo, client?.companyName ?? "", order.dueDate, registrationLabel(order.status), orderStatusLabel[order.status], paymentStatusLabel[order.paymentStatus], String(orderTotal(order.lines))].join(",");
           }).join("\n"), "수주목록.csv")}>엑셀 내보내기</Button>
-          {canManageOrders(role) ? <Link to="/orders/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 신규 수주 등록</Link> : null}
+          {canManageOrders(role) ? <Link to="/quotes?pending=1" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">승인 견적에서 등록</Link> : null}
         </div>
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-4">

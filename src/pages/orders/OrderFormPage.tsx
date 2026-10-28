@@ -25,9 +25,15 @@ interface LineValues {
 
 interface FormValues {
   clientId: string;
+  companyName: string;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+  companyAddress: string;
   lines: LineValues[];
   vatSeparate: boolean;
   requestedDueDate: string;
+  depositDueDate: string;
   receiverPhone: string;
   shippingAddress: string;
   notifyChannel: NotifyChannel;
@@ -35,7 +41,12 @@ interface FormValues {
 }
 
 const schema = z.object({
-  clientId: z.string().min(1, "클라이언트를 선택하세요."),
+  clientId: z.string(),
+  companyName: z.string().trim().min(1, "회사명을 입력하세요."),
+  contactName: z.string().trim().min(1, "담당자명을 입력하세요."),
+  contactPhone: z.string().refine((value) => digitsOnly(value).length >= 9, "거래처 연락처를 확인하세요."),
+  contactEmail: z.string().trim().email("이메일을 확인하세요."),
+  companyAddress: z.string().trim().min(1, "회사 주소를 선택하세요."),
   lines: z
     .array(z.object({
       productId: z.string().min(1, "생산품목을 선택하세요."),
@@ -44,6 +55,7 @@ const schema = z.object({
     }))
     .min(1, "생산품목을 1개 이상 추가하세요."),
   vatSeparate: z.boolean(),
+  depositDueDate: z.string().min(1, "계약금 입금 마감일을 선택하세요."),
   requestedDueDate: z.string().min(1, "납기일을 선택하세요."),
   receiverPhone: z.string().refine((value) => digitsOnly(value).length >= 9, "배송 수신 연락처를 확인하세요."),
   shippingAddress: z.string().min(1, "배송지를 선택하세요."),
@@ -53,12 +65,25 @@ const schema = z.object({
 
 const emptyLine: LineValues = { productId: "", quantity: 100, unitPrice: 0 };
 
-function blankValues(db: Database, clientId: string | null): FormValues {
+function clientFields(db: Database, clientId: string | null) {
   const client = db.clients.find((item) => item.id === clientId);
   return {
     clientId: client?.id ?? "",
+    companyName: client?.companyName ?? "",
+    contactName: client?.contactName ?? "",
+    contactPhone: client?.contactMobile || client?.phone || "",
+    contactEmail: client?.taxEmail ?? "",
+    companyAddress: client?.address ?? "",
+  };
+}
+
+function blankValues(db: Database, clientId: string | null): FormValues {
+  const client = db.clients.find((item) => item.id === clientId);
+  return {
+    ...clientFields(db, clientId),
     lines: [{ ...emptyLine }],
     vatSeparate: true,
+    depositDueDate: todayISO(),
     requestedDueDate: "",
     receiverPhone: client?.contactMobile ?? "",
     shippingAddress: client ? clientFullAddress(client) : "",
@@ -73,7 +98,11 @@ function readDraft(db: Database): { values: FormValues; savedAt: string } | null
     if (!raw) return null;
     const draft = JSON.parse(raw) as { values: FormValues; savedAt: string };
     const values = { ...blankValues(db, null), ...draft.values };
-    if (!db.clients.some((client) => client.id === values.clientId)) values.clientId = "";
+    if (!db.clients.some((client) => client.id === values.clientId)) {
+      values.clientId = "";
+    } else if (!values.companyName) {
+      Object.assign(values, clientFields(db, values.clientId));
+    }
     values.lines = (values.lines?.length ? values.lines : [{ ...emptyLine }]).map((line) => ({
       ...line,
       productId: db.products.some((product) => product.id === line.productId) ? line.productId : "",
@@ -98,7 +127,6 @@ export function OrderFormPage() {
   const presetClientId = searchParams.get("clientId");
   const [initial] = useState(() => (presetClientId ? null : readDraft(db)));
   const [savedAt, setSavedAt] = useState<string | null>(initial?.savedAt ?? null);
-  const [clientQuery, setClientQuery] = useState(() => db.clients.find((client) => client.id === (initial?.values.clientId ?? presetClientId))?.companyName ?? "");
   const [clientOpen, setClientOpen] = useState(false);
   const [productQuery, setProductQuery] = useState("");
   const [modalName, setModalName] = useState<string | null>(null);
@@ -113,7 +141,7 @@ export function OrderFormPage() {
 
   useEffect(() => {
     const parsed = JSON.parse(draftJson) as FormValues;
-    const touched = parsed.clientId || parsed.memo || parsed.requestedDueDate || parsed.lines.some((line) => line.productId);
+    const touched = parsed.clientId || parsed.companyName || parsed.memo || parsed.requestedDueDate || parsed.depositDueDate !== todayISO() || parsed.lines.some((line) => line.productId);
     if (!touched) return;
     const timer = window.setTimeout(() => {
       const at = new Date().toISOString();
@@ -124,7 +152,8 @@ export function OrderFormPage() {
   }, [draftJson]);
 
   const client = db.clients.find((item) => item.id === values.clientId);
-  const clientMatches = db.clients.filter((item) => `${item.companyName} ${item.representative} ${item.businessNumber} ${item.phone}`.toLowerCase().includes(clientQuery.trim().toLowerCase()));
+  const clientQuery = values.companyName;
+  const clientMatches = db.clients.filter((item) => `${item.companyName} ${item.representative} ${item.phone} ${item.contactName}`.toLowerCase().includes(clientQuery.trim().toLowerCase()));
   const productMatches = productQuery.trim()
     ? db.products.filter((item) => `${item.productName} ${item.modelName} ${item.description}`.toLowerCase().includes(productQuery.trim().toLowerCase())).slice(0, 6)
     : [];
@@ -144,12 +173,12 @@ export function OrderFormPage() {
   const preview = useMemo(() => {
     if (quantity <= 0) return null;
     try {
-      return previewSchedule(quantity);
+      return previewSchedule(quantity, undefined, values.depositDueDate || undefined);
     } catch (reason: unknown) {
       return reason instanceof Error ? reason.message : null;
     }
-  }, [quantity, db]);
-  const capacity = values.requestedDueDate ? previewCapacity(values.requestedDueDate) : null;
+  }, [quantity, db, values.depositDueDate]);
+  const capacity = values.requestedDueDate ? previewCapacity(values.requestedDueDate, undefined, values.depositDueDate || undefined) : null;
   const schedule = preview && typeof preview !== "string" ? preview : null;
   const earliest = schedule?.earliestDueDate ?? null;
   const feasible = Boolean(
@@ -162,18 +191,22 @@ export function OrderFormPage() {
   );
 
   const steps = [
-    { label: "클라이언트 정보", done: Boolean(client), target: "order-client" },
+    { label: "거래처 정보", done: Boolean(values.companyName.trim() && values.contactName.trim() && values.contactEmail.trim() && values.companyAddress.trim() && digitsOnly(values.contactPhone).length >= 9), target: "order-client" },
     { label: "생산품목 및 금액", done: values.lines.length > 0 && values.lines.every((line) => line.productId && line.quantity > 0 && line.unitPrice >= 0), target: "order-items" },
-    { label: "납기 및 배송", done: Boolean(values.requestedDueDate && values.shippingAddress && digitsOnly(values.receiverPhone).length >= 9), target: "order-delivery" },
+    { label: "납기 및 배송", done: Boolean(values.depositDueDate && values.requestedDueDate && values.shippingAddress && digitsOnly(values.receiverPhone).length >= 9), target: "order-delivery" },
   ];
 
   function pickClient(id: string) {
     const picked = db.clients.find((item) => item.id === id);
     if (!picked) return;
     form.setValue("clientId", picked.id);
+    form.setValue("companyName", picked.companyName);
+    form.setValue("contactName", picked.contactName);
+    form.setValue("contactPhone", picked.contactMobile || picked.phone);
+    form.setValue("contactEmail", picked.taxEmail);
+    form.setValue("companyAddress", picked.address);
     form.setValue("shippingAddress", clientFullAddress(picked));
-    form.setValue("receiverPhone", picked.contactMobile);
-    setClientQuery(picked.companyName);
+    form.setValue("receiverPhone", picked.contactMobile || picked.phone);
     setClientOpen(false);
   }
 
@@ -196,14 +229,18 @@ export function OrderFormPage() {
     localStorage.removeItem(DRAFT_KEY);
     setSavedAt(null);
     form.reset(blankValues(db, null));
-    setClientQuery("");
     setError("");
     setLaterDue("");
   }
 
   const submit = form.handleSubmit(() => {
     setLaterDue("");
-    const parsed = schema.safeParse({ ...values, lines: values.lines.map((line) => ({ ...line, quantity: Number(line.quantity), unitPrice: Number(line.unitPrice) })) });
+    const parsed = schema.safeParse({
+      ...values,
+      shippingAddress: values.shippingAddress || values.companyAddress,
+      receiverPhone: values.receiverPhone || values.contactPhone,
+      lines: values.lines.map((line) => ({ ...line, quantity: Number(line.quantity), unitPrice: Number(line.unitPrice) })),
+    });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "입력값을 확인하세요.");
       return;
@@ -212,11 +249,19 @@ export function OrderFormPage() {
     const input = parsed.data;
     try {
       const order = createOrder({
-        clientId: input.clientId,
+        clientId: input.clientId || undefined,
+        client: {
+          companyName: input.companyName,
+          contactName: input.contactName,
+          phone: input.contactPhone,
+          taxEmail: input.contactEmail,
+          address: input.companyAddress,
+        },
         lines: input.lines.map((line) => ({ ...line, vatIncluded: !input.vatSeparate })),
+        depositDueDate: input.depositDueDate,
         requestedDueDate: input.requestedDueDate,
-        shippingAddress: input.shippingAddress,
-        receiverPhone: input.receiverPhone,
+        shippingAddress: input.shippingAddress || input.companyAddress,
+        receiverPhone: input.receiverPhone || input.contactPhone,
         notifyChannel: input.notifyChannel,
         memo: input.memo,
         actor,
@@ -235,7 +280,7 @@ export function OrderFormPage() {
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">신규 수주 등록</h1>
-          <p className="mt-1 text-sm text-muted">클라이언트를 선택하면 등록된 연락처와 주소가 자동으로 입력됩니다.</p>
+          <p className="mt-1 text-sm text-muted">등록된 거래처를 검색하거나, 없는 회사면 입력한 정보로 자동 등록됩니다.</p>
         </div>
         <Link to="/orders" className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-4 text-sm font-semibold"><ArrowLeft size={16} />수주 목록으로</Link>
       </div>
@@ -257,25 +302,26 @@ export function OrderFormPage() {
 
       <form className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]" onSubmit={submit}>
         <div className="min-w-0 space-y-4">
-          <Section id="order-client" title="클라이언트 정보" badge={client ? <span className="inline-flex items-center gap-1 rounded-full bg-primary-soft px-2 py-0.5 text-xs font-semibold text-primary"><Check size={12} />등록된 클라이언트</span> : null}>
+          <Section id="order-client" title="거래처 정보" badge={<span className="text-xs font-semibold text-primary">{client ? "● 기존 거래처" : values.companyName.trim() ? "● 신규 거래처" : null}</span>}>
             <div className="relative">
               <FieldLabel>회사명 *</FieldLabel>
               <div className="relative">
                 <input
                   className="h-10 w-full rounded-lg border border-line bg-white px-3 pr-9 text-sm"
                   value={clientQuery}
-                  placeholder="회사명, 대표자, 사업자번호로 검색"
+                  placeholder="회사명으로 검색"
                   onFocus={() => setClientOpen(true)}
                   onBlur={() => window.setTimeout(() => setClientOpen(false), 150)}
                   onChange={(event) => {
-                    setClientQuery(event.target.value);
+                    const next = event.target.value;
+                    form.setValue("companyName", next);
                     setClientOpen(true);
-                    if (client && event.target.value !== client.companyName) form.setValue("clientId", "");
+                    if (client && next !== client.companyName) form.setValue("clientId", "");
                   }}
                 />
                 <Search size={16} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
               </div>
-              {clientOpen ? (
+              {clientOpen && clientQuery.trim() ? (
                 <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-line bg-white shadow-lg">
                   <ul className="max-h-60 overflow-y-auto">
                     {clientMatches.slice(0, 8).map((item) => (
@@ -283,7 +329,7 @@ export function OrderFormPage() {
                         <button type="button" className={cn("flex w-full items-center justify-between px-3 py-2 text-left hover:bg-canvas", item.id === values.clientId && "bg-primary-soft")} onMouseDown={(event) => event.preventDefault()} onClick={() => pickClient(item.id)}>
                           <span>
                             <span className="block text-sm font-semibold">{item.companyName}</span>
-                            <span className="block text-xs text-muted">{item.representative} · {item.phone} · {clientFullAddress(item)}</span>
+                            <span className="block text-xs text-muted">{item.contactName || item.representative} · {item.contactMobile || item.phone} · {clientFullAddress(item)}</span>
                           </span>
                           {item.id === values.clientId ? <Check size={16} className="text-primary" /> : null}
                         </button>
@@ -291,21 +337,53 @@ export function OrderFormPage() {
                     ))}
                   </ul>
                   {clientMatches.length === 0 ? (
-                    <p className="border-t border-line px-3 py-2 text-xs text-muted">검색 결과가 없습니다. <Link to="/clients/new" className="font-semibold text-primary">클라이언트 관리에서 먼저 등록</Link>한 뒤 선택하세요.</p>
+                    <p className="px-3 py-2 text-xs text-muted">검색 결과가 없습니다. 수주 등록 시 이 회사명으로 거래처가 만들어집니다.</p>
                   ) : null}
                 </div>
               ) : null}
             </div>
+            {client ? (
+              <div className="mt-2 flex items-center justify-between rounded-lg bg-primary-soft px-3 py-2">
+                <span>
+                  <span className="block text-sm font-semibold">{client.companyName}</span>
+                  <span className="block text-xs text-muted">{client.contactName || client.representative} · {client.contactMobile || client.phone} · {client.address}</span>
+                </span>
+                <Check size={16} className="text-primary" />
+              </div>
+            ) : null}
+            <p className="mt-2 flex items-center gap-1 text-xs text-muted">
+              <Plus size={12} className="shrink-0" />검색 결과가 없으면 입력한 회사명으로 자동 등록됩니다.
+            </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <ReadField label="사업자등록번호" value={client?.businessNumber} />
               <ReadField label="대표자명" value={client?.representative} />
-              <ReadField label="대표전화" value={client?.phone} />
-              <ReadField label="담당자 / 휴대번호" value={client ? `${client.contactName} · ${client.contactMobile}` : undefined} />
-              <div className="sm:col-span-2"><ReadField label="회사 주소" value={client ? clientFullAddress(client) : undefined} /></div>
-              <div className="sm:col-span-2"><ReadField label="세금계산서 이메일" value={client?.taxEmail} /></div>
+              <label className="block text-sm">
+                <FieldLabel>담당자명 *</FieldLabel>
+                <input className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" placeholder="담당자명" {...form.register("contactName")} />
+              </label>
+              <label className="block text-sm">
+                <FieldLabel>연락처 *</FieldLabel>
+                <input className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" placeholder="010-0000-0000" {...form.register("contactPhone")} />
+              </label>
+              <label className="block text-sm">
+                <FieldLabel>이메일 *</FieldLabel>
+                <input type="email" className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" placeholder="email@example.com" {...form.register("contactEmail")} />
+              </label>
+              <AddressPicker
+                compact
+                label="회사 주소 *"
+                value={values.companyAddress}
+                onChange={(address) => {
+                  form.setValue("companyAddress", address);
+                  if (!values.shippingAddress || values.shippingAddress === client?.address || (client && values.shippingAddress === clientFullAddress(client))) form.setValue("shippingAddress", address);
+                }}
+              />
             </div>
             <p className="mt-3 text-xs text-muted">
-              {client ? <span className="text-success">✓ 등록된 클라이언트 정보를 불러왔습니다. 정보 수정은 클라이언트 관리에서 합니다.</span> : "회사명을 검색해 등록된 클라이언트를 선택하세요."}
+              {client
+                ? <span className="text-success">✓ 등록된 거래처의 담당자, 연락처, 주소로 불러왔습니다.</span>
+                : values.companyName.trim()
+                  ? "수주 등록 시 입력한 거래처가 클라이언트 목록에 추가됩니다."
+                  : "회사명을 검색해 기존 거래처를 고르거나, 새 회사명을 입력하세요."}
             </p>
           </Section>
 
@@ -398,8 +476,13 @@ export function OrderFormPage() {
           <Section id="order-delivery" title="납기 및 배송" description="출고 시 선택한 알림 채널로 배송 안내가 발송됩니다.">
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-sm">
+                <FieldLabel>계약금 입금 마감일 *</FieldLabel>
+                <input type="date" min={todayISO()} className="h-10 w-full rounded-lg border border-line bg-white px-3" {...form.register("depositDueDate")} />
+                <span className="mt-1 block text-xs text-muted">이 날부터 생산 일정을 잡습니다. 이 날이 지나도 계약금이 없으면 수주가 취소됩니다.</span>
+              </label>
+              <label className="block text-sm">
                 <FieldLabel>납기일 *</FieldLabel>
-                <input type="date" min={todayISO()} className="h-10 w-full rounded-lg border border-line bg-white px-3" {...form.register("requestedDueDate")} />
+                <input type="date" min={values.depositDueDate || todayISO()} className="h-10 w-full rounded-lg border border-line bg-white px-3" {...form.register("requestedDueDate")} />
               </label>
               <label className="block text-sm">
                 <FieldLabel>배송 수신 연락처 *</FieldLabel>
@@ -450,6 +533,10 @@ export function OrderFormPage() {
                   values.shippingAddress === clientFullAddress(client)
                     ? <span className="text-xs font-semibold text-success">✓ 클라이언트 주소와 동일</span>
                     : <button type="button" className="text-xs font-semibold text-primary" onClick={() => form.setValue("shippingAddress", clientFullAddress(client))}>클라이언트 주소로 채우기</button>
+                ) : values.companyAddress ? (
+                  values.shippingAddress === values.companyAddress
+                    ? <span className="text-xs font-semibold text-success">✓ 회사 주소와 동일</span>
+                    : <button type="button" className="text-xs font-semibold text-primary" onClick={() => form.setValue("shippingAddress", values.companyAddress)}>회사 주소로 채우기</button>
                 ) : null}
               </div>
               <AddressPicker label="배송지 *" value={values.shippingAddress} onChange={(address) => form.setValue("shippingAddress", address)} />
@@ -473,7 +560,7 @@ export function OrderFormPage() {
                 ))}
               </div>
               <p className="mt-1 text-xs text-muted">
-                {values.notifyChannel === "SMS" ? "출고 시 배송 수신 연락처로 택배사와 운송장 번호를 문자로 보냅니다." : `출고 시 ${client?.taxEmail ?? "클라이언트 이메일"}로 배송 안내 메일을 보냅니다.`}
+                {values.notifyChannel === "SMS" ? "출고 시 배송 수신 연락처로 택배사와 운송장 번호를 문자로 보냅니다." : `출고 시 ${values.contactEmail || "거래처 이메일"}로 배송 안내 메일을 보냅니다.`}
               </p>
             </div>
             <label className="mt-4 block text-sm">
@@ -507,6 +594,7 @@ export function OrderFormPage() {
             <h2 className="font-semibold">수주 요약</h2>
             <dl className="mt-4 space-y-3 text-sm">
               <SummaryRow label="등록일" value={todayISO()} />
+              <SummaryRow label="계약금 마감" value={values.depositDueDate || "마감일 선택 전"} muted={!values.depositDueDate} />
               <SummaryRow label="납품일" value={values.requestedDueDate || "납기일 선택 전"} muted={!values.requestedDueDate} />
               <SummaryRow label="가장 빠른 납기" value={earliest ?? "수량 입력 전"} muted={!earliest} />
               <SummaryRow label="생산 시작 예정" value={schedule?.plannedStartDate ?? "수량 입력 전"} muted={!schedule} />
@@ -535,7 +623,7 @@ export function OrderFormPage() {
             <Info size={16} className="mt-0.5 shrink-0 text-primary" />
             <div>
               <p className="font-semibold text-primary">선금 확인 후 생산 시작</p>
-              <p className="mt-1 text-xs text-muted">등록하면 가상계좌가 발급되고 일정이 잡힙니다. 계약금(선금 50%)이 입금되면 작업지시가 자동으로 만들어집니다.</p>
+              <p className="mt-1 text-xs text-muted">등록하면 계약금 마감일부터 일정이 잡히고 가상계좌가 발급됩니다. 마감일까지 계약금이 없으면 수주가 취소됩니다. 계약금이 입금되면 작업지시가 만들어집니다.</p>
             </div>
           </section>
           <p className="flex items-center justify-between px-1 text-xs text-muted">

@@ -13,7 +13,7 @@ import { clientFullAddress, importClients, saveClient } from "@/lib/workflow.ts"
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
-const template = "사업자등록번호,회사명,대표자,주소,대표전화,담당자명,담당자휴대번호,세금계산서이메일\n";
+const template = "회사명,대표자,주소,대표전화,담당자명,담당자휴대번호,세금계산서이메일\n";
 
 const PAGE_SIZE = 8;
 
@@ -84,8 +84,8 @@ export function ClientListPage() {
                 input.value = "";
                 const lines = text.split(/\r?\n/).slice(1).filter((line) => line.trim());
                 const imported = importClients(lines.map((line) => {
-                  const [businessNumber, companyName, representative, address, phone, contactName, contactMobile, taxEmail] = line.split(",");
-                  return { businessNumber: businessNumber ?? "", companyName: companyName ?? "", representative: representative ?? "", address: address ?? "", postalCode: "", addressDetail: "", phone: phone ?? "", contactName: contactName ?? "", contactMobile: contactMobile ?? "", taxEmail: taxEmail ?? "" };
+                  const [companyName, representative, address, phone, contactName, contactMobile, taxEmail] = line.split(",");
+                  return { companyName: companyName ?? "", representative: representative ?? "", address: address ?? "", postalCode: "", addressDetail: "", phone: phone ?? "", contactName: contactName ?? "", contactMobile: contactMobile ?? "", taxEmail: taxEmail ?? "" };
                 }));
                 setResult(`성공 ${imported.created}건${imported.errors.length ? ` / ${imported.errors.join(" ")}` : ""}`);
                 show("엑셀 등록을 반영했습니다.");
@@ -197,8 +197,8 @@ export function ClientListPage() {
               <div className="min-w-0 flex-1 space-y-1">
                 <p className="text-xs font-bold">여러 거래처를 한 번에 등록하세요</p>
                 <div className="text-[10px] text-muted">
-                  <p>양식에 사업자등록번호 · 회사명 · 대표자 · 주소 · 연락처를 입력한 뒤 업로드하세요.</p>
-                  <p>지원 형식 .csv · 사업자등록번호가 겹치는 행은 등록하지 않고 오류로 표시합니다.</p>
+                  <p>양식에 회사명 · 대표자 · 주소 · 연락처를 입력한 뒤 업로드하세요.</p>
+                  <p>지원 형식 .csv · 회사명이 없는 행은 등록하지 않고 오류로 표시합니다.</p>
                 </div>
               </div>
               <button type="button" className="shrink-0 text-[11px] font-medium text-primary" onClick={() => download(template, "거래처양식.csv")}>
@@ -355,7 +355,7 @@ function InfoRow({ label, value, muted = false }: { label: string; value: string
   );
 }
 
-const emptyClient = { businessNumber: "", companyName: "", representative: "", address: "", postalCode: "", addressDetail: "", phone: "", contactName: "", contactMobile: "", taxEmail: "" };
+const emptyClient = { companyName: "", representative: "", address: "", postalCode: "", addressDetail: "", phone: "", contactName: "", contactMobile: "", taxEmail: "" };
 
 export function ClientFormPage() {
   const { clientId } = useParams();
@@ -420,7 +420,7 @@ export function ClientFormPage() {
               return;
             }
             try {
-              saveClient({ ...form, id: current?.id, businessNumber: digitsOnly(form.businessNumber) });
+              saveClient({ ...form, id: current?.id });
               show(editing ? "거래처를 수정했습니다." : "거래처를 등록했습니다.");
               navigate("/clients");
             } catch (error: unknown) {
@@ -431,22 +431,15 @@ export function ClientFormPage() {
           <div className="flex items-center justify-between gap-3">
             <div className="space-y-[3px]">
               <h2 className="text-base font-bold">거래처 기본 정보</h2>
-              <p className="text-[11px] text-muted">사업자등록번호, 회사명, 대표자, 주소, 대표전화는 필수 입력 항목입니다.</p>
+              <p className="text-[11px] text-muted">회사명, 대표자, 주소, 대표전화는 필수 입력 항목입니다.</p>
             </div>
             <span className="text-[10px] text-muted">* 필수 입력 항목</span>
           </div>
 
           <div className="space-y-2">
             <div className="flex items-end gap-2.5">
-              <FormField label="사업자등록번호 *" className="flex-1">
-                <input
-                  required
-                  inputMode="numeric"
-                  placeholder="숫자 10자리"
-                  value={form.businessNumber}
-                  className={inputClass}
-                  onChange={(event) => patch({ businessNumber: event.target.value })}
-                />
+              <FormField label="회사명 *" className="flex-1">
+                <input required placeholder="정식 회사명을 입력하세요" value={form.companyName} className={inputClass} onChange={(event) => patch({ companyName: event.target.value })} />
               </FormField>
               <Button tone="ghost" className="shrink-0 text-[13px] font-medium" onClick={runDuplicateCheck}>중복 확인</Button>
             </div>
@@ -455,7 +448,7 @@ export function ClientFormPage() {
                 ? duplicates.length
                   ? "같은 회사명의 거래처가 있습니다. 아래 목록을 확인한 뒤 새로 등록할지 정하세요."
                   : "겹치는 거래처가 없습니다. 등록을 계속하세요."
-                : "같은 사업자등록번호는 등록되지 않습니다. 회사명과 연락처가 같은 거래처도 먼저 확인해 주세요."}
+                : "회사명과 연락처가 같은 거래처가 있는지 먼저 확인해 주세요."}
             </p>
             {checked && duplicates.length > 0 ? (
               <ul className="rounded-[7px] border border-line">
@@ -470,10 +463,6 @@ export function ClientFormPage() {
               </ul>
             ) : null}
           </div>
-
-          <FormField label="회사명 *">
-            <input required placeholder="정식 회사명을 입력하세요" value={form.companyName} className={inputClass} onChange={(event) => patch({ companyName: event.target.value })} />
-          </FormField>
 
           <div className="grid gap-[14px] sm:grid-cols-2">
             <FormField label="대표자명 *">
@@ -624,7 +613,7 @@ function CompanyAddress({
 }
 
 const registrationSteps = [
-  { title: "기본 정보 입력", body: "사업자등록번호와 회사명, 연락처를 정확하게 입력해 주세요." },
+  { title: "기본 정보 입력", body: "회사명과 연락처를 정확하게 입력해 주세요." },
   { title: "기존 거래처 확인", body: "중복 확인으로 같은 회사명과 연락처의 거래처를 비교하세요." },
   { title: "수주에서 바로 사용", body: "등록 후 수주 작성 화면에서 회사명을 검색할 수 있습니다." },
 ];
@@ -713,7 +702,7 @@ export function ClientDetailPage() {
               </span>
               <div className="space-y-1">
                 <p className="text-[21px] font-bold">{client.companyName}</p>
-                <p className="text-[11px] text-muted">{dotted(localDate(client.createdAt))} 등록 · 사업자등록번호 {formatBusinessNumber(client.businessNumber)}</p>
+                <p className="text-[11px] text-muted">{dotted(localDate(client.createdAt))} 등록</p>
               </div>
             </div>
             <hr className="border-line" />
@@ -849,11 +838,6 @@ function DetailField({ label, value, wide = false }: { label: string; value: str
       <p className="text-[13px]">{value || "-"}</p>
     </div>
   );
-}
-
-function formatBusinessNumber(value: string): string {
-  const digits = digitsOnly(value);
-  return digits.length === 10 ? `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}` : value;
 }
 
 function download(content: string, name: string) {

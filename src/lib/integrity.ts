@@ -2,7 +2,7 @@ import { depositTarget, orderQuantity, orderTotal, paymentStatusOf, productKey }
 import { addWorkingDays, factoryCapacity, isWorkingDay, occupiesFactory } from "@/lib/schedule.ts";
 import type { Database, OrderStatus, WorkOrderStatus } from "@/types/domain.ts";
 
-const producedAll: OrderStatus[] = ["PACKING", "PACKED", "SHIPPING", "COMPLETED"];
+const producedAll: OrderStatus[] = ["PACKING", "PACKED", "READY_TO_SHIP", "SHIPPING", "COMPLETED"];
 
 function workOrdersMatchOrder(status: OrderStatus, active: { status: WorkOrderStatus }[]): boolean {
   const open = active.filter((item) => item.status !== "COMPLETED");
@@ -42,7 +42,6 @@ export function integrityIssues(db: Database): string[] {
   });
 
   duplicates(db.orders.map((order) => order.orderNo)).forEach((no) => issues.push(`수주번호 중복: ${no}`));
-  duplicates(db.clients.map((client) => client.businessNumber)).forEach((no) => issues.push(`사업자등록번호 중복: ${no}`));
   duplicates(db.products.map((product) => productKey(product.productName, product.modelName))).forEach((key) => issues.push(`품목 중복: ${key}`));
 
   const daily = new Map<string, number>();
@@ -80,6 +79,16 @@ export function integrityIssues(db: Database): string[] {
 
     const active = db.workOrders.filter((item) => item.orderId === order.id && item.status !== "CANCELLED");
     if (!workOrdersMatchOrder(order.status, active)) issues.push(`${tag}: 작업지시 구성이 수주 상태와 맞지 않습니다.`);
+    const byProduct = new Map<string, number>();
+    active.forEach((item) => {
+      (item.items ?? []).forEach((row) => byProduct.set(row.productId, (byProduct.get(row.productId) ?? 0) + row.quantity));
+    });
+    if (order.status !== "WAITING" && order.status !== "CANCELLED") {
+      order.lines.forEach((line) => {
+        const split = byProduct.get(line.productId) ?? 0;
+        if (split !== line.quantity) issues.push(`${tag}: ${line.productId} 작업지시 품목 수량(${split})이 수주 줄(${line.quantity})과 다릅니다.`);
+      });
+    }
     const workQty = active.reduce((sum, item) => sum + item.quantity, 0);
     if (order.status !== "WAITING" && order.status !== "CANCELLED" && workQty !== order.coveredQuantity) {
       issues.push(`${tag}: 작업지시 수량 합(${workQty})이 작업 수량(${order.coveredQuantity})과 다릅니다.`);
@@ -112,6 +121,10 @@ export function integrityIssues(db: Database): string[] {
     const allocated = (workOrder.allocations ?? []).reduce((sum, slot) => sum + slot.quantity, 0);
     if (workOrder.status !== "CANCELLED" && allocated !== workOrder.quantity) {
       issues.push(`${tag}: 일자별 수량 합(${allocated})이 지시 수량(${workOrder.quantity})과 다릅니다.`);
+    }
+    const itemQty = (workOrder.items ?? []).reduce((sum, item) => sum + item.quantity, 0);
+    if (workOrder.status !== "CANCELLED" && itemQty !== workOrder.quantity) {
+      issues.push(`${tag}: 품목 수량 합(${itemQty})이 지시 수량(${workOrder.quantity})과 다릅니다.`);
     }
     const dates = (workOrder.allocations ?? []).map((slot) => slot.date).sort();
     if (dates.length > 0 && (dates[0] !== workOrder.plannedStartDate || dates.at(-1) !== workOrder.plannedEndDate)) {

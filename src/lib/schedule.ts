@@ -1,5 +1,5 @@
 import { addDays, isWeekend } from "@/lib/dates.ts";
-import type { DayAllocation, Line, Order, WorkOrder } from "@/types/domain.ts";
+import type { DayAllocation, Line, Order, WorkOrder, WorkOrderItem } from "@/types/domain.ts";
 
 export interface ScheduleResult {
   plannedStartDate: string;
@@ -53,6 +53,7 @@ export function mergeAllocations(slots: DayAllocation[]): DayAllocation[] {
 export interface PackJob {
   id: string;
   quantity: number;
+  notBefore?: string;
 }
 
 export function packJobs(
@@ -70,7 +71,8 @@ export function packJobs(
   const results = new Map<string, ScheduleResult>();
   for (const job of jobs) {
     if (job.quantity <= 0) continue;
-    const result = scheduleQuantity(job.quantity, fromDate, lines, holidays, placed, job.id);
+    const start = job.notBefore && job.notBefore > fromDate ? job.notBefore : fromDate;
+    const result = scheduleQuantity(job.quantity, start, lines, holidays, placed, job.id);
     results.set(job.id, result);
     placed.push({ id: job.id, status: "CONFIRMED", allocations: result.allocations });
   }
@@ -153,12 +155,90 @@ export function scheduleQuantity(
   };
 }
 
+export function scheduleBackward(
+  quantity: number,
+  dueDate: string,
+  fromDate: string,
+  lines: Line[],
+  holidays: string[],
+  orders: OccupyingOrder[],
+  ignoreOrderId?: string,
+): ScheduleResult {
+  if (quantity <= 0) throw new Error("수량은 1개 이상이어야 합니다.");
+  const daily = factoryCapacity(lines);
+  if (daily <= 0) throw new Error("가동할 수 있는 라인이 없어 일정을 잡을 수 없습니다.");
+
+  let cursor = dueDate;
+  let end = "";
+  let guard = 0;
+  while (cursor >= fromDate && guard < 400) {
+    if (isWorkingDay(cursor, holidays) && addWorkingDays(cursor, 2, holidays) <= dueDate) {
+      end = cursor;
+      break;
+    }
+    cursor = addDays(cursor, -1);
+    guard += 1;
+  }
+  if (!end) throw new Error("납기까지 생산을 마칠 수 있는 날이 없습니다.");
+
+  cursor = end;
+  let left = quantity;
+  const allocations: DayAllocation[] = [];
+  guard = 0;
+  while (left > 0 && cursor >= fromDate && guard < 500) {
+    if (isWorkingDay(cursor, holidays)) {
+      const remaining = Math.max(0, daily - occupiedOn(cursor, orders, ignoreOrderId));
+      if (remaining > 0) {
+        allocations.push({ date: cursor, quantity: Math.min(left, remaining) });
+        left -= Math.min(left, remaining);
+      }
+    }
+    if (left > 0) cursor = addDays(cursor, -1);
+    guard += 1;
+  }
+  if (left > 0) throw new Error("가용 생산량 안에서 완료 예정일을 계산하지 못했습니다.");
+  allocations.sort((leftSlot, rightSlot) => leftSlot.date.localeCompare(rightSlot.date));
+  const plannedStartDate = allocations[0]?.date ?? end;
+  const plannedEndDate = allocations[allocations.length - 1]?.date ?? end;
+  return {
+    plannedStartDate,
+    plannedEndDate,
+    earliestDueDate: addWorkingDays(plannedEndDate, 2, holidays),
+    allocations,
+  };
+}
+
 export interface LineWorkChunk {
   lineId: string;
   quantity: number;
   plannedStartDate: string;
   plannedEndDate: string;
   allocations: DayAllocation[];
+}
+
+export function allocateProductItems(
+  lines: Array<{ productId: string; quantity: number }>,
+  quantities: number[],
+  reserved: WorkOrderItem[] = [],
+): WorkOrderItem[][] {
+  const remaining = lines.map((line) => ({ productId: line.productId, quantity: line.quantity }));
+  for (const item of reserved) {
+    const row = remaining.find((line) => line.productId === item.productId);
+    if (row) row.quantity = Math.max(0, row.quantity - item.quantity);
+  }
+  return quantities.map((quantity) => {
+    const items: WorkOrderItem[] = [];
+    let left = quantity;
+    for (const row of remaining) {
+      if (left <= 0) break;
+      const take = Math.min(left, row.quantity);
+      if (take <= 0) continue;
+      items.push({ productId: row.productId, quantity: take });
+      row.quantity -= take;
+      left -= take;
+    }
+    return items;
+  });
 }
 
 export function usableLines(lines: Line[]): Line[] {
@@ -276,6 +356,7 @@ export function splitQuantityByLines(
           lineId: line.id,
           quantity: take,
           allocations: [{ date: slot.date, quantity: take }],
+          items: [],
           issuedAt: "",
           plannedStartDate: slot.date,
           plannedEndDate: slot.date,

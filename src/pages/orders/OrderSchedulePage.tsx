@@ -47,7 +47,7 @@ export function OrderSchedulePage() {
     <div>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">수주 일정 관리</h1>
+          <h1 className="text-2xl font-semibold">생산 일정 관리</h1>
           <p className="mt-1 text-sm text-muted">선택한 납기 기간의 수주를 조회합니다.</p>
         </div>
         <div className="flex items-center gap-2">

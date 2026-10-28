@@ -9,9 +9,12 @@ import { DashboardPage } from "@/pages/DashboardPage.tsx";
 import { LineDetailPage, LineFormPage, LineListPage } from "@/pages/lines/LinePages.tsx";
 import { LoginPage } from "@/pages/LoginPage.tsx";
 import { OrderDetailPage } from "@/pages/orders/OrderDetailPage.tsx";
-import { OrderFormPage } from "@/pages/orders/OrderFormPage.tsx";
 import { OrderListPage } from "@/pages/orders/OrderListPage.tsx";
+import { OrderRegisterPage } from "@/pages/orders/OrderRegisterPage.tsx";
 import { OrderSchedulePage } from "@/pages/orders/OrderSchedulePage.tsx";
+import { QuoteDetailPage } from "@/pages/quotes/QuoteDetailPage.tsx";
+import { QuoteFormPage } from "@/pages/quotes/QuoteFormPage.tsx";
+import { QuoteListPage } from "@/pages/quotes/QuoteListPage.tsx";
 import { ProductDetailPage, ProductFormPage, ProductListPage } from "@/pages/products/ProductPages.tsx";
 import { ShippingPage } from "@/pages/ShippingPage.tsx";
 import { WorkOrderDetailPage, WorkOrderListPage } from "@/pages/work-orders/WorkOrderPages.tsx";
@@ -36,9 +39,12 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route element={<RootLayout />}>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/quotes" element={<QuoteListPage />} />
+          <Route path="/quotes/new" element={<OrderWriters><QuoteFormPage /></OrderWriters>} />
+          <Route path="/quotes/:quotationId" element={<QuoteDetailPage />} />
           <Route path="/orders" element={<OrderListPage />} />
           <Route path="/orders/schedule" element={<OrderSchedulePage />} />
-          <Route path="/orders/new" element={<OrderWriters><OrderFormPage /></OrderWriters>} />
+          <Route path="/orders/new" element={<OrderWriters><OrderRegisterPage /></OrderWriters>} />
           <Route path="/orders/:orderId" element={<OrderDetailPage />} />
           <Route path="/work-orders" element={<WorkOrderListPage />} />
           <Route path="/work-orders/:workOrderId" element={<WorkOrderDetailPage />} />
@@ -52,7 +58,7 @@ export default function App() {
           <Route path="/products/:productId" element={<ProductDetailPage />} />
           <Route path="/products/:productId/edit" element={<OrderWriters><ProductFormPage /></OrderWriters>} />
           <Route path="/lines" element={<LineListPage />} />
-          <Route path="/lines/new" element={<AdminOnly><LineFormPage /></AdminOnly>} />
+          <Route path="/lines/new" element={<OrderWriters><LineFormPage /></OrderWriters>} />
           <Route path="/lines/:lineId" element={<LineDetailPage />} />
           <Route path="/lines/:lineId/edit" element={<AdminOnly><LineFormPage /></AdminOnly>} />
           <Route path="/calendar" element={<CalendarPage />} />
