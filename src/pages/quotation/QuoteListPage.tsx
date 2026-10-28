@@ -55,7 +55,7 @@ export function QuoteListPage() {
           <h1 className="text-2xl font-semibold">견적</h1>
           <p className="mt-1 text-muted">가격과 납기를 제안합니다. 배송지는 수주 등록에서 받습니다.</p>
         </div>
-        {canManageOrders(role) ? <Link to="/quotes/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">견적 작성</Link> : null}
+        {canManageOrders(role) ? <Link to="/quotations/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">견적 작성</Link> : null}
       </div>
       <section className="mt-4 overflow-hidden rounded-xl border border-line bg-white">
         <div className="flex flex-wrap gap-2 p-4">
@@ -88,7 +88,7 @@ export function QuoteListPage() {
                 const order = db.orders.find((item) => item.quotationId === quote.id && item.status !== "CANCELLED");
                 return (
                   <tr key={quote.id} className="border-t border-line">
-                    <td className="px-4 py-3 font-semibold"><Link to={`/quotes/${quote.id}`} className="text-primary">{quote.quotationNo}</Link></td>
+                    <td className="px-4 py-3 font-semibold"><Link to={`/quotations/${quote.id}`} className="text-primary">{quote.quotationNo}</Link></td>
                     <td className="px-4 py-3">{client?.companyName ?? "-"}</td>
                     <td className="px-4 py-3">{quote.requestedDueDate}</td>
                     <td className="px-4 py-3">{quote.estimatedDueDate}</td>

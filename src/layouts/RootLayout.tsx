@@ -63,7 +63,7 @@ export function RootLayout() {
           <Outlet />
         </main>
         <footer className="flex items-center justify-between px-6 py-4 text-xs text-muted">
-          <span>© 2026 생산플로우 · 내부 업무 전용</span>
+          <span>© 2026 PRODFLOW · 내부 업무 전용</span>
           <span>모든 데이터는 디자인 검토용 가상 데이터입니다.</span>
         </footer>
       </div>

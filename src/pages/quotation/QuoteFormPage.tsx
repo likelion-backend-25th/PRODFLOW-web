@@ -171,7 +171,7 @@ export function QuoteFormPage() {
         actor,
       });
       show(`${quote.quotationNo} 견적을 발송했습니다.`);
-      navigate(`/quotes/${quote.id}`);
+      navigate(`/quotations/${quote.id}`);
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "발송하지 못했습니다.");
     }
@@ -184,7 +184,7 @@ export function QuoteFormPage() {
           <h1 className="text-2xl font-semibold">견적 작성</h1>
           <p className="mt-1 text-sm text-muted">거래처를 검색하거나 새로 입력하고, 품목과 희망 납기를 넣습니다. 배송지는 넣지 않습니다.</p>
         </div>
-        <Link to="/quotes" className="inline-flex h-10 items-center rounded-lg border border-line bg-white px-4 text-sm font-semibold">견적 목록</Link>
+        <Link to="/quotations" className="inline-flex h-10 items-center rounded-lg border border-line bg-white px-4 text-sm font-semibold">견적 목록</Link>
       </div>
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div className="space-y-4">

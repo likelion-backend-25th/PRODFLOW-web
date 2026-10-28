@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, Check, Pencil } from "lucide-react";
 import { AddressPicker } from "@/components/AddressPicker.tsx";
@@ -9,7 +9,7 @@ import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, reg
 import type { OrderStatus } from "@/types/domain.ts";
 import { delayOf, delayTone, workOrdersOf } from "@/lib/delay.ts";
 import { depositTarget, formatWon, lineAmount, orderQuantity, orderTotal } from "@/lib/money.ts";
-import { DueDateError, cancelOrder, completeDelivery, completePacking, markReadyToShip, recordPayment, shipOrder, updateOrderPrices, updateOrderQuantities, updateShippingAddress } from "@/lib/workflow.ts";
+import { DueDateError, cancelOrder, completeDelivery, completePacking, markReadyToShip, recordPayment, shipOrder, updateOrderQuantities, updateShippingAddress } from "@/lib/workflow.ts";
 import { canManageOrders, canProduce, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
@@ -35,13 +35,14 @@ export function OrderDetailPage() {
   const orderHistory = db.histories.filter((item) => item.entity === "ORDER" && item.entityId === order.id);
   const delay = delayOf(order, workOrders.find((item) => item.status === "READY" && !item.assigneeId) ?? workOrders[0], todayISO());
   const qtyMap = Object.fromEntries(order.lines.map((line) => [line.id, quantities[line.id] ?? line.quantity]));
-  const priceMap = Object.fromEntries(order.lines.map((line) => [line.id, prices[line.id] ?? line.unitPrice]));
   const locked = order.status === "COMPLETED" || order.status === "CANCELLED";
   const canEditQty = !locked && !["PACKING", "PACKED", "READY_TO_SHIP", "SHIPPING"].includes(order.status);
+  const editing = editingItems && canEditQty && canManageOrders(user.role);
   const notice = db.notifications.find((item) => item.orderId === order.id && item.success);
   const quote = db.quotations.find((item) => item.id === order.quotationId);
-  const supply = order.lines.reduce((sum, line) => sum + supplyOf({ ...line, quantity: qtyMap[line.id] ?? line.quantity, unitPrice: priceMap[line.id] ?? line.unitPrice }), 0);
-  const shownTotal = orderTotal(order.lines.map((line) => ({ ...line, quantity: qtyMap[line.id] ?? line.quantity, unitPrice: priceMap[line.id] ?? line.unitPrice })));
+  const shownLines = order.lines.map((line) => ({ ...line, quantity: editing ? (qtyMap[line.id] ?? line.quantity) : line.quantity }));
+  const supply = shownLines.reduce((sum, line) => sum + supplyOf(line), 0);
+  const shownTotal = orderTotal(shownLines);
   const deposit = depositTarget(shownTotal);
   const balance = Math.max(0, shownTotal - order.paidAmount);
   const assignee = db.users.find((item) => item.id === workOrders.find((work) => work.assigneeId)?.assigneeId);
@@ -62,6 +63,23 @@ export function OrderDetailPage() {
     }
   }
 
+  function saveQuantities(acceptLaterDue: boolean) {
+    if (order.lines.some((line) => (qtyMap[line.id] ?? line.quantity) > line.quantity)) {
+      show("수량은 줄일 수만 있습니다. 늘리려면 견적을 다시 작성하세요.");
+      return;
+    }
+    try {
+      updateOrderQuantities(order.id, qtyMap, acceptLaterDue, user);
+      show(acceptLaterDue ? `${laterDue}로 납기를 변경했습니다.` : "수량을 수정하고 일정을 다시 계산했습니다.");
+      setQuantities({});
+      setLaterDue("");
+      setEditingItems(false);
+    } catch (error: unknown) {
+      if (error instanceof DueDateError) setLaterDue(error.earliestDue);
+      show(error instanceof Error ? error.message : "처리하지 못했습니다.");
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -71,7 +89,19 @@ export function OrderDetailPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link to="/orders" className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-3 text-sm font-semibold"><ArrowLeft size={16} />수주 목록으로</Link>
-          <a href="#order-items" className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-3 text-sm font-semibold"><Pencil size={15} />수주 수정</a>
+          {canEditQty && canManageOrders(user.role) ? (
+            <button
+              type="button"
+              className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-3 text-sm font-semibold"
+              onClick={() => {
+                setEditingItems(true);
+                setLaterDue("");
+                document.getElementById("order-items")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            >
+              <Pencil size={15} />수주 수정
+            </button>
+          ) : null}
         </div>
       </div>
       <section className="rounded-xl border border-line bg-white px-5 py-4">
@@ -85,7 +115,7 @@ export function OrderDetailPage() {
             </div>
             <p className="mt-2 text-sm text-muted">
               {client?.companyName ?? "거래처 없음"}
-              {quote ? <> · 원본 <Link className="text-primary" to={`/quotes/${quote.id}`}>{quote.quotationNo}</Link></> : null}
+              {quote ? <> · 원본 <Link className="text-primary" to={`/quotations/${quote.id}`}>{quote.quotationNo}</Link></> : null}
               {registrar ? <> · 등록자 {registrar}</> : null}
             </p>
           </div>
@@ -127,7 +157,7 @@ export function OrderDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-5">
           <div>
             <h2 className="font-semibold">생산품목 및 금액</h2>
-            <p className="mt-1 text-sm text-muted">수주에 담긴 품목과 단가입니다.</p>
+            <p className="mt-1 text-sm text-muted">{editing ? "수량은 등록된 수량 이하로만 줄일 수 있습니다. 단가는 바꾸지 않습니다." : "수주에 담긴 품목과 단가입니다."}</p>
           </div>
           <p className="text-sm text-muted">{order.lines.length}개 품목 · 총 {orderQuantity(order.lines).toLocaleString("ko-KR")}개</p>
         </div>
@@ -144,21 +174,20 @@ export function OrderDetailPage() {
             <tbody>
               {order.lines.map((line) => {
                 const product = db.products.find((item) => item.id === line.productId);
-                const nextQuantity = qtyMap[line.id] ?? line.quantity;
-                const nextPrice = priceMap[line.id] ?? line.unitPrice;
+                const nextQuantity = editing ? (qtyMap[line.id] ?? line.quantity) : line.quantity;
                 return (
                   <tr key={line.id} className="border-b border-line">
                     <td className="px-5 py-3">
                       <p className="font-semibold">{product?.productName ?? "품목"}</p>
                       <p className="text-xs text-muted">{[product?.modelName, product?.description].filter(Boolean).join(" · ") || "-"}</p>
                     </td>
-                    <td className="px-3 text-right">
-                      <input aria-label={`${product?.productName ?? "품목"} 수량`} type="number" min={1} disabled={!canEditQty || !canManageOrders(user.role)} className="h-9 w-24 rounded-lg border border-line px-2 text-right disabled:border-transparent disabled:bg-transparent" value={nextQuantity} onChange={(event) => setQuantities({ ...qtyMap, [line.id]: Number(event.target.value) })} />
+                    <td className="px-3 text-right tabular-nums">
+                      {editing ? (
+                        <input aria-label={`${product?.productName ?? "품목"} 수량`} type="number" min={1} max={line.quantity} className="h-9 w-24 rounded-lg border border-line px-2 text-right" value={nextQuantity} onChange={(event) => setQuantities({ ...qtyMap, [line.id]: Number(event.target.value) })} />
+                      ) : line.quantity.toLocaleString("ko-KR")}
                     </td>
-                    <td className="px-3 text-right">
-                      <input aria-label={`${product?.productName ?? "품목"} 단가`} type="number" min={0} disabled={order.status !== "WAITING" || !canManageOrders(user.role)} className="h-9 w-28 rounded-lg border border-line px-2 text-right disabled:border-transparent disabled:bg-transparent" value={nextPrice} onChange={(event) => setPrices({ ...priceMap, [line.id]: Number(event.target.value) })} />
-                    </td>
-                    <td className="px-5 text-right font-semibold tabular-nums">{formatWon(supplyOf({ ...line, quantity: nextQuantity, unitPrice: nextPrice }))}</td>
+                    <td className="px-3 text-right tabular-nums">{line.unitPrice.toLocaleString("ko-KR")}</td>
+                    <td className="px-5 text-right font-semibold tabular-nums">{formatWon(supplyOf({ ...line, quantity: nextQuantity }))}</td>
                   </tr>
                 );
               })}
@@ -168,11 +197,11 @@ export function OrderDetailPage() {
         <div className="flex flex-wrap items-end justify-between gap-4 px-5 py-4">
           <div>
             <p className="rounded-full bg-primary-soft px-3 py-1 text-xs font-semibold text-primary">{order.lines.every((line) => line.vatIncluded) ? "VAT 포함" : "VAT 별도 청구"}</p>
-            {canManageOrders(user.role) && canEditQty ? (
+            {editing ? (
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button tone="ghost" onClick={() => act(() => updateOrderQuantities(order.id, qtyMap, false, user), "수량을 수정하고 일정을 다시 계산했습니다.")}>수량 저장</Button>
-                {laterDue ? <Button onClick={() => act(() => updateOrderQuantities(order.id, qtyMap, true, user), `${laterDue}로 납기를 변경했습니다.`)}>{laterDue}로 납기 변경</Button> : null}
-                {order.status === "WAITING" ? <Button tone="ghost" onClick={() => act(() => updateOrderPrices(order.id, priceMap, user), "단가를 수정했습니다.")}>단가 저장</Button> : null}
+                <Button tone="ghost" onClick={() => saveQuantities(false)}>수량 저장</Button>
+                {laterDue ? <Button onClick={() => saveQuantities(true)}>{laterDue}로 납기 변경</Button> : null}
+                <Button tone="ghost" onClick={() => { setEditingItems(false); setQuantities({}); setLaterDue(""); }}>취소</Button>
               </div>
             ) : null}
           </div>
