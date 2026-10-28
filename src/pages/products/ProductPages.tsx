@@ -75,7 +75,7 @@ export function ProductListPage() {
               <Badge className="mt-3 bg-slate-100 text-slate-600">생산 가능</Badge>
               <p className="mt-3 text-sm">{selected.description}</p>
               <p className="mt-3 font-semibold">{formatWon(selected.unitPrice)}</p>
-              {selected.drawingPdfName && selected.drawingPdfUrl ? <a className="mt-2 block text-sm text-primary" href={selected.drawingPdfUrl} download={selected.drawingPdfName}>도면 {selected.drawingPdfName}</a> : null}
+              {selected.drawingPdfName && selected.drawingPdfUrl ? <a className="mt-2 block text-sm text-primary" href={selected.drawingPdfUrl} download={selected.drawingPdfName}>파일 {selected.drawingPdfName}</a> : null}
               <div className="mt-4 flex gap-2">
                 {canManageOrders(role) ? <Link to={`/products/${selected.id}/edit`} className="inline-flex h-10 items-center rounded-lg border border-line px-3">정보 수정</Link> : null}
                 {canManageOrders(role) ? <Link to="/orders/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-3 font-semibold text-white">+ 수주 등록</Link> : null}
@@ -119,23 +119,45 @@ function ProductEditor({ productId }: { productId?: string }) {
   const show = useToastStore((state) => state.show);
   const current = productId ? db.products.find((product) => product.id === productId) : undefined;
   const editing = Boolean(productId);
+  const [modelCode, setModelCode] = useState(current?.modelCode ?? "");
   const [productName, setProductName] = useState(current?.productName ?? "");
+  const [modelName, setModelName] = useState(current?.modelName ?? "");
   const [description, setDescription] = useState(current?.description ?? "");
   const [priceText, setPriceText] = useState(current ? formatPriceInput(String(current.unitPrice)) : "");
+  const [codeCheck, setCodeCheck] = useState("");
   const [nameCheck, setNameCheck] = useState("");
   const [drawingPdfName, setDrawingPdfName] = useState(current?.drawingPdfName ?? "");
   const [drawingPdfUrl, setDrawingPdfUrl] = useState(current?.drawingPdfUrl ?? "");
   const [drawingError, setDrawingError] = useState("");
-  const nameTaken = (name: string) => db.products.some((product) => product.id !== current?.id && collapsedName(product.productName) === collapsedName(name));
+  const codeTaken = (code: string) => db.products.some((product) => product.id !== current?.id && product.modelCode.replace(/\s+/g, "").toLowerCase() === code.replace(/\s+/g, "").toLowerCase());
+  const nameTaken = (name: string, device: string) => db.products.some((product) => product.id !== current?.id && collapsedName(product.productName) === collapsedName(name) && collapsedName(product.modelName) === collapsedName(device));
+  const devices = [...new Set([...db.products.map((product) => product.modelName.trim()), current?.modelName.trim() ?? ""].filter(Boolean))].sort((left, right) => left.localeCompare(right, "ko"));
   if (editing && !current) return <p>품목을 찾을 수 없습니다.</p>;
+
+  function checkCode() {
+    if (!modelCode.trim()) {
+      setCodeCheck("모델코드를 입력하세요.");
+      return false;
+    }
+    if (codeTaken(modelCode)) {
+      setCodeCheck("같은 모델코드가 있습니다.");
+      return false;
+    }
+    setCodeCheck("사용할 수 있는 모델코드입니다.");
+    return true;
+  }
 
   function checkName() {
     if (!productName.trim()) {
       setNameCheck("품목명을 입력하세요.");
       return false;
     }
-    if (nameTaken(productName)) {
-      setNameCheck("같은 품목명이 있습니다.");
+    if (!modelName.trim()) {
+      setNameCheck("기종을 선택하세요.");
+      return false;
+    }
+    if (nameTaken(productName, modelName)) {
+      setNameCheck("같은 품목명과 기종의 품목이 있습니다.");
       return false;
     }
     setNameCheck("사용할 수 있는 품목명입니다.");
@@ -147,7 +169,7 @@ function ProductEditor({ productId }: { productId?: string }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{editing ? "생산품목 수정" : "생산품목 등록"}</h1>
-          <p className="mt-1 text-muted">{editing ? "등록된 품목의 이름, 설명, 기준 단가와 도면을 수정합니다." : "생산 가능한 품목의 기본 정보와 수주 등록 시 사용할 기준 단가를 설정합니다."}</p>
+          <p className="mt-1 text-muted">{editing ? "등록된 품목의 이름, 기종, 기준 단가와 파일을 수정합니다." : "생산 가능한 품목의 기본 정보와 수주 등록 시 사용할 기준 단가를 설정합니다."}</p>
         </div>
         <Link to="/products" className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-4">
           <ArrowLeft size={16} /> 생산품목 목록으로
@@ -158,8 +180,12 @@ function ProductEditor({ productId }: { productId?: string }) {
         onSubmit={(event) => {
           event.preventDefault();
           const unitPrice = Number(priceText.replace(/\D/g, ""));
+          if (!checkCode()) {
+            show(!modelCode.trim() ? "모델코드를 입력하세요." : "같은 모델코드가 있습니다.");
+            return;
+          }
           if (!checkName()) {
-            show(productName.trim() && nameTaken(productName) ? "같은 품목명이 있습니다." : "품목명을 입력하세요.");
+            show(!productName.trim() ? "품목명을 입력하세요." : !modelName.trim() ? "기종을 선택하세요." : "같은 품목명과 기종의 품목이 있습니다.");
             return;
           }
           if (priceText.trim() === "" || !Number.isInteger(unitPrice) || unitPrice < 0) {
@@ -169,8 +195,9 @@ function ProductEditor({ productId }: { productId?: string }) {
           try {
             saveProduct({
               id: current?.id,
+              modelCode: modelCode.trim(),
               productName,
-              modelName: current?.modelName ?? "",
+              modelName,
               description: description.trim(),
               unitPrice,
               designImageUrl: current?.designImageUrl ?? "",
@@ -195,6 +222,23 @@ function ProductEditor({ productId }: { productId?: string }) {
               <p className="shrink-0 text-xs text-danger">* 필수 입력 항목</p>
             </div>
             <label className="mt-5 block text-sm font-semibold">
+              모델코드 <span className="text-danger">*</span>
+              <span className="mt-2 flex gap-2">
+                <input
+                  className="h-10 min-w-0 flex-1 rounded-lg border border-line px-3 font-normal"
+                  value={modelCode}
+                  placeholder="예: PM-0005"
+                  onChange={(event) => {
+                    setModelCode(event.target.value);
+                    setCodeCheck("");
+                  }}
+                />
+                <Button type="button" tone="ghost" onClick={checkCode}>중복 확인</Button>
+              </span>
+            </label>
+            <p className="mt-2 text-xs text-muted">같은 모델코드가 있는지 확인하세요.</p>
+            {codeCheck ? <p className={`mt-1 text-xs ${codeCheck.startsWith("사용") ? "text-success" : "text-danger"}`}>{codeCheck}</p> : null}
+            <label className="mt-5 block text-sm font-semibold">
               품목명 <span className="text-danger">*</span>
               <span className="mt-2 flex gap-2">
                 <input
@@ -211,6 +255,21 @@ function ProductEditor({ productId }: { productId?: string }) {
             </label>
             <p className="mt-2 text-xs text-muted">같은 품목명이 있는지 확인하세요. 규격이 다르면 이름에 규격이나 모델을 함께 입력해 주세요.</p>
             {nameCheck ? <p className={`mt-1 text-xs ${nameCheck.startsWith("사용") ? "text-success" : "text-danger"}`}>{nameCheck}</p> : null}
+            <div className="mt-5 text-sm font-semibold">
+              기종명 <span className="text-danger">*</span>
+              <select
+                className="mt-2 h-10 w-full rounded-lg border border-line bg-white px-3 font-normal"
+                value={modelName}
+                onChange={(event) => {
+                  setModelName(event.target.value);
+                  setNameCheck("");
+                }}
+              >
+                <option value="">기종을 선택하세요</option>
+                {devices.map((device) => <option key={device} value={device}>{device}</option>)}
+              </select>
+            </div>
+            <p className="mt-2 text-xs text-muted">등록된 기종 중에서 고르세요.</p>
             <label className="mt-5 block text-sm font-semibold">
               품목 설명 <span className="font-normal text-muted">(선택)</span>
               <textarea
@@ -239,27 +298,21 @@ function ProductEditor({ productId }: { productId?: string }) {
             <p className="mt-4 rounded-lg border border-line px-4 py-3 text-sm text-muted">기준 단가를 수정해도 이미 저장된 수주의 가격 정보는 소급해서 변경되지 않습니다.</p>
           </section>
           <section className="rounded-xl border border-line bg-white p-5">
-            <h2 className="font-semibold">도면</h2>
-            <p className="mt-1 text-sm text-muted">생산에 사용할 도면 PDF를 올려 주세요. 2MB 이하입니다.</p>
+            <h2 className="font-semibold">파일</h2>
+            <p className="mt-1 text-sm text-muted">생산에 사용할 파일 올려 주세요. 2MB 이하입니다.</p>
             <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-muted hover:border-primary hover:text-primary">
               <FileUp size={20} />
-              <span className="mt-2 font-semibold text-ink">PDF 파일 선택</span>
-              <span className="mt-1 text-xs">클릭해서 도면 파일을 추가하세요.</span>
+              <span className="mt-2 font-semibold text-ink">파일 선택</span>
+              <span className="mt-1 text-xs">클릭해서 파일을 추가하세요.</span>
               <input
                 className="sr-only"
                 type="file"
-                accept="application/pdf,.pdf"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = "";
                   if (!file) return;
-                  const pdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-                  if (!pdf) {
-                    setDrawingError("PDF 파일만 올릴 수 있습니다.");
-                    return;
-                  }
                   if (file.size > MAX_DRAWING_BYTES) {
-                    setDrawingError("도면은 2MB 이하로 올려 주세요.");
+                    setDrawingError("파일은 2MB 이하로 올려 주세요.");
                     return;
                   }
                   const reader = new FileReader();
@@ -309,7 +362,7 @@ function ProductEditor({ productId }: { productId?: string }) {
             </div>
             <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4 text-sm">
               <span className="text-muted">필수 항목</span>
-              <span>품목명 · 기준 단가</span>
+              <span>모델코드 · 품목명 · 기종명 · 기준 단가</span>
             </div>
           </section>
           <section className="rounded-xl bg-primary-soft p-5">
@@ -336,7 +389,8 @@ function ProductEditor({ productId }: { productId?: string }) {
 }
 
 function productionFinished(status: string): boolean {
-  return status === "PACKING" || status === "PACKED" || status === "SHIPPING" || status === "COMPLETED";
+  // 출고대기는 포장이 끝난 뒤라 누적 생산량에 포함한다.
+  return status === "PACKING" || status === "PACKED" || status === "READY_TO_SHIP" || status === "SHIPPING" || status === "COMPLETED";
 }
 
 export function ProductDetailPage() {
@@ -405,7 +459,7 @@ export function ProductDetailPage() {
             <div><p className="text-xs text-muted">등록자</p><p className="mt-1 font-semibold">{product.createdByName}</p></div>
             <div><p className="text-xs text-muted">기준 단가 · 부가세 별도</p><p className="mt-1 font-semibold">{formatWon(product.unitPrice)}</p></div>
           </div>
-          {product.drawingPdfName && product.drawingPdfUrl ? <a className="mt-4 inline-block text-sm text-primary" href={product.drawingPdfUrl} download={product.drawingPdfName}>도면 {product.drawingPdfName}</a> : null}
+          {product.drawingPdfName && product.drawingPdfUrl ? <a className="mt-4 inline-block text-sm text-primary" href={product.drawingPdfUrl} download={product.drawingPdfName}>파일 {product.drawingPdfName}</a> : null}
         </section>
         <section className="overflow-hidden rounded-xl border border-line bg-white">
           <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">

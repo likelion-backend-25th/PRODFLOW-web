@@ -966,6 +966,7 @@ export function importClients(rows: Array<Omit<Parameters<typeof saveClient>[0],
 
 export function saveProduct(input: {
   id?: string;
+  modelCode?: string;
   productName: string;
   modelName: string;
   description: string;
@@ -976,18 +977,20 @@ export function saveProduct(input: {
   actorName: string;
 }): string {
   if (!input.productName.trim()) throw new Error("품목명을 입력하세요.");
+  if (!input.modelName.trim()) throw new Error("기종을 선택하세요.");
   if (!Number.isFinite(input.unitPrice) || input.unitPrice < 0) throw new Error("단가를 확인하세요.");
   let savedId = input.id ?? "";
   updateDb((db) => {
     const key = productKey(input.productName, input.modelName);
     const duplicate = db.products.find((product) => productKey(product.productName, product.modelName) === key && product.id !== input.id);
-    if (duplicate) throw new Error("같은 제품명과 모델명의 품목이 있습니다.");
+    if (duplicate) throw new Error("같은 품목명과 기종의 품목이 있습니다.");
+    const requestedCode = input.modelCode?.trim() ?? "";
+    const codeTaken = (code: string) => db.products.some((product) => product.modelCode.replace(/\s+/g, "").toLowerCase() === code.replace(/\s+/g, "").toLowerCase() && product.id !== input.id);
+    if (requestedCode && codeTaken(requestedCode)) throw new Error("같은 모델코드가 있습니다.");
     if (input.id) {
       const product = db.products.find((item) => item.id === input.id);
       if (!product) throw new Error("품목을 찾을 수 없습니다.");
-      // 등록 화면은 품목명만 받는다. 이미 모델명이 있는 품목은 수정할 때 모델명을 비우지 않는다.
-      if (product.modelName.trim() && !input.modelName.trim()) throw new Error("모델명을 입력하세요.");
-      if (!product.modelCode) product.modelCode = nextModelCode(db.products.map((item) => item.modelCode).filter((code) => code));
+      product.modelCode = requestedCode || product.modelCode || nextModelCode(db.products.map((item) => item.modelCode).filter((code) => code));
       product.productName = input.productName.trim();
       product.modelName = input.modelName.trim();
       product.description = input.description;
@@ -1003,7 +1006,7 @@ export function saveProduct(input: {
     savedId = crypto.randomUUID();
     db.products.unshift({
       id: savedId,
-      modelCode: nextModelCode(db.products.map((item) => item.modelCode).filter((code) => code)),
+      modelCode: requestedCode || nextModelCode(db.products.map((item) => item.modelCode).filter((code) => code)),
       productName: input.productName.trim(),
       modelName: input.modelName.trim(),
       description: input.description,
