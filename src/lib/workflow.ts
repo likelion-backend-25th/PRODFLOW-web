@@ -496,6 +496,7 @@ export function createQuotation(input: {
 }): Quotation {
   if (input.lines.length === 0) throw new Error("품목 줄을 1개 이상 입력하세요.");
   if (new Set(input.lines.map((line) => line.productId)).size !== input.lines.length) throw new Error("같은 품목이 두 줄 이상 있습니다. 수량을 한 줄로 합치세요.");
+  if (input.lines.some((line) => line.quantity < 100)) throw new Error("견적 품목 수량은 100개 이상이어야 합니다.");
   if (!input.requestedDueDate) throw new Error("희망 납기일을 선택하세요.");
   const validityChoices = [addDays(todayISO(), 14), addDays(todayISO(), 7)];
   if (!validityChoices.includes(input.validUntil)) throw new Error("견적 유효기간은 발행일부터 14일 또는 7일입니다.");
@@ -571,6 +572,7 @@ export function createOrder(input: {
   plannedStartDate?: string;
   plannedEndDate?: string;
   shippingAddress: string;
+  receiverName: string;
   receiverPhone: string;
   notifyChannel: NotifyChannel;
   memo: string;
@@ -579,6 +581,8 @@ export function createOrder(input: {
 }): Order {
   if (input.lines.length === 0) throw new Error("품목 줄을 1개 이상 입력하세요.");
   if (new Set(input.lines.map((line) => line.productId)).size !== input.lines.length) throw new Error("같은 품목이 두 줄 이상 있습니다. 수량을 한 줄로 합치세요.");
+  const receiverName = input.receiverName.trim();
+  if (!receiverName) throw new Error("수신자를 입력하세요.");
   const receiverPhone = input.receiverPhone.trim();
   if (digitsOnly(receiverPhone).length < 9) throw new Error("배송 수신 연락처를 확인하세요.");
   if (!input.depositDueDate || input.depositDueDate < todayISO()) throw new Error("계약금 입금 마감일은 오늘 이후로 선택하세요.");
@@ -617,6 +621,7 @@ export function createOrder(input: {
       depositDueDate: input.depositDueDate,
       allocations: [],
       shippingAddress: input.shippingAddress,
+      receiverName,
       receiverPhone,
       notifyChannel: input.notifyChannel,
       memo: input.memo.trim(),

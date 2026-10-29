@@ -34,6 +34,7 @@ interface FormValues {
   vatSeparate: boolean;
   requestedDueDate: string;
   depositDueDate: string;
+  receiverName: string;
   receiverPhone: string;
   shippingAddress: string;
   notifyChannel: NotifyChannel;
@@ -57,6 +58,7 @@ const schema = z.object({
   vatSeparate: z.boolean(),
   depositDueDate: z.string().min(1, "계약금 입금 마감일을 선택하세요."),
   requestedDueDate: z.string().min(1, "납기일을 선택하세요."),
+  receiverName: z.string().trim().min(1, "수신자를 입력하세요."),
   receiverPhone: z.string().refine((value) => digitsOnly(value).length >= 9, "배송 수신 연락처를 확인하세요."),
   shippingAddress: z.string().min(1, "배송지를 선택하세요."),
   notifyChannel: z.enum(["SMS", "EMAIL"]),
@@ -85,6 +87,7 @@ function blankValues(db: Database, clientId: string | null): FormValues {
     vatSeparate: true,
     depositDueDate: todayISO(),
     requestedDueDate: "",
+    receiverName: client?.contactName ?? "",
     receiverPhone: client?.contactMobile ?? "",
     shippingAddress: client ? clientFullAddress(client) : "",
     notifyChannel: "SMS",
@@ -193,7 +196,7 @@ export function OrderFormPage() {
   const steps = [
     { label: "거래처 정보", done: Boolean(values.companyName.trim() && values.contactName.trim() && values.contactEmail.trim() && values.companyAddress.trim() && digitsOnly(values.contactPhone).length >= 9), target: "order-client" },
     { label: "생산품목 및 금액", done: values.lines.length > 0 && values.lines.every((line) => line.productId && line.quantity > 0 && line.unitPrice >= 0), target: "order-items" },
-    { label: "납기 및 배송", done: Boolean(values.depositDueDate && values.requestedDueDate && values.shippingAddress && digitsOnly(values.receiverPhone).length >= 9), target: "order-delivery" },
+    { label: "납기 및 배송", done: Boolean(values.depositDueDate && values.requestedDueDate && values.shippingAddress && values.receiverName.trim() && digitsOnly(values.receiverPhone).length >= 9), target: "order-delivery" },
   ];
 
   function pickClient(id: string) {
@@ -206,6 +209,7 @@ export function OrderFormPage() {
     form.setValue("contactEmail", picked.taxEmail);
     form.setValue("companyAddress", picked.roadAddress);
     form.setValue("shippingAddress", clientFullAddress(picked));
+    form.setValue("receiverName", picked.contactName);
     form.setValue("receiverPhone", picked.contactMobile || picked.phone);
     setClientOpen(false);
   }
@@ -262,6 +266,7 @@ export function OrderFormPage() {
         depositDueDate: input.depositDueDate,
         requestedDueDate: input.requestedDueDate,
         shippingAddress: input.shippingAddress || input.companyAddress,
+        receiverName: input.receiverName,
         receiverPhone: input.receiverPhone || input.contactPhone,
         notifyChannel: input.notifyChannel,
         memo: input.memo,
@@ -486,6 +491,11 @@ export function OrderFormPage() {
                 <input type="date" min={values.depositDueDate || todayISO()} className="h-10 w-full rounded-lg border border-line bg-white px-3" {...form.register("requestedDueDate")} />
               </label>
               <label className="block text-sm">
+                <FieldLabel>수신자 *</FieldLabel>
+                <input className="h-10 w-full rounded-lg border border-line bg-white px-3" placeholder="물건을 받는 사람" {...form.register("receiverName")} />
+                <span className="mt-1 block text-xs text-muted">거래처 담당자와 다른 사람이 받아도 됩니다.</span>
+              </label>
+              <label className="block text-sm">
                 <FieldLabel>배송 수신 연락처 *</FieldLabel>
                 <span className="relative block">
                   <input className="h-10 w-full rounded-lg border border-line bg-white px-3 pr-9" placeholder="010-0000-0000" {...form.register("receiverPhone")} />
@@ -570,7 +580,7 @@ export function OrderFormPage() {
             </label>
           </Section>
 
-          <Section title="생산 가능 여부 확인" description="납기일까지 공장의 남은 생산량과 이번 수주 수량을 비교합니다. 출고 준비를 위해 납기 2 영업일 전까지 생산을 마칩니다.">
+          <Section title="생산 가능 여부 확인" description="납기일까지 공장의 남은 생산량과 이번 수주 수량을 비교합니다. 포장과 배송을 위해 생산 완료 후 3일(주말·휴일 제외)이 납기입니다.">
             <div className="grid gap-3 sm:grid-cols-3">
               <ReadField label="총 생산량" value={capacity ? `${capacity.total.toLocaleString("ko-KR")}개` : undefined} />
               <ReadField label="가용 생산량" value={capacity ? `${capacity.available.toLocaleString("ko-KR")}개` : undefined} />

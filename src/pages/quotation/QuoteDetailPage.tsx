@@ -90,6 +90,7 @@ export function QuoteDetailPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canChange && user ? <Button onClick={() => act(() => setQuotationStatus(quote.id, "APPROVED", user), "견적을 승인했습니다.")}>승인</Button> : null}
+          {canChange && user ? <Button tone="ghost" onClick={() => act(() => setQuotationStatus(quote.id, "REJECTED", user), "견적을 거절했습니다.")}>거절</Button> : null}
           {quote.status === "APPROVED" && !order && canManageOrders(role) ? <Link to={`/orders/new?quotationId=${quote.id}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">수주 등록</Link> : null}
           {order ? <Link to={`/orders/${order.id}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">수주 {order.orderNo}</Link> : null}
           {quote.status === "EXPIRED" && canManageOrders(role) ? <Link to="/quotations/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">새 견적 작성</Link> : null}
@@ -171,7 +172,6 @@ export function QuoteDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             {dueToday ? <span className="rounded-full bg-primary-soft px-3 py-1 text-xs font-semibold text-primary">오늘 납기</span> : null}
             {canChange ? <Button tone="ghost" onClick={() => { setDue(quote.requestedDueDate); setOpen((value) => !value); }}>{open ? "재산정 닫기" : "납기 재산정"}</Button> : null}
-            {canChange && user ? <Button tone="ghost" onClick={() => act(() => setQuotationStatus(quote.id, "REJECTED", user), "견적을 거절했습니다.")}>거절</Button> : null}
             {canChange && user ? <Button tone="ghost" className="text-danger" onClick={() => act(() => setQuotationStatus(quote.id, "CANCELLED", user), "견적을 취소했습니다.")}>취소</Button> : null}
           </div>
         </div>

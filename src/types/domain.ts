@@ -117,6 +117,7 @@ export interface Order {
   depositDueDate: string;
   allocations: DayAllocation[];
   shippingAddress: string;
+  receiverName: string;
   receiverPhone: string;
   notifyChannel: NotifyChannel;
   memo: string;

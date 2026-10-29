@@ -79,6 +79,9 @@ export function packJobs(
   return results;
 }
 
+/** 포장 1일과 배송 2일. 납기는 생산 완료일부터 이 날수만큼 뒤이며, 주말과 휴일은 세지 않는다. */
+export const DUE_AFTER_PRODUCTION_DAYS = 3;
+
 export function addWorkingDays(iso: string, count: number, holidays: string[]): string {
   let cursor = iso;
   let left = count;
@@ -103,7 +106,7 @@ export function capacityUntil(
   let available = 0;
   let lastProductionDate: string | null = null;
   for (let cursor = fromDate, guard = 0; cursor <= dueDate && guard < 400; cursor = addDays(cursor, 1), guard += 1) {
-    if (!isWorkingDay(cursor, holidays) || addWorkingDays(cursor, 2, holidays) > dueDate) continue;
+    if (!isWorkingDay(cursor, holidays) || addWorkingDays(cursor, DUE_AFTER_PRODUCTION_DAYS, holidays) > dueDate) continue;
     total += daily;
     available += Math.max(0, daily - occupiedOn(cursor, orders));
     lastProductionDate = cursor;
@@ -150,7 +153,7 @@ export function scheduleQuantity(
   return {
     plannedStartDate: plannedStart,
     plannedEndDate,
-    earliestDueDate: addWorkingDays(plannedEndDate, 2, holidays),
+    earliestDueDate: addWorkingDays(plannedEndDate, DUE_AFTER_PRODUCTION_DAYS, holidays),
     allocations,
   };
 }
@@ -172,7 +175,7 @@ export function scheduleBackward(
   let end = "";
   let guard = 0;
   while (cursor >= fromDate && guard < 400) {
-    if (isWorkingDay(cursor, holidays) && addWorkingDays(cursor, 2, holidays) <= dueDate) {
+    if (isWorkingDay(cursor, holidays) && addWorkingDays(cursor, DUE_AFTER_PRODUCTION_DAYS, holidays) <= dueDate) {
       end = cursor;
       break;
     }
@@ -203,7 +206,7 @@ export function scheduleBackward(
   return {
     plannedStartDate,
     plannedEndDate,
-    earliestDueDate: addWorkingDays(plannedEndDate, 2, holidays),
+    earliestDueDate: addWorkingDays(plannedEndDate, DUE_AFTER_PRODUCTION_DAYS, holidays),
     allocations,
   };
 }

@@ -1,5 +1,5 @@
 import { depositTarget, orderQuantity, orderTotal, paymentStatusOf, productKey } from "@/lib/money.ts";
-import { addWorkingDays, factoryCapacity, isWorkingDay, occupiesFactory } from "@/lib/schedule.ts";
+import { addWorkingDays, DUE_AFTER_PRODUCTION_DAYS, factoryCapacity, isWorkingDay, occupiesFactory } from "@/lib/schedule.ts";
 import type { Database, OrderStatus, WorkOrderStatus } from "@/types/domain.ts";
 
 const producedAll: OrderStatus[] = ["PACKING", "READY_TO_SHIP", "SHIPPING", "COMPLETED"];
@@ -74,8 +74,8 @@ export function integrityIssues(db: Database): string[] {
       });
       const dates = order.allocations.map((slot) => slot.date).sort();
       if (dates[0] !== order.plannedStartDate || dates.at(-1) !== order.plannedEndDate) issues.push(`${tag}: 생산 예정일이 일정 배분과 다릅니다.`);
-      if (order.status !== "WAITING" && order.dueDate < addWorkingDays(order.plannedEndDate, 2, holidays)) {
-        issues.push(`${tag}: 납기가 생산 종료 후 2영업일보다 빠릅니다.`);
+      if (order.status !== "WAITING" && order.dueDate < addWorkingDays(order.plannedEndDate, DUE_AFTER_PRODUCTION_DAYS, holidays)) {
+        issues.push(`${tag}: 납기가 생산 완료 후 ${DUE_AFTER_PRODUCTION_DAYS}일보다 빠릅니다.`);
       }
     }
 
