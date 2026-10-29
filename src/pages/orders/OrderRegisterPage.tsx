@@ -25,6 +25,7 @@ export function OrderRegisterPage() {
   const [roadAddress, setRoadAddress] = useState("");
   const [addressDetail, setAddressDetail] = useState("");
   const [shippingAddress, setShippingAddress] = useState("");
+  const [receiverName, setReceiverName] = useState(client?.contactName ?? "");
   const [receiverPhone, setReceiverPhone] = useState(client?.contactMobile ?? "");
   const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>("SMS");
   const [memo, setMemo] = useState("");
@@ -95,6 +96,10 @@ export function OrderRegisterPage() {
       setError("배송지를 입력하세요.");
       return;
     }
+    if (!receiverName.trim()) {
+      setError("수신자를 입력하세요.");
+      return;
+    }
     if (digitsOnly(receiverPhone).length < 9) {
       setError("수령 연락처를 확인하세요.");
       return;
@@ -118,6 +123,7 @@ export function OrderRegisterPage() {
         plannedStartDate: selection?.plannedStartDate,
         plannedEndDate: selection?.plannedEndDate,
         shippingAddress,
+        receiverName,
         receiverPhone,
         notifyChannel,
         memo,
@@ -302,6 +308,10 @@ export function OrderRegisterPage() {
               }}
             />
           </div>
+          <label className="block text-sm">수신자
+            <input className="mt-1 h-10 w-full rounded-lg border border-line px-3" value={receiverName} onChange={(event) => setReceiverName(event.target.value)} placeholder="물건을 받는 사람" />
+            <span className="mt-1 block text-xs text-muted">거래처 담당자와 다른 사람이 받아도 됩니다.</span>
+          </label>
           <label className="block text-sm">수령 연락처
             <input className="mt-1 h-10 w-full rounded-lg border border-line px-3" value={receiverPhone} onChange={(event) => setReceiverPhone(event.target.value)} />
           </label>

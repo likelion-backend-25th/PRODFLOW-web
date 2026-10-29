@@ -229,7 +229,7 @@ export function OrderDetailPage() {
           <Field label="납기일" value={order.dueDate} />
           <Field label="생산 시작" value={order.plannedStartDate || "-"} />
           <Field label="담당자" value={assignee?.name ?? "미배정"} />
-          <Field label="수신자" value={client?.contactName || client?.representative || "-"} />
+          <Field label="수신자" value={order.receiverName || "-"} />
           <Field label="배송 수신 연락처" value={order.receiverPhone || "-"} />
           <Field label="생산 완료" value={order.plannedEndDate || "-"} />
           <div className="sm:col-span-3">

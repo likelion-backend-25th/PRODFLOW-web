@@ -242,7 +242,7 @@ function seed(): Database {
       clientId: "client-6",
       lines: [["product-5", 350, 5900]],
       created: -24,
-      due: -20,
+      due: -19,
       slots: [[-22, 350]],
       status: "COMPLETED",
       paid: "full",
@@ -258,7 +258,7 @@ function seed(): Database {
       clientId: "client-7",
       lines: [["product-7", 480, 4500]],
       created: -23,
-      due: -19,
+      due: -18,
       slots: [[-21, 480]],
       status: "COMPLETED",
       paid: "full",
@@ -274,7 +274,7 @@ function seed(): Database {
       clientId: "client-8",
       lines: [["product-8", 250, 6400]],
       created: -22,
-      due: -18,
+      due: -17,
       slots: [[-20, 250]],
       status: "COMPLETED",
       paid: "full",
@@ -290,7 +290,7 @@ function seed(): Database {
       clientId: "client-9",
       lines: [["product-6", 180, 9800]],
       created: -21,
-      due: -17,
+      due: -16,
       slots: [[-19, 180]],
       status: "COMPLETED",
       paid: "deposit",
@@ -306,7 +306,7 @@ function seed(): Database {
       clientId: "client-10",
       lines: [["product-5", 200, 5900], ["product-9", 200, 6900]],
       created: -18,
-      due: -14,
+      due: -13,
       slots: [[-16, 400]],
       status: "COMPLETED",
       paid: "full",
@@ -322,7 +322,7 @@ function seed(): Database {
       clientId: "client-4",
       lines: [["product-10", 120, 3200]],
       created: -10,
-      due: -6,
+      due: -5,
       slots: [[-8, 120]],
       status: "CANCELLED",
       paid: "none",
@@ -334,7 +334,7 @@ function seed(): Database {
       clientId: "client-1",
       lines: [["product-1", 700, 4200]],
       created: -8,
-      due: -4,
+      due: -3,
       slots: [[-6, 700]],
       status: "COMPLETED",
       paid: "full",
@@ -405,7 +405,7 @@ function seed(): Database {
       clientId: "client-2",
       lines: [["product-2", 500, 8900]],
       created: -1,
-      due: 2,
+      due: 3,
       slots: [[0, 500]],
       status: "CONFIRMED",
       paid: "deposit",
@@ -568,6 +568,7 @@ function seed(): Database {
       depositDueDate: allocations[0].date,
       allocations,
       shippingAddress: client.roadAddress,
+      receiverName: client.contactName,
       receiverPhone: client.contactMobile,
       notifyChannel: "SMS",
       memo: spec.memo ?? "",
@@ -985,8 +986,12 @@ function repair(db: Database): boolean {
   }
   db.orders.forEach((order) => {
     const legacy = order as Partial<Order> & Order;
-    if (legacy.receiverPhone !== undefined && legacy.notifyChannel && legacy.memo !== undefined) return;
     const client = db.clients.find((item) => item.id === order.clientId);
+    if (!legacy.receiverName) {
+      legacy.receiverName = client?.contactName || "";
+      changed = true;
+    }
+    if (legacy.receiverPhone !== undefined && legacy.notifyChannel && legacy.memo !== undefined) return;
     legacy.receiverPhone ??= client?.contactMobile || client?.phone || "";
     legacy.notifyChannel ??= "SMS";
     legacy.memo ??= "";

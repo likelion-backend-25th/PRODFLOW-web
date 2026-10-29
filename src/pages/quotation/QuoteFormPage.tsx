@@ -154,6 +154,10 @@ export function QuoteFormPage() {
       setError("회사 주소를 선택하세요.");
       return;
     }
+    if (lines.some((line) => line.productId && line.quantity < 100)) {
+      setError("견적 품목 수량은 100개 이상이어야 합니다.");
+      return;
+    }
     try {
       const quote = createQuotation({
         clientId: clientId || undefined,
@@ -362,9 +366,10 @@ export function QuoteFormPage() {
                             </span>
                           </div>
                         </td>
-                        <td className="py-3"><input aria-label={`${index + 1}번째 수량`} type="number" min={1} className="h-9 w-24 rounded-lg border border-line px-2 text-right" value={line.quantity} onChange={(event) => {
+                        <td className="py-3"><input aria-label={`${index + 1}번째 수량`} type="number" min={100} className="h-9 w-24 rounded-lg border border-line px-2 text-right" value={line.quantity} onChange={(event) => {
                           const next = [...lines];
-                          next[index] = { ...line, quantity: Number(event.target.value) };
+                          const parsed = Number(event.target.value);
+                          next[index] = { ...line, quantity: Number.isFinite(parsed) ? Math.floor(parsed) : 0 };
                           setLines(next);
                         }} /></td>
                         <td className="py-3"><input aria-label={`${index + 1}번째 단가`} type="number" min={0} className="h-9 w-28 rounded-lg border border-line px-2 text-right" value={line.unitPrice} onChange={(event) => {
@@ -390,12 +395,12 @@ export function QuoteFormPage() {
                 <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={vatIncluded} onChange={(event) => setVatIncluded(event.target.checked)} />
                 부가세 포함하여 청구 (10%)
               </label>
-              <span className="text-xs text-muted">총 수량 {quantity.toLocaleString("ko-KR")}개 · {lines.filter((line) => line.productId).length}개 품목</span>
+              <span className="text-xs text-muted">품목당 최소 100개 · 총 수량 {quantity.toLocaleString("ko-KR")}개 · {lines.filter((line) => line.productId).length}개 품목</span>
             </div>
           </section>
           <section className="rounded-xl border border-line bg-white p-5">
             <h2 className="font-semibold">납기</h2>
-            <p className="mt-1 text-sm text-muted">하늘색 날짜만 약속할 수 있습니다. 오늘 등록한다고 보고, 생산은 오늘부터 3일 뒤보다 앞에 두지 않습니다. 그 날이 주말이나 휴일이면 다음 생산일부터 잡습니다. 생산은 납기 2영업일 전에 끝냅니다.</p>
+            <p className="mt-1 text-sm text-muted">하늘색 날짜만 약속할 수 있습니다. 오늘 등록한다고 보고, 생산은 오늘부터 3일 뒤보다 앞에 두지 않습니다. 그 날이 주말이나 휴일이면 다음 생산일부터 잡습니다. 납기는 생산 완료 후 3일(주말·휴일 제외)입니다.</p>
             {schedule ? (
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary-soft px-3 py-2.5">
                 <div>
@@ -486,7 +491,7 @@ export function QuoteFormPage() {
           </section>
           <section className="rounded-xl border border-line bg-white p-5">
             <h2 className="font-semibold">생산 가능 여부 확인</h2>
-            <p className="mt-1 text-sm text-muted">희망 납기까지 공장의 남은 생산량과 이번 견적 수량을 비교합니다. 출고 준비를 위해 납기 2 영업일 전까지 생산을 마칩니다.</p>
+            <p className="mt-1 text-sm text-muted">희망 납기까지 공장의 남은 생산량과 이번 견적 수량을 비교합니다. 포장 1일과 배송 2일을 두어, 생산 완료 후 3일(주말·휴일 제외)이 납기입니다.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg bg-canvas px-3 py-2">
                 <p className="text-xs text-muted">총생산량</p>
