@@ -1,13 +1,12 @@
 export type Role = "SUPER_ADMIN" | "ORDER_MANAGER" | "PRODUCTION_MANAGER" | "VIEWER";
 
-/** 수주 진행 상태. VARCHAR(20). 본선: WAITING→CONFIRMED→IN_PRODUCTION→PACKING→PACKED→READY_TO_SHIP→SHIPPING→COMPLETED. 예외: ON_HOLD, CANCELLED. */
+/** 수주 진행 상태. VARCHAR(20). 본선: WAITING→CONFIRMED→IN_PRODUCTION→PACKING→READY_TO_SHIP→SHIPPING→COMPLETED. 예외: ON_HOLD, CANCELLED. */
 export type OrderStatus =
   | "WAITING"
   | "ON_HOLD"
   | "CONFIRMED"
   | "IN_PRODUCTION"
   | "PACKING"
-  | "PACKED"
   | "READY_TO_SHIP"
   | "SHIPPING"
   | "COMPLETED"
@@ -40,9 +39,9 @@ export interface Client {
   id: string;
   companyName: string;
   representative: string;
-  address: string;
-  postalCode: string;
-  addressDetail: string;
+  zipcode: string;
+  roadAddress: string;
+  detailAddress: string;
   phone: string;
   contactName: string;
   contactMobile: string;
@@ -70,8 +69,9 @@ export interface OrderLine {
   productId: string;
   quantity: number;
   unitPrice: number;
-  vatIncluded: boolean;
 }
+
+export type ConfirmationStatus = "PENDING" | "CONFIRMED" | "CANCELLED";
 
 export interface DayAllocation {
   date: string;
@@ -87,18 +87,6 @@ export type NotifyChannel = "SMS" | "EMAIL";
 
 export type QuotationStatus = "SENT" | "APPROVED" | "REJECTED" | "CANCELLED" | "EXPIRED";
 
-export type TempPlanStatus = "ACTIVE" | "RECALCULATED" | "CANCELLED" | "EXPIRED";
-
-export interface QuotationPlan {
-  id: string;
-  status: TempPlanStatus;
-  plannedStartDate: string;
-  plannedEndDate: string;
-  estimatedDueDate: string;
-  quantity: number;
-  createdAt: string;
-}
-
 export interface Quotation {
   id: string;
   quotationNo: string;
@@ -107,10 +95,11 @@ export interface Quotation {
   lines: OrderLine[];
   requestedDueDate: string;
   estimatedDueDate: string;
+  plannedStartDate: string;
+  plannedEndDate: string;
   validUntil: string;
   status: QuotationStatus;
   vatIncluded: boolean;
-  plans: QuotationPlan[];
   createdAt: string;
   updatedAt: string;
 }
@@ -132,6 +121,8 @@ export interface Order {
   notifyChannel: NotifyChannel;
   memo: string;
   status: OrderStatus;
+  confirmationStatus: ConfirmationStatus;
+  vatIncluded: boolean;
   paymentStatus: PaymentStatus;
   paidAmount: number;
   virtualAccount: string;

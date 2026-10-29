@@ -9,7 +9,7 @@ import { cn } from "@/lib/cn.ts";
 import { addDays, parseISO, todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount } from "@/lib/money.ts";
-import { createQuotation, previewCapacity, previewDuePlan, previewSchedule } from "@/lib/workflow.ts";
+import { createQuotation, previewCapacity, previewDuePlan, previewSchedule, quoteNotBefore } from "@/lib/workflow.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
@@ -53,7 +53,7 @@ export function QuoteFormPage() {
   const [error, setError] = useState("");
 
   const priced = lines.map((line) => {
-    const total = lineAmount({ quantity: line.quantity || 0, unitPrice: line.unitPrice || 0, vatIncluded });
+    const total = lineAmount({ quantity: line.quantity || 0, unitPrice: line.unitPrice || 0 }, vatIncluded);
     const supply = vatIncluded ? Math.round(total / 1.1) : (line.quantity || 0) * (line.unitPrice || 0);
     return { supply, vat: total - supply, total };
   });
@@ -64,7 +64,7 @@ export function QuoteFormPage() {
   const preview = useMemo(() => {
     if (quantity <= 0) return null;
     try {
-      return previewSchedule(quantity);
+      return previewSchedule(quantity, undefined, quoteNotBefore());
     } catch (reason: unknown) {
       return reason instanceof Error ? reason.message : null;
     }
@@ -74,13 +74,13 @@ export function QuoteFormPage() {
   const chosen = useMemo(() => {
     if (quantity <= 0 || !requestedDueDate || !earliest || requestedDueDate < earliest) return null;
     try {
-      return previewDuePlan(quantity, requestedDueDate);
+      return previewDuePlan(quantity, requestedDueDate, quoteNotBefore());
     } catch (reason: unknown) {
       return reason instanceof Error ? reason.message : null;
     }
   }, [db, earliest, quantity, requestedDueDate]);
   const duePlan = chosen && typeof chosen !== "string" ? chosen : null;
-  const capacity = requestedDueDate ? previewCapacity(requestedDueDate) : null;
+  const capacity = requestedDueDate ? previewCapacity(requestedDueDate, undefined, quoteNotBefore()) : null;
   const dueTooSoon = Boolean(requestedDueDate && earliest && requestedDueDate < earliest);
   const validUntil = addDays(todayISO(), validityDays);
   useEffect(() => {
@@ -127,7 +127,7 @@ export function QuoteFormPage() {
     setContactName(picked.contactName);
     setContactPhone(picked.contactMobile || picked.phone);
     setContactEmail(picked.taxEmail);
-    setCompanyAddress(picked.address);
+    setCompanyAddress(picked.roadAddress);
     setClientOpen(false);
   }
 
@@ -164,7 +164,7 @@ export function QuoteFormPage() {
           taxEmail: contactEmail,
           address: companyAddress,
         },
-        lines: lines.filter((line) => line.productId).map((line) => ({ ...line, vatIncluded })),
+        lines: lines.filter((line) => line.productId).map((line) => ({ productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice })),
         requestedDueDate,
         validUntil,
         vatIncluded,
@@ -240,7 +240,7 @@ export function QuoteFormPage() {
                         <button type="button" className={cn("flex w-full items-center justify-between px-3 py-2 text-left", active && "bg-canvas")} onMouseDown={(event) => event.preventDefault()} onMouseMove={() => { if (!active) setClientActive(index); }} onClick={() => pickClient(item.id)}>
                           <span>
                             <span className="block text-sm font-semibold">{item.companyName}</span>
-                            <span className="block text-xs text-muted">{item.contactName || item.representative} · {item.contactMobile || item.phone} · {item.address}</span>
+                            <span className="block text-xs text-muted">{item.contactName || item.representative} · {item.contactMobile || item.phone} · {item.roadAddress}</span>
                           </span>
                           {item.id === clientId ? <Check size={16} className="text-primary" /> : null}
                         </button>
@@ -258,7 +258,7 @@ export function QuoteFormPage() {
               <div className="mt-2 flex items-center justify-between rounded-lg bg-primary-soft px-3 py-2">
                 <span>
                   <span className="block text-sm font-semibold">{selectedClient.companyName}</span>
-                  <span className="block text-xs text-muted">{selectedClient.contactName || selectedClient.representative} · {selectedClient.contactMobile || selectedClient.phone} · {selectedClient.address}</span>
+                  <span className="block text-xs text-muted">{selectedClient.contactName || selectedClient.representative} · {selectedClient.contactMobile || selectedClient.phone} · {selectedClient.roadAddress}</span>
                 </span>
                 <Check size={16} className="text-primary" />
               </div>
@@ -395,7 +395,7 @@ export function QuoteFormPage() {
           </section>
           <section className="rounded-xl border border-line bg-white p-5">
             <h2 className="font-semibold">납기</h2>
-            <p className="mt-1 text-sm text-muted">하늘색 날짜만 약속할 수 있습니다. 생산은 납기 2영업일 전에 끝냅니다.</p>
+            <p className="mt-1 text-sm text-muted">하늘색 날짜만 약속할 수 있습니다. 오늘 등록한다고 보고, 생산은 오늘부터 3일 뒤보다 앞에 두지 않습니다. 그 날이 주말이나 휴일이면 다음 생산일부터 잡습니다. 생산은 납기 2영업일 전에 끝냅니다.</p>
             {schedule ? (
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary-soft px-3 py-2.5">
                 <div>

@@ -16,6 +16,7 @@ import { QuoteDetailPage } from "@/pages/quotation/QuoteDetailPage.tsx";
 import { QuoteFormPage } from "@/pages/quotation/QuoteFormPage.tsx";
 import { QuoteListPage } from "@/pages/quotation/QuoteListPage.tsx";
 import { PaymentsPage } from "@/pages/PaymentsPage.tsx";
+import { ProfilePage } from "@/pages/ProfilePage.tsx";
 import { ProductDetailPage, ProductFormPage, ProductListPage } from "@/pages/products/ProductPages.tsx";
 import { ShippingPage } from "@/pages/ShippingPage.tsx";
 import { WorkOrderDetailPage, WorkOrderListPage } from "@/pages/work-orders/WorkOrderPages.tsx";
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/admin" element={<AdminOnly><AdminPage /></AdminOnly>} />
           <Route path="/assistant" element={<AssistantPage />} />
+          <Route path="/me" element={<ProfilePage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

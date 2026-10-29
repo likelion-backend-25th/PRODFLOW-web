@@ -1,8 +1,8 @@
 import { readDb, updateDb } from "@/lib/db.ts";
 import { addDays, nowStamp, todayISO } from "@/lib/dates.ts";
 import { depositTarget, digitsOnly, nextModelCode, orderQuantity, orderTotal, paymentStatusOf, productKey } from "@/lib/money.ts";
-import { allocateProductItems, capacityUntil, mergeAllocations, packJobs, scheduleBackward, scheduleQuantity, splitQuantityByLines, type OccupyingOrder, type PackJob, type ScheduleResult } from "@/lib/schedule.ts";
-import type { Database, LineStatus, NotifyChannel, Order, OrderLine, OrderStatus, Quotation, QuotationPlan, Role, User, WorkOrder } from "@/types/domain.ts";
+import { capacityUntil, mergeAllocations, packJobs, scheduleBackward, scheduleQuantity, splitProductsAcrossLines, type OccupyingOrder, type PackJob, type ScheduleResult } from "@/lib/schedule.ts";
+import type { ConfirmationStatus, Database, LineStatus, NotifyChannel, Order, OrderLine, OrderStatus, Quotation, Role, User, WorkOrder } from "@/types/domain.ts";
 
 export class DueDateError extends Error {
   earliestDue: string;
@@ -45,10 +45,17 @@ function pushHistory(db: Database, entity: "ORDER" | "WORK_ORDER", entityId: str
   });
 }
 
+function confirmationFor(status: OrderStatus): ConfirmationStatus {
+  if (status === "CANCELLED") return "CANCELLED";
+  if (status === "WAITING") return "PENDING";
+  return "CONFIRMED";
+}
+
 function setOrderStatus(db: Database, order: Order, status: OrderStatus, actor: Actor, note?: string): void {
   if (order.status === status) return;
   pushHistory(db, "ORDER", order.id, order.status, status, actor, note);
   order.status = status;
+  order.confirmationStatus = confirmationFor(status);
 }
 
 function logOrderChange(db: Database, order: Order, actor: Actor, note: string): void {
@@ -62,7 +69,7 @@ function requireReason(reason: string): string {
 }
 
 function refreshPayment(order: Order): void {
-  order.paymentStatus = paymentStatusOf(order.paidAmount, orderTotal(order.lines));
+  order.paymentStatus = paymentStatusOf(order.paidAmount, orderTotal(order.lines, order.vatIncluded));
 }
 
 function byCreated(left: Order, right: Order): number {
@@ -220,6 +227,15 @@ function syncOrderFromWorkOrders(db: Database, order: Order, actor: Actor, note?
   setOrderStatus(db, order, "CONFIRMED", actor, note);
 }
 
+function openReadyWork(db: Database): Array<{ workOrder: WorkOrder; order: Order }> {
+  const assignable = new Set<OrderStatus>(["CONFIRMED", "IN_PRODUCTION", "ON_HOLD"]);
+  return db.workOrders
+    .filter((item) => item.status === "READY" && !item.assigneeId)
+    .map((item) => ({ workOrder: item, order: db.orders.find((order) => order.id === item.orderId) }))
+    .filter((item): item is { workOrder: WorkOrder; order: Order } => Boolean(item.order && assignable.has(item.order.status)))
+    .sort((left, right) => left.order.dueDate.localeCompare(right.order.dueDate));
+}
+
 function assignOne(db: Database): void {
   const busy = new Set(
     db.workOrders.filter((item) => item.status === "IN_PRODUCTION" && item.assigneeId).map((item) => item.assigneeId as string),
@@ -227,22 +243,42 @@ function assignOne(db: Database): void {
   const candidates = db.users.filter(
     (user) => user.role === "PRODUCTION_MANAGER" && user.status === "ACTIVE" && user.clockedIn && !busy.has(user.id),
   );
-  if (candidates.length === 0) return;
-  const assignable = new Set<OrderStatus>(["CONFIRMED", "IN_PRODUCTION", "ON_HOLD"]);
+  if (candidates.length === 0) {
+    assignByNextDayCount(db);
+    return;
+  }
   const unstarted = (userId: string) =>
     db.workOrders.filter((item) => item.assigneeId === userId && item.status === "READY").reduce((sum, item) => sum + item.quantity, 0);
   let guard = 0;
   while (guard < 80) {
-    const open = db.workOrders
-      .filter((item) => item.status === "READY" && !item.assigneeId)
-      .map((item) => ({ workOrder: item, order: db.orders.find((order) => order.id === item.orderId) }))
-      .filter((item): item is { workOrder: WorkOrder; order: Order } => Boolean(item.order && assignable.has(item.order.status)))
-      .sort((left, right) => left.order.dueDate.localeCompare(right.order.dueDate));
-    const target = open[0];
+    const target = openReadyWork(db)[0];
     if (!target) return;
     candidates.sort((left, right) => unstarted(left.id) - unstarted(right.id));
     target.workOrder.assigneeId = candidates[0]?.id ?? null;
     if (!target.workOrder.assigneeId) return;
+    guard += 1;
+  }
+}
+
+function assignByNextDayCount(db: Database): void {
+  const tomorrow = addDays(todayISO(), 1);
+  const candidates = db.users.filter((user) => user.role === "PRODUCTION_MANAGER" && user.status === "ACTIVE");
+  if (candidates.length === 0) return;
+  const nextDayCount = (userId: string) =>
+    db.workOrders.filter(
+      (item) =>
+        item.assigneeId === userId &&
+        (item.status === "READY" || item.status === "IN_PRODUCTION" || item.status === "PAUSED") &&
+        item.allocations.some((slot) => slot.date === tomorrow),
+    ).length;
+  let guard = 0;
+  while (guard < 80) {
+    const target = openReadyWork(db)[0];
+    if (!target) return;
+    candidates.sort((left, right) => nextDayCount(left.id) - nextDayCount(right.id) || left.name.localeCompare(right.name, "ko"));
+    const chosen = candidates[0];
+    if (!chosen) return;
+    target.workOrder.assigneeId = chosen.id;
     guard += 1;
   }
 }
@@ -272,35 +308,25 @@ function rebuildReadyWorkOrders(db: Database, order: Order, actor: Actor, pendin
     return;
   }
   const holidays = db.holidays.map((holiday) => holiday.date);
-  const chunks = splitQuantityByLines(
+  const chunks = splitProductsAcrossLines(
+    order.lines,
     order.allocations,
-    readyQty,
     db.lines,
     holidays,
     occupyingWorkOrders(db, order.id, pendingReady),
     locked,
   );
-  if (locked.some((item) => !item.items?.length)) {
-    const lockedPacks = allocateProductItems(order.lines, locked.map((item) => item.quantity));
-    locked.forEach((item, index) => {
-      item.items = lockedPacks[index] ?? [];
-    });
-  }
-  const packs = allocateProductItems(
-    order.lines,
-    chunks.map((chunk) => chunk.quantity),
-    locked.flatMap((item) => item.items),
-  );
   const used = new Set<string>();
   const issuedAt = nowStamp();
-  for (const [index, chunk] of chunks.entries()) {
-    const reuse = existingReady.find((item) => item.lineId === chunk.lineId && !used.has(item.id))
+  for (const chunk of chunks) {
+    const reuse = existingReady.find((item) => item.lineId === chunk.lineId && item.items?.length === 1 && item.items[0]?.productId === chunk.productId && !used.has(item.id))
       ?? existingReady.find((item) => !used.has(item.id));
+    const items = [{ productId: chunk.productId, quantity: chunk.quantity }];
     if (reuse) {
       used.add(reuse.id);
       reuse.lineId = chunk.lineId;
       reuse.quantity = chunk.quantity;
-      reuse.items = packs[index] ?? [];
+      reuse.items = items;
       reuse.allocations = chunk.allocations;
       reuse.plannedStartDate = chunk.plannedStartDate;
       reuse.plannedEndDate = chunk.plannedEndDate;
@@ -314,7 +340,7 @@ function rebuildReadyWorkOrders(db: Database, order: Order, actor: Actor, pendin
       assigneeId: null,
       lineId: chunk.lineId,
       quantity: chunk.quantity,
-      items: packs[index] ?? [],
+      items,
       allocations: chunk.allocations,
       issuedAt,
       plannedStartDate: chunk.plannedStartDate,
@@ -331,7 +357,7 @@ function rebuildReadyWorkOrders(db: Database, order: Order, actor: Actor, pendin
 
 function syncCoveredQuantity(order: Order): void {
   const totalQty = orderQuantity(order.lines);
-  const covered = order.paidAmount >= depositTarget(orderTotal(order.lines)) ? totalQty : order.coveredQuantity;
+  const covered = order.paidAmount >= depositTarget(orderTotal(order.lines, order.vatIncluded)) ? totalQty : order.coveredQuantity;
   order.coveredQuantity = Math.min(covered, totalQty);
 }
 
@@ -369,10 +395,12 @@ function placedOrders(ignoreOrderId?: string): OccupyingOrder[] {
   ];
 }
 
-export function previewDuePlan(quantity: number, dueDate: string): { plannedStartDate: string; plannedEndDate: string } {
+export function previewDuePlan(quantity: number, dueDate: string, notBefore?: string): { plannedStartDate: string; plannedEndDate: string } {
   const db = readDb();
   const holidays = db.holidays.map((holiday) => holiday.date);
-  const result = scheduleBackward(quantity, dueDate, todayISO(), db.lines, holidays, placedOrders());
+  const today = todayISO();
+  const fromDate = notBefore && notBefore > today ? notBefore : today;
+  const result = scheduleBackward(quantity, dueDate, fromDate, db.lines, holidays, placedOrders());
   return { plannedStartDate: result.plannedStartDate, plannedEndDate: result.plannedEndDate };
 }
 
@@ -425,9 +453,9 @@ export function ensureClient(db: Database, input: OrderClientDraft): string {
     id,
     companyName,
     representative: contactName,
-    address,
-    postalCode: "",
-    addressDetail: "",
+    zipcode: "",
+    roadAddress: address,
+    detailAddress: "",
     phone,
     contactName,
     contactMobile: phone,
@@ -443,13 +471,18 @@ function nextQuotationNo(db: Database): string {
   return `QT-${year}-${String(sequence).padStart(3, "0")}`;
 }
 
-function planFromPreview(quantity: number, requestedDueDate: string): { estimatedDueDate: string; plannedStartDate: string; plannedEndDate: string } {
-  const preview = previewSchedule(quantity, undefined, todayISO());
-  if (requestedDueDate < preview.earliestDueDate) {
-    return { estimatedDueDate: preview.earliestDueDate, plannedStartDate: preview.plannedStartDate, plannedEndDate: preview.plannedEndDate };
+export function quoteNotBefore(): string {
+  return addDays(todayISO(), 3);
+}
+
+export function previewQuotationDates(quantity: number, requestedDueDate: string): { estimatedDueDate: string; plannedStartDate: string; plannedEndDate: string; earliestDueDate: string } {
+  const notBefore = quoteNotBefore();
+  const preview = previewSchedule(quantity, undefined, notBefore);
+  if (!requestedDueDate || requestedDueDate < preview.earliestDueDate) {
+    return { estimatedDueDate: preview.earliestDueDate, plannedStartDate: preview.plannedStartDate, plannedEndDate: preview.plannedEndDate, earliestDueDate: preview.earliestDueDate };
   }
-  const duePlan = previewDuePlan(quantity, requestedDueDate);
-  return { estimatedDueDate: requestedDueDate, plannedStartDate: duePlan.plannedStartDate, plannedEndDate: duePlan.plannedEndDate };
+  const duePlan = previewDuePlan(quantity, requestedDueDate, notBefore);
+  return { estimatedDueDate: requestedDueDate, plannedStartDate: duePlan.plannedStartDate, plannedEndDate: duePlan.plannedEndDate, earliestDueDate: preview.earliestDueDate };
 }
 
 export function createQuotation(input: {
@@ -467,34 +500,26 @@ export function createQuotation(input: {
   const validityChoices = [addDays(todayISO(), 14), addDays(todayISO(), 7)];
   if (!validityChoices.includes(input.validUntil)) throw new Error("견적 유효기간은 발행일부터 14일 또는 7일입니다.");
   const quantity = input.lines.reduce((sum, line) => sum + line.quantity, 0);
-  const schedule = planFromPreview(quantity, input.requestedDueDate);
+  const schedule = previewQuotationDates(quantity, input.requestedDueDate);
   let createdId = "";
   updateDb((db) => {
     const existing = input.clientId ? db.clients.find((client) => client.id === input.clientId) : undefined;
     const clientId = existing?.id ?? (input.client ? ensureClient(db, input.client) : "");
     if (!clientId) throw new Error("거래처를 입력하세요.");
     const now = nowStamp();
-    const plan: QuotationPlan = {
-      id: crypto.randomUUID(),
-      status: "ACTIVE",
-      plannedStartDate: schedule.plannedStartDate,
-      plannedEndDate: schedule.plannedEndDate,
-      estimatedDueDate: schedule.estimatedDueDate,
-      quantity,
-      createdAt: now,
-    };
     const quotation: Quotation = {
       id: crypto.randomUUID(),
       quotationNo: nextQuotationNo(db),
       clientId,
       userId: input.actor.id,
-      lines: input.lines.map((line) => ({ ...line, id: crypto.randomUUID() })),
+      lines: input.lines.map((line) => ({ productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice, id: crypto.randomUUID() })),
       requestedDueDate: input.requestedDueDate,
       estimatedDueDate: schedule.estimatedDueDate,
+      plannedStartDate: schedule.plannedStartDate,
+      plannedEndDate: schedule.plannedEndDate,
       validUntil: input.validUntil,
       status: "SENT",
       vatIncluded: input.vatIncluded,
-      plans: [plan],
       createdAt: now,
       updatedAt: now,
     };
@@ -513,11 +538,6 @@ export function setQuotationStatus(quotationId: string, status: "APPROVED" | "RE
     if (db.orders.some((order) => order.quotationId === quotation.id)) throw new Error("이미 수주가 등록된 견적입니다.");
     quotation.status = status;
     quotation.updatedAt = nowStamp();
-    if (status !== "APPROVED") {
-      quotation.plans.forEach((plan) => {
-        if (plan.status === "ACTIVE") plan.status = "CANCELLED";
-      });
-    }
     void actor;
   });
 }
@@ -528,25 +548,15 @@ export function recalculateQuotation(quotationId: string, requestedDueDate: stri
   if (!current) throw new Error("견적서를 찾을 수 없습니다.");
   if (current.status !== "SENT") throw new Error("발송 후 승인 전인 견적만 재산정할 수 있습니다.");
   const quantity = current.lines.reduce((sum, line) => sum + line.quantity, 0);
-  const schedule = planFromPreview(quantity, requestedDueDate);
+  const schedule = previewQuotationDates(quantity, requestedDueDate);
   updateDb((db) => {
     const quotation = db.quotations.find((item) => item.id === quotationId);
     if (!quotation || quotation.status !== "SENT") throw new Error("발송 후 승인 전인 견적만 재산정할 수 있습니다.");
-    quotation.plans.forEach((plan) => {
-      if (plan.status === "ACTIVE") plan.status = "RECALCULATED";
-    });
     quotation.requestedDueDate = requestedDueDate;
     quotation.estimatedDueDate = schedule.estimatedDueDate;
+    quotation.plannedStartDate = schedule.plannedStartDate;
+    quotation.plannedEndDate = schedule.plannedEndDate;
     quotation.updatedAt = nowStamp();
-    quotation.plans.unshift({
-      id: crypto.randomUUID(),
-      status: "ACTIVE",
-      plannedStartDate: schedule.plannedStartDate,
-      plannedEndDate: schedule.plannedEndDate,
-      estimatedDueDate: schedule.estimatedDueDate,
-      quantity,
-      createdAt: quotation.updatedAt,
-    });
   });
 }
 
@@ -564,6 +574,7 @@ export function createOrder(input: {
   receiverPhone: string;
   notifyChannel: NotifyChannel;
   memo: string;
+  vatIncluded?: boolean;
   actor: Actor;
 }): Order {
   if (input.lines.length === 0) throw new Error("품목 줄을 1개 이상 입력하세요.");
@@ -582,12 +593,14 @@ export function createOrder(input: {
       if (input.lines.length !== quotation.lines.length) throw new Error("견적 품목은 빼거나 추가하지 않습니다. 수량만 줄일 수 있습니다.");
       input.lines.forEach((line) => {
         const source = quotation.lines.find((item) => item.productId === line.productId);
-        if (!source || line.unitPrice !== source.unitPrice || line.vatIncluded !== source.vatIncluded) {
+        if (!source || line.unitPrice !== source.unitPrice) {
           throw new Error("단가는 승인된 견적과 같아야 합니다.");
         }
         if (line.quantity < 1 || line.quantity > source.quantity) throw new Error("수량은 견적 수량 이하로만 줄일 수 있습니다.");
       });
     }
+    const quotation = input.quotationId ? db.quotations.find((item) => item.id === input.quotationId) : undefined;
+    const vatIncluded = quotation ? quotation.vatIncluded : Boolean(input.vatIncluded);
     const existing = input.clientId ? db.clients.find((item) => item.id === input.clientId) : undefined;
     const clientId = existing?.id ?? (input.client ? ensureClient(db, input.client) : "");
     if (!clientId) throw new Error("거래처를 입력하세요.");
@@ -596,7 +609,7 @@ export function createOrder(input: {
       orderNo: `PF-${todayISO().slice(0, 4)}-${String(db.orders.length + 1).padStart(3, "0")}`,
       quotationId: input.quotationId,
       clientId,
-      lines: input.lines.map((item) => ({ ...item, id: crypto.randomUUID() })),
+      lines: input.lines.map((item) => ({ productId: item.productId, quantity: item.quantity, unitPrice: item.unitPrice, id: crypto.randomUUID() })),
       requestedDueDate: input.requestedDueDate,
       dueDate: input.dueDate || input.requestedDueDate,
       plannedStartDate: input.plannedStartDate || input.depositDueDate,
@@ -608,6 +621,8 @@ export function createOrder(input: {
       notifyChannel: input.notifyChannel,
       memo: input.memo.trim(),
       status: "WAITING",
+      confirmationStatus: "PENDING",
+      vatIncluded,
       paymentStatus: "UNPAID",
       paidAmount: 0,
       virtualAccount: `국민 ${crypto.randomUUID().slice(0, 4)}-${crypto.randomUUID().slice(0, 4)}-${crypto.randomUUID().slice(0, 4)}`,
@@ -636,20 +651,21 @@ export function recordPayment(orderId: string, amount: number, actor: Actor): vo
   updateDb((db) => {
     const order = requireOrder(db, orderId);
     if (order.status === "CANCELLED") throw new Error("취소된 수주에는 입금할 수 없습니다.");
-    const total = orderTotal(order.lines);
+    const total = orderTotal(order.lines, order.vatIncluded);
     if (order.paidAmount + amount > total) throw new Error(`남은 금액 ${(total - order.paidAmount).toLocaleString("ko-KR")}원보다 많이 입금할 수 없습니다.`);
     order.paidAmount += amount;
     refreshPayment(order);
     const note = `입금 ${amount.toLocaleString("ko-KR")}원 (누적 ${order.paidAmount.toLocaleString("ko-KR")}원)`;
     const wasWaiting = order.status === "WAITING";
-    if (!wasWaiting || order.paidAmount < depositTarget(total)) logOrderChange(db, order, actor, note);
-    if (wasWaiting && order.paidAmount >= depositTarget(total)) {
+    const depositConfirmed = wasWaiting && order.paidAmount >= depositTarget(total);
+    if (!depositConfirmed) logOrderChange(db, order, actor, note);
+    if (depositConfirmed) {
       setOrderStatus(db, order, "CONFIRMED", actor, `${note} · 선금 확인`);
     }
     const previousCovered = order.coveredQuantity;
     syncCoveredQuantity(order);
-    if ((wasWaiting && order.status === "CONFIRMED") || order.coveredQuantity !== previousCovered) rescheduleFactory(db, actor);
-    assignOne(db);
+    if (depositConfirmed || order.coveredQuantity !== previousCovered) rescheduleFactory(db, actor);
+    else assignOne(db);
   });
 }
 
@@ -679,7 +695,7 @@ export function updateOrderPrices(orderId: string, prices: Record<string, number
 export function updateOrderQuantities(orderId: string, quantities: Record<string, number>, acceptLaterDue: boolean, actor: Actor): void {
   updateDb((db) => {
     const order = requireOrder(db, orderId);
-    if (["PACKING", "PACKED", "READY_TO_SHIP", "SHIPPING", "COMPLETED", "CANCELLED"].includes(order.status)) {
+    if (["PACKING", "READY_TO_SHIP", "SHIPPING", "COMPLETED", "CANCELLED"].includes(order.status)) {
       throw new Error("포장 이후에는 수량을 바꿀 수 없습니다.");
     }
     const changes: string[] = [];
@@ -775,6 +791,9 @@ export function startProduction(workOrderId: string, lineId: string, actor: Acto
     if (workOrder.status !== "READY" || !["CONFIRMED", "IN_PRODUCTION", "ON_HOLD"].includes(order.status)) {
       throw new Error("생산 시작은 준비 상태 작업에서만 할 수 있습니다.");
     }
+    if (workOrder.plannedStartDate > todayISO()) {
+      throw new Error(`생산 시작 예정일(${workOrder.plannedStartDate})부터 시작할 수 있습니다.`);
+    }
     if (!lineCandidates(db).includes(lineId)) throw new Error("비어 있는 가동 가능 라인만 선택할 수 있습니다.");
     const line = db.lines.find((item) => item.id === lineId);
     if (!line) throw new Error("라인을 찾을 수 없습니다.");
@@ -842,18 +861,10 @@ export function completeProduction(workOrderId: string, actor: Actor): void {
   });
 }
 
-export function completePacking(orderId: string, actor: Actor): void {
-  updateDb((db) => {
-    const order = requireOrder(db, orderId);
-    if (order.status !== "PACKING") throw new Error("포장중인 수주만 포장 완료할 수 있습니다.");
-    setOrderStatus(db, order, "PACKED", actor);
-  });
-}
-
 export function markReadyToShip(orderId: string, actor: Actor): void {
   updateDb((db) => {
     const order = requireOrder(db, orderId);
-    if (order.status !== "PACKED") throw new Error("포장완료인 수주만 출고대기로 바꿀 수 있습니다.");
+    if (order.status !== "PACKING") throw new Error("포장중인 수주만 출고대기로 바꿀 수 있습니다.");
     setOrderStatus(db, order, "READY_TO_SHIP", actor);
   });
 }
@@ -923,17 +934,17 @@ export function availableLineIds(): string[] {
   return lineCandidates(readDb());
 }
 
-export function clientFullAddress(client: { postalCode: string; address: string; addressDetail: string }): string {
-  return [client.postalCode, client.address, client.addressDetail].map((part) => part.trim()).filter(Boolean).join(" ");
+export function clientFullAddress(client: { zipcode: string; roadAddress: string; detailAddress: string }): string {
+  return [client.zipcode, client.roadAddress, client.detailAddress].map((part) => part.trim()).filter(Boolean).join(" ");
 }
 
 export function saveClient(input: {
   id?: string;
   companyName: string;
   representative: string;
-  address: string;
-  postalCode: string;
-  addressDetail: string;
+  zipcode: string;
+  roadAddress: string;
+  detailAddress: string;
   phone: string;
   contactName: string;
   contactMobile: string;
@@ -1174,19 +1185,5 @@ export function deleteUser(userId: string, actorId: string): void {
     requireAccountChange(db, user, { role: user.role, status: "DELETED" }, actorId);
     user.status = "DELETED";
     endShift(db, user);
-  });
-}
-
-export function saveHoliday(date: string, name: string): void {
-  updateDb((db) => {
-    if (db.holidays.some((holiday) => holiday.date === date)) throw new Error("이미 등록된 날짜입니다.");
-    db.holidays.push({ id: crypto.randomUUID(), date, name });
-    db.holidays.sort((left, right) => left.date.localeCompare(right.date));
-  });
-}
-
-export function deleteHoliday(holidayId: string): void {
-  updateDb((db) => {
-    db.holidays = db.holidays.filter((holiday) => holiday.id !== holidayId);
   });
 }

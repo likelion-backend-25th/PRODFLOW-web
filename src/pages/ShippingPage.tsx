@@ -8,16 +8,15 @@ import { activeWorkOrder, delayOf, delayTone } from "@/lib/delay.ts";
 import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } from "@/lib/labels.ts";
 import { formatWon, orderQuantity, orderTotal } from "@/lib/money.ts";
 import { orderItems, orderItemsText } from "@/lib/orderText.ts";
-import { completeDelivery, completePacking, markReadyToShip, recordPayment, shipOrder } from "@/lib/workflow.ts";
+import { completeDelivery, markReadyToShip, recordPayment, shipOrder } from "@/lib/workflow.ts";
 import { canManageOrders, canProduce, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { Order } from "@/types/domain.ts";
 
-type Tab = "PACKING" | "PACKED" | "READY_TO_SHIP" | "SHIPPING" | "BALANCE";
+type Tab = "PACKING" | "READY_TO_SHIP" | "SHIPPING" | "BALANCE";
 
 const tabs: Array<{ id: Tab; label: string; hint: string }> = [
   { id: "PACKING", label: "포장중", hint: "생산이 끝나 포장 중인 수주" },
-  { id: "PACKED", label: "포장완료", hint: "포장 끝 · 출고 대기로 넘김" },
   { id: "READY_TO_SHIP", label: "출고대기", hint: "운송장 입력 후 출고" },
   { id: "SHIPPING", label: "배송중", hint: "출고 후 거래처 도착 전" },
   { id: "BALANCE", label: "잔금 대기", hint: "배송 완료 · 거래처 확인 후 잔금 입금 대기" },
@@ -55,10 +54,10 @@ export function ShippingPage() {
     <div>
       <div>
         <h1 className="text-2xl font-semibold">배송 관리</h1>
-        <p className="mt-1 text-sm text-muted">포장 완료 후 출고대기·출고·배송 완료·잔금 입금까지 한 화면에서 처리합니다. 잔금은 거래처가 물건을 확인한 뒤 입금합니다.</p>
+        <p className="mt-1 text-sm text-muted">포장중에서 출고대기, 출고, 배송 완료, 잔금 입금까지 한 화면에서 처리합니다. 잔금은 거래처가 물건을 확인한 뒤 입금합니다.</p>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-5">
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
         {tabs.map((item) => {
           const count = db.orders.filter((order) => inTab(order, item.id)).length;
           return (
@@ -93,7 +92,7 @@ export function ShippingPage() {
               {rows.map((order) => {
                 const client = db.clients.find((item) => item.id === order.clientId);
                 const delay = delayOf(order, activeWorkOrder(db.workOrders, order.id), today);
-                const total = orderTotal(order.lines);
+                const total = orderTotal(order.lines, order.vatIncluded);
                 const balance = total - order.paidAmount;
                 const shippedAt = db.histories.find((item) => item.entityId === order.id && item.toStatus === "SHIPPING" && item.fromStatus !== "SHIPPING")?.at;
                 return (
@@ -126,10 +125,7 @@ export function ShippingPage() {
                     </td>
                     <td className="py-3 pr-5">
                       {tab === "PACKING" ? (
-                        canProduce(user.role) ? <Button onClick={() => act(() => completePacking(order.id, user), "포장 완료로 변경했습니다.")}>포장 완료</Button> : <span className="text-xs text-muted">현장 관리자가 처리</span>
-                      ) : null}
-                      {tab === "PACKED" ? (
-                        canManageOrders(user.role) ? <Button onClick={() => act(() => markReadyToShip(order.id, user), "출고대기로 변경했습니다.")}>출고 대기로</Button> : <span className="text-xs text-muted">수주 관리자가 처리</span>
+                        canProduce(user.role) || canManageOrders(user.role) ? <Button onClick={() => act(() => markReadyToShip(order.id, user), "출고대기로 변경했습니다.")}>출고 대기로</Button> : <span className="text-xs text-muted">권한이 없습니다</span>
                       ) : null}
                       {tab === "READY_TO_SHIP" ? (
                         canManageOrders(user.role) ? (

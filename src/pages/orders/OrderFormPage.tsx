@@ -73,7 +73,7 @@ function clientFields(db: Database, clientId: string | null) {
     contactName: client?.contactName ?? "",
     contactPhone: client?.contactMobile || client?.phone || "",
     contactEmail: client?.taxEmail ?? "",
-    companyAddress: client?.address ?? "",
+    companyAddress: client?.roadAddress ?? "",
   };
 }
 
@@ -161,7 +161,7 @@ export function OrderFormPage() {
   const amounts = values.lines.map((line) => {
     const quantity = Number.isFinite(line.quantity) ? line.quantity : 0;
     const unitPrice = Number.isFinite(line.unitPrice) ? line.unitPrice : 0;
-    const total = lineAmount({ quantity, unitPrice, vatIncluded: !values.vatSeparate });
+    const total = lineAmount({ quantity, unitPrice }, !values.vatSeparate);
     const supply = values.vatSeparate ? quantity * unitPrice : Math.round(total / 1.1);
     return { quantity, supply, total };
   });
@@ -204,7 +204,7 @@ export function OrderFormPage() {
     form.setValue("contactName", picked.contactName);
     form.setValue("contactPhone", picked.contactMobile || picked.phone);
     form.setValue("contactEmail", picked.taxEmail);
-    form.setValue("companyAddress", picked.address);
+    form.setValue("companyAddress", picked.roadAddress);
     form.setValue("shippingAddress", clientFullAddress(picked));
     form.setValue("receiverPhone", picked.contactMobile || picked.phone);
     setClientOpen(false);
@@ -257,7 +257,8 @@ export function OrderFormPage() {
           taxEmail: input.contactEmail,
           address: input.companyAddress,
         },
-        lines: input.lines.map((line) => ({ ...line, vatIncluded: !input.vatSeparate })),
+        lines: input.lines.map((line) => ({ productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice })),
+        vatIncluded: !input.vatSeparate,
         depositDueDate: input.depositDueDate,
         requestedDueDate: input.requestedDueDate,
         shippingAddress: input.shippingAddress || input.companyAddress,
@@ -346,7 +347,7 @@ export function OrderFormPage() {
               <div className="mt-2 flex items-center justify-between rounded-lg bg-primary-soft px-3 py-2">
                 <span>
                   <span className="block text-sm font-semibold">{client.companyName}</span>
-                  <span className="block text-xs text-muted">{client.contactName || client.representative} · {client.contactMobile || client.phone} · {client.address}</span>
+                  <span className="block text-xs text-muted">{client.contactName || client.representative} · {client.contactMobile || client.phone} · {client.roadAddress}</span>
                 </span>
                 <Check size={16} className="text-primary" />
               </div>
@@ -374,7 +375,7 @@ export function OrderFormPage() {
                 value={values.companyAddress}
                 onChange={(address) => {
                   form.setValue("companyAddress", address);
-                  if (!values.shippingAddress || values.shippingAddress === client?.address || (client && values.shippingAddress === clientFullAddress(client))) form.setValue("shippingAddress", address);
+                  if (!values.shippingAddress || values.shippingAddress === client?.roadAddress || (client && values.shippingAddress === clientFullAddress(client))) form.setValue("shippingAddress", address);
                 }}
               />
             </div>

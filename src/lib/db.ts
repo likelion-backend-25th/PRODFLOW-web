@@ -3,7 +3,7 @@ import { sampleAddresses } from "@/lib/addresses.ts";
 import { addDays, todayISO } from "@/lib/dates.ts";
 import { integrityIssues } from "@/lib/integrity.ts";
 import { depositTarget, nextModelCode, orderQuantity, orderTotal, paymentStatusOf } from "@/lib/money.ts";
-import { allocateProductItems, isWorkingDay, splitQuantityByLines } from "@/lib/schedule.ts";
+import { allocateProductItems, divideAllocationsByProduct, isWorkingDay, splitQuantityByLines } from "@/lib/schedule.ts";
 import type {
   Client,
   Database,
@@ -22,14 +22,14 @@ import type {
 
 const STORAGE_KEY = "prodflow-db-v5";
 
-function client(id: string, companyName: string, representative: string, phone: string, taxEmail: string, address: string): Client {
+function client(id: string, companyName: string, representative: string, phone: string, taxEmail: string, roadAddress: string): Client {
   return {
     id,
     companyName,
     representative,
-    address,
-    postalCode: sampleAddresses.find((item) => item.road === address)?.zonecode ?? "",
-    addressDetail: "",
+    zipcode: sampleAddresses.find((item) => item.road === roadAddress)?.zonecode ?? "",
+    roadAddress,
+    detailAddress: "",
     phone,
     contactName: representative,
     contactMobile: phone,
@@ -367,7 +367,7 @@ function seed(): Database {
       created: -5,
       due: 1,
       slots: [[-3, 600]],
-      status: "PACKED",
+      status: "READY_TO_SHIP",
       paid: "deposit",
       workOrder: { id: "wo-packed", assignee: floor1, lineId: "line-1", status: "COMPLETED", started: -3, completed: -3 },
       produced: 600,
@@ -480,9 +480,8 @@ function seed(): Database {
       productId,
       quantity,
       unitPrice,
-      vatIncluded: false,
     }));
-    const total = orderTotal(lines);
+    const total = orderTotal(lines, false);
     const quantity = orderQuantity(lines);
     const paidAmount = spec.paid === "none" ? 0 : spec.paid === "full" ? total : depositTarget(total);
     const client = clients.find((item) => item.id === spec.clientId) as Client;
@@ -512,30 +511,34 @@ function seed(): Database {
     if (plan) {
       const startedAt = plan.started === undefined ? null : stamp(day(plan.started), "09:00");
       const completedAt = plan.completed === undefined ? null : stamp(day(plan.completed), "17:00");
-      workOrders.push({
-        id: plan.id,
-        orderId: spec.id,
-        status: plan.status,
-        assigneeId: plan.assignee.id,
-        lineId: plan.lineId,
-        quantity,
-        items: lines.map((line) => ({ productId: line.productId, quantity: line.quantity })),
-        allocations: allocations.map((slot) => ({ ...slot })),
-        issuedAt: confirmedAt,
-        plannedStartDate: allocations[0].date,
-        plannedEndDate: allocations[allocations.length - 1].date,
-        startedAt,
-        completedAt,
+      const pieces = divideAllocationsByProduct(allocations, lines.map((line) => ({ productId: line.productId, quantity: line.quantity })));
+      pieces.forEach((piece, pieceIndex) => {
+        const id = pieceIndex === 0 ? plan.id : `${plan.id}-${pieceIndex + 1}`;
+        workOrders.push({
+          id,
+          orderId: spec.id,
+          status: plan.status,
+          assigneeId: plan.assignee.id,
+          lineId: plan.lineId,
+          quantity: piece.quantity,
+          items: [{ productId: piece.productId, quantity: piece.quantity }],
+          allocations: piece.allocations,
+          issuedAt: confirmedAt,
+          plannedStartDate: piece.allocations[0]?.date ?? allocations[0].date,
+          plannedEndDate: piece.allocations.at(-1)?.date ?? allocations[allocations.length - 1].date,
+          startedAt,
+          completedAt,
+        });
+        if (startedAt) {
+          if (pieceIndex === 0) move("ORDER", spec.id, "IN_PRODUCTION", startedAt, plan.assignee);
+          move("WORK_ORDER", id, "IN_PRODUCTION", startedAt, plan.assignee, "READY");
+        }
+        if (completedAt) {
+          if (pieceIndex === 0) move("ORDER", spec.id, "PACKING", completedAt, plan.assignee);
+          move("WORK_ORDER", id, "COMPLETED", completedAt, plan.assignee, "IN_PRODUCTION");
+        }
       });
-      if (startedAt) {
-        move("ORDER", spec.id, "IN_PRODUCTION", startedAt, plan.assignee);
-        move("WORK_ORDER", plan.id, "IN_PRODUCTION", startedAt, plan.assignee, "READY");
-      }
-      if (completedAt) {
-        move("ORDER", spec.id, "PACKING", completedAt, plan.assignee);
-        move("WORK_ORDER", plan.id, "COMPLETED", completedAt, plan.assignee, "IN_PRODUCTION");
-      }
-      if (spec.packed !== undefined) move("ORDER", spec.id, "PACKED", stamp(day(spec.packed), "18:00"), plan.assignee);
+      if (spec.packed !== undefined && !spec.shipped) move("ORDER", spec.id, "READY_TO_SHIP", stamp(day(spec.packed), "18:00"), plan.assignee);
     }
     if (spec.shipped) {
       const shippedAt = stamp(day(spec.shipped.day), "10:00");
@@ -564,11 +567,13 @@ function seed(): Database {
       plannedEndDate: allocations[allocations.length - 1].date,
       depositDueDate: allocations[0].date,
       allocations,
-      shippingAddress: client.address,
+      shippingAddress: client.roadAddress,
       receiverPhone: client.contactMobile,
       notifyChannel: "SMS",
       memo: spec.memo ?? "",
       status: spec.status,
+      confirmationStatus: spec.status === "CANCELLED" ? "CANCELLED" : spec.status === "WAITING" ? "PENDING" : "CONFIRMED",
+      vatIncluded: false,
       paymentStatus: paymentStatusOf(paidAmount, total),
       paidAmount,
       virtualAccount: `국민 ${year}-0${sequence}-${sequence}`,
@@ -654,7 +659,7 @@ const departmentOf: Record<User["role"], string> = {
 };
 
 function quoteLine(id: string, productId: string, quantity: number, unitPrice: number): OrderLine {
-  return { id, productId, quantity, unitPrice, vatIncluded: false };
+  return { id, productId, quantity, unitPrice };
 }
 
 function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => string): Quotation[] {
@@ -664,7 +669,6 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
     .map((order) => {
       const id = `quote-for-${order.id}`;
       order.quotationId = id;
-      const quantity = orderQuantity(order.lines);
       const quotation: Quotation = {
         id,
         quotationNo: "",
@@ -675,16 +679,9 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
         estimatedDueDate: order.dueDate,
         validUntil: order.dueDate,
         status: "APPROVED",
-        vatIncluded: false,
-        plans: [{
-          id: `${id}-plan`,
-          status: "ACTIVE",
-          plannedStartDate: order.plannedStartDate,
-          plannedEndDate: order.plannedEndDate,
-          estimatedDueDate: order.dueDate,
-          quantity,
-          createdAt: order.createdAt,
-        }],
+        vatIncluded: order.vatIncluded,
+        plannedStartDate: order.plannedStartDate,
+        plannedEndDate: order.plannedEndDate,
         createdAt: order.createdAt,
         updatedAt: order.createdAt,
       };
@@ -705,10 +702,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(12),
       status: "SENT",
       vatIncluded: false,
-      plans: [
-        { id: "quote-sent-plan", status: "ACTIVE", plannedStartDate: day(4), plannedEndDate: day(5), estimatedDueDate: day(7), quantity: 800, createdAt: revisedAt },
-        { id: "quote-sent-old", status: "RECALCULATED", plannedStartDate: day(2), plannedEndDate: day(3), estimatedDueDate: day(5), quantity: 800, createdAt: sentAt },
-      ],
+      plannedStartDate: day(4),
+      plannedEndDate: day(5),
       createdAt: sentAt,
       updatedAt: revisedAt,
     },
@@ -723,7 +718,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(14),
       status: "APPROVED",
       vatIncluded: false,
-      plans: [{ id: "quote-open-plan", status: "ACTIVE", plannedStartDate: day(5), plannedEndDate: day(6), estimatedDueDate: day(8), quantity: 200, createdAt: stamp(day(-4), "11:00") }],
+      plannedStartDate: day(5),
+      plannedEndDate: day(6),
       createdAt: stamp(day(-4), "11:00"),
       updatedAt: stamp(day(-1), "15:00"),
     },
@@ -738,7 +734,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(10),
       status: "REJECTED",
       vatIncluded: false,
-      plans: [{ id: "quote-rejected-plan", status: "CANCELLED", plannedStartDate: day(3), plannedEndDate: day(4), estimatedDueDate: day(6), quantity: 300, createdAt: stamp(day(-6), "10:00") }],
+      plannedStartDate: day(3),
+      plannedEndDate: day(4),
       createdAt: stamp(day(-6), "10:00"),
       updatedAt: stamp(day(-5), "16:00"),
     },
@@ -753,7 +750,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(11),
       status: "CANCELLED",
       vatIncluded: false,
-      plans: [{ id: "quote-cancelled-plan", status: "CANCELLED", plannedStartDate: day(6), plannedEndDate: day(7), estimatedDueDate: day(9), quantity: 400, createdAt: stamp(day(-3), "09:30") }],
+      plannedStartDate: day(6),
+      plannedEndDate: day(7),
       createdAt: stamp(day(-3), "09:30"),
       updatedAt: stamp(day(-2), "17:00"),
     },
@@ -768,7 +766,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(-1),
       status: "EXPIRED",
       vatIncluded: false,
-      plans: [{ id: "quote-expired-plan", status: "EXPIRED", plannedStartDate: day(1), plannedEndDate: day(1), estimatedDueDate: day(3), quantity: 200, createdAt: stamp(day(-12), "10:00") }],
+      plannedStartDate: day(1),
+      plannedEndDate: day(1),
       createdAt: stamp(day(-12), "10:00"),
       updatedAt: stamp(day(-1), "00:10"),
     },
@@ -783,7 +782,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(14),
       status: "SENT",
       vatIncluded: false,
-      plans: [{ id: "quote-sent-2-plan", status: "ACTIVE", plannedStartDate: day(6), plannedEndDate: day(7), estimatedDueDate: day(9), quantity: 500, createdAt: stamp(day(-1), "14:00") }],
+      plannedStartDate: day(6),
+      plannedEndDate: day(7),
       createdAt: stamp(day(-1), "14:00"),
       updatedAt: stamp(day(-1), "14:00"),
     },
@@ -798,7 +798,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(15),
       status: "SENT",
       vatIncluded: false,
-      plans: [{ id: "quote-sent-3-plan", status: "ACTIVE", plannedStartDate: day(7), plannedEndDate: day(8), estimatedDueDate: day(10), quantity: 350, createdAt: stamp(day(-2), "15:00") }],
+      plannedStartDate: day(7),
+      plannedEndDate: day(8),
       createdAt: stamp(day(-2), "15:00"),
       updatedAt: stamp(day(-2), "15:00"),
     },
@@ -813,7 +814,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(16),
       status: "APPROVED",
       vatIncluded: false,
-      plans: [{ id: "quote-open-2-plan", status: "ACTIVE", plannedStartDate: day(8), plannedEndDate: day(9), estimatedDueDate: day(11), quantity: 250, createdAt: stamp(day(-5), "10:30") }],
+      plannedStartDate: day(8),
+      plannedEndDate: day(9),
       createdAt: stamp(day(-5), "10:30"),
       updatedAt: stamp(day(-2), "11:00"),
     },
@@ -828,7 +830,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(16),
       status: "APPROVED",
       vatIncluded: false,
-      plans: [{ id: "quote-open-3-plan", status: "ACTIVE", plannedStartDate: day(9), plannedEndDate: day(10), estimatedDueDate: day(12), quantity: 500, createdAt: stamp(day(-6), "13:00") }],
+      plannedStartDate: day(9),
+      plannedEndDate: day(10),
       createdAt: stamp(day(-6), "13:00"),
       updatedAt: stamp(day(-3), "16:20"),
     },
@@ -843,7 +846,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(13),
       status: "REJECTED",
       vatIncluded: false,
-      plans: [{ id: "quote-rejected-2-plan", status: "CANCELLED", plannedStartDate: day(5), plannedEndDate: day(6), estimatedDueDate: day(8), quantity: 400, createdAt: stamp(day(-8), "10:00") }],
+      plannedStartDate: day(5),
+      plannedEndDate: day(6),
       createdAt: stamp(day(-8), "10:00"),
       updatedAt: stamp(day(-7), "15:00"),
     },
@@ -858,7 +862,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(12),
       status: "CANCELLED",
       vatIncluded: false,
-      plans: [{ id: "quote-cancelled-2-plan", status: "CANCELLED", plannedStartDate: day(6), plannedEndDate: day(7), estimatedDueDate: day(9), quantity: 220, createdAt: stamp(day(-7), "09:00") }],
+      plannedStartDate: day(6),
+      plannedEndDate: day(7),
       createdAt: stamp(day(-7), "09:00"),
       updatedAt: stamp(day(-6), "18:00"),
     },
@@ -873,7 +878,8 @@ function quotationsFor(orders: Order[], author: Actor, day: (offset: number) => 
       validUntil: day(-2),
       status: "EXPIRED",
       vatIncluded: false,
-      plans: [{ id: "quote-expired-2-plan", status: "EXPIRED", plannedStartDate: day(2), plannedEndDate: day(2), estimatedDueDate: day(4), quantity: 160, createdAt: stamp(day(-15), "11:00") }],
+      plannedStartDate: day(2),
+      plannedEndDate: day(2),
       createdAt: stamp(day(-15), "11:00"),
       updatedAt: stamp(day(-2), "00:05"),
     },
@@ -900,7 +906,8 @@ function sampleQuotations(clients: Client[], products: Product[], author: { id: 
     validUntil: day(12),
     status: "SENT",
     vatIncluded: false,
-    plans: [{ id: "quote-sent-plan", status: "ACTIVE", plannedStartDate: day(4), plannedEndDate: day(5), estimatedDueDate: day(7), quantity: 800, createdAt: created }],
+    plannedStartDate: day(4),
+    plannedEndDate: day(5),
     createdAt: created,
     updatedAt: created,
   }];
@@ -908,6 +915,22 @@ function sampleQuotations(clients: Client[], products: Product[], author: { id: 
 
 function repair(db: Database): boolean {
   let changed = false;
+  db.orders.forEach((order) => {
+    if ((order.status as string) === "PACKED") {
+      order.status = "READY_TO_SHIP";
+      changed = true;
+    }
+  });
+  db.histories.forEach((item) => {
+    if (item.fromStatus === "PACKED") {
+      item.fromStatus = "READY_TO_SHIP";
+      changed = true;
+    }
+    if (item.toStatus === "PACKED") {
+      item.toStatus = "READY_TO_SHIP";
+      changed = true;
+    }
+  });
   if (!Array.isArray(db.lineCapacityLogs)) {
     db.lineCapacityLogs = [];
     changed = true;
@@ -975,6 +998,41 @@ function repair(db: Database): boolean {
     changed = true;
   });
   db.orders.forEach((order) => {
+    const legacyLines = order.lines as Array<OrderLine & { vatIncluded?: boolean }>;
+    if (order.vatIncluded === undefined) {
+      order.vatIncluded = legacyLines.length > 0 && legacyLines.every((line) => line.vatIncluded === true);
+      changed = true;
+    }
+    if (order.confirmationStatus === undefined) {
+      order.confirmationStatus = order.status === "CANCELLED" ? "CANCELLED" : order.status === "WAITING" ? "PENDING" : "CONFIRMED";
+      changed = true;
+    }
+    legacyLines.forEach((line) => {
+      if (!("vatIncluded" in line)) return;
+      delete line.vatIncluded;
+      changed = true;
+    });
+  });
+  db.quotations.forEach((quote) => {
+    const legacy = quote as Quotation & { plans?: Array<{ status?: string; plannedStartDate?: string; plannedEndDate?: string }> };
+    if (!quote.plannedStartDate || !quote.plannedEndDate) {
+      const active = legacy.plans?.find((plan) => plan.status === "ACTIVE") ?? legacy.plans?.[0];
+      quote.plannedStartDate = active?.plannedStartDate ?? quote.estimatedDueDate;
+      quote.plannedEndDate = active?.plannedEndDate ?? quote.estimatedDueDate;
+      changed = true;
+    }
+    if (legacy.plans) {
+      delete legacy.plans;
+      changed = true;
+    }
+    quote.lines.forEach((line) => {
+      const item = line as OrderLine & { vatIncluded?: boolean };
+      if (!("vatIncluded" in item)) return;
+      delete item.vatIncluded;
+      changed = true;
+    });
+  });
+  db.orders.forEach((order) => {
     if (!["WAITING", "CONFIRMED", "IN_PRODUCTION", "ON_HOLD"].includes(order.status) || order.producedQuantity === 0) return;
     order.producedQuantity = 0;
     changed = true;
@@ -985,14 +1043,22 @@ function repair(db: Database): boolean {
     changed = true;
   });
   db.clients.forEach((client) => {
-    if (client.addressDetail !== undefined) return;
-    client.addressDetail = "";
-    changed = true;
-  });
-  db.clients.forEach((client) => {
-    if (client.postalCode !== undefined) return;
-    client.postalCode = sampleAddresses.find((item) => item.road === client.address)?.zonecode ?? "";
-    changed = true;
+    const legacy = client as Client & { address?: string; postalCode?: string; addressDetail?: string };
+    if (legacy.roadAddress === undefined && legacy.address !== undefined) {
+      legacy.roadAddress = legacy.address;
+      delete legacy.address;
+      changed = true;
+    }
+    if (legacy.zipcode === undefined) {
+      legacy.zipcode = legacy.postalCode ?? sampleAddresses.find((item) => item.road === legacy.roadAddress)?.zonecode ?? "";
+      delete legacy.postalCode;
+      changed = true;
+    }
+    if (legacy.detailAddress === undefined) {
+      legacy.detailAddress = legacy.addressDetail ?? "";
+      delete legacy.addressDetail;
+      changed = true;
+    }
   });
   db.clients.forEach((client) => {
     if (client.createdAt) return;
@@ -1055,6 +1121,40 @@ function repair(db: Database): boolean {
       changed = true;
     });
   });
+  const splitWorkOrders: WorkOrder[] = [];
+  for (const workOrder of [...db.workOrders]) {
+    const items = workOrder.items ?? [];
+    if (workOrder.status === "CANCELLED" || items.length <= 1) continue;
+    const pieces = divideAllocationsByProduct(workOrder.allocations ?? [], items);
+    const [first, ...rest] = pieces;
+    if (!first) continue;
+    const status = workOrder.status;
+    const running = status === "IN_PRODUCTION" || status === "PAUSED";
+    workOrder.quantity = first.quantity;
+    workOrder.items = [{ productId: first.productId, quantity: first.quantity }];
+    workOrder.allocations = first.allocations;
+    workOrder.plannedStartDate = first.allocations[0]?.date ?? workOrder.plannedStartDate;
+    workOrder.plannedEndDate = first.allocations.at(-1)?.date ?? workOrder.plannedEndDate;
+    rest.forEach((piece) => {
+      splitWorkOrders.push({
+        id: crypto.randomUUID(),
+        orderId: workOrder.orderId,
+        status: running ? "READY" : status,
+        assigneeId: workOrder.assigneeId,
+        lineId: workOrder.lineId,
+        quantity: piece.quantity,
+        items: [{ productId: piece.productId, quantity: piece.quantity }],
+        allocations: piece.allocations,
+        issuedAt: workOrder.issuedAt,
+        plannedStartDate: piece.allocations[0]?.date ?? workOrder.plannedStartDate,
+        plannedEndDate: piece.allocations.at(-1)?.date ?? workOrder.plannedEndDate,
+        startedAt: running ? null : workOrder.startedAt,
+        completedAt: status === "COMPLETED" ? workOrder.completedAt : null,
+      });
+    });
+    changed = true;
+  }
+  db.workOrders.push(...splitWorkOrders);
   const firstEvent = [...db.histories.map((item) => item.at), ...db.orders.map((order) => order.createdAt)].sort()[0] ?? new Date().toISOString();
   let lastNo = Math.max(0, ...db.users.map((user) => Number(user.accountNo?.slice(3)) || 0));
   db.users.forEach((user) => {
@@ -1088,9 +1188,6 @@ function expireSentQuotations(db: Database): boolean {
     if (quote.status !== "SENT" || quote.validUntil.slice(0, 10) >= today) return;
     quote.status = "EXPIRED";
     quote.updatedAt = now;
-    quote.plans.forEach((plan) => {
-      if (plan.status === "ACTIVE") plan.status = "EXPIRED";
-    });
     changed = true;
   });
   return changed;

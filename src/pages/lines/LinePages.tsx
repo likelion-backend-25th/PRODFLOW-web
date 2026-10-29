@@ -36,8 +36,8 @@ export function LineListPage() {
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-4">
         <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 라인</p><p className="mt-2 text-2xl font-semibold">{db.lines.length}개</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">가동중</p><p className="mt-2 text-2xl font-semibold">{running}개</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">가동가능</p><p className="mt-2 text-2xl font-semibold">{available}개</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">가동 중</p><p className="mt-2 text-2xl font-semibold">{running}개</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">가동 가능</p><p className="mt-2 text-2xl font-semibold">{available}개</p></section>
         <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">점검·고장</p><p className="mt-2 text-2xl font-semibold">{stopped}개</p></section>
       </div>
       <div className="mt-4 grid gap-4 md:grid-cols-3">

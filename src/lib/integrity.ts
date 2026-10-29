@@ -2,7 +2,7 @@ import { depositTarget, orderQuantity, orderTotal, paymentStatusOf, productKey }
 import { addWorkingDays, factoryCapacity, isWorkingDay, occupiesFactory } from "@/lib/schedule.ts";
 import type { Database, OrderStatus, WorkOrderStatus } from "@/types/domain.ts";
 
-const producedAll: OrderStatus[] = ["PACKING", "PACKED", "READY_TO_SHIP", "SHIPPING", "COMPLETED"];
+const producedAll: OrderStatus[] = ["PACKING", "READY_TO_SHIP", "SHIPPING", "COMPLETED"];
 
 function workOrdersMatchOrder(status: OrderStatus, active: { status: WorkOrderStatus }[]): boolean {
   const open = active.filter((item) => item.status !== "COMPLETED");
@@ -48,7 +48,9 @@ export function integrityIssues(db: Database): string[] {
   for (const order of db.orders) {
     const tag = order.orderNo;
     const quantity = orderQuantity(order.lines);
-    const total = orderTotal(order.lines);
+    const total = orderTotal(order.lines, order.vatIncluded);
+    const confirmation = order.status === "CANCELLED" ? "CANCELLED" : order.status === "WAITING" ? "PENDING" : "CONFIRMED";
+    if (order.confirmationStatus !== confirmation) issues.push(`${tag}: 확정 표시가 진행 상태와 맞지 않습니다.`);
     if (!clientIds.has(order.clientId)) issues.push(`${tag}: 없는 거래처를 참조합니다.`);
     order.lines.forEach((line) => {
       if (!productIds.has(line.productId)) issues.push(`${tag}: 없는 품목을 참조합니다.`);
@@ -123,6 +125,9 @@ export function integrityIssues(db: Database): string[] {
       issues.push(`${tag}: 일자별 수량 합(${allocated})이 지시 수량(${workOrder.quantity})과 다릅니다.`);
     }
     const itemQty = (workOrder.items ?? []).reduce((sum, item) => sum + item.quantity, 0);
+    if (workOrder.status !== "CANCELLED" && (workOrder.items ?? []).length !== 1) {
+      issues.push(`${tag}: 작업지시에는 품목이 하나여야 합니다.`);
+    }
     if (workOrder.status !== "CANCELLED" && itemQty !== workOrder.quantity) {
       issues.push(`${tag}: 품목 수량 합(${itemQty})이 지시 수량(${workOrder.quantity})과 다릅니다.`);
     }

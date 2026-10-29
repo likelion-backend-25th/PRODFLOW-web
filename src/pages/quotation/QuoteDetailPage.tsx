@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { Calendar, Check } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
+import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { Badge, Button } from "@/components/ui.tsx";
-import { todayISO } from "@/lib/dates.ts";
+import { cn } from "@/lib/cn.ts";
+import { parseISO, todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { quotationStatusLabel, quotationStatusTone } from "@/lib/labels.ts";
 import { depositTarget, formatWon, lineAmount, orderQuantity, orderTotal } from "@/lib/money.ts";
-import { recalculateQuotation, setQuotationStatus } from "@/lib/workflow.ts";
+import { clientFullAddress, previewDuePlan, previewSchedule, quoteNotBefore, recalculateQuotation, setQuotationStatus } from "@/lib/workflow.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
@@ -18,16 +21,43 @@ export function QuoteDetailPage() {
   const quote = db.quotations.find((item) => item.id === quotationId);
   const [open, setOpen] = useState(false);
   const [due, setDue] = useState(quote?.requestedDueDate ?? "");
+  const [dueOpen, setDueOpen] = useState(false);
+  const dueRef = useRef<HTMLDivElement>(null);
+  const quantityForPreview = quote?.lines.reduce((sum, line) => sum + line.quantity, 0) ?? 0;
+  const scheduleResult = useMemo(() => {
+    if (!open || quantityForPreview <= 0) return null;
+    try {
+      return previewSchedule(quantityForPreview, undefined, quoteNotBefore());
+    } catch (reason: unknown) {
+      return reason instanceof Error ? reason.message : "납기를 계산하지 못했습니다.";
+    }
+  }, [db, open, quantityForPreview]);
+  const earliest = scheduleResult && typeof scheduleResult !== "string" ? scheduleResult.earliestDueDate : null;
+  const duePlan = useMemo(() => {
+    if (!due || !earliest || due < earliest) return null;
+    try {
+      return previewDuePlan(quantityForPreview, due, quoteNotBefore());
+    } catch {
+      return null;
+    }
+  }, [db, due, earliest, quantityForPreview]);
+  useEffect(() => {
+    if (!dueOpen) return;
+    function close(event: MouseEvent) {
+      if (!dueRef.current?.contains(event.target as Node)) setDueOpen(false);
+    }
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [dueOpen]);
   if (!quote) return <p>견적서를 찾을 수 없습니다.</p>;
 
   const client = db.clients.find((item) => item.id === quote.clientId);
   const author = db.users.find((item) => item.id === quote.userId);
   const order = db.orders.find((item) => item.quotationId === quote.id && item.status !== "CANCELLED");
-  const total = orderTotal(quote.lines);
-  const supply = quote.lines.reduce((sum, line) => sum + supplyOf(line), 0);
-  const active = quote.plans.find((plan) => plan.status === "ACTIVE");
-  const history = quote.plans.filter((plan) => plan.status === "RECALCULATED");
+  const total = orderTotal(quote.lines, quote.vatIncluded);
+  const supply = quote.lines.reduce((sum, line) => sum + supplyOf(line, quote.vatIncluded), 0);
   const canChange = quote.status === "SENT" && canManageOrders(role);
+  const dueTooSoon = Boolean(due && earliest && due < earliest);
   const deposit = depositTarget(total);
   const dueToday = quote.estimatedDueDate.slice(0, 10) === todayISO();
 
@@ -78,7 +108,7 @@ export function QuoteDetailPage() {
           <Field label="이메일" value={client?.taxEmail || "-"} />
           <div className="sm:col-span-2">
             <dt className="text-xs text-muted">회사 주소</dt>
-            <dd className="mt-1">{client?.address || "-"}</dd>
+            <dd className="mt-1">{client ? clientFullAddress(client) : "-"}</dd>
           </div>
         </dl>
       </section>
@@ -112,7 +142,7 @@ export function QuoteDetailPage() {
                     </td>
                     <td className="px-3 text-right tabular-nums">{line.quantity.toLocaleString("ko-KR")}개</td>
                     <td className="px-3 text-right tabular-nums">{formatWon(line.unitPrice)}</td>
-                    <td className="px-5 text-right font-semibold tabular-nums">{formatWon(supplyOf(line))}</td>
+                    <td className="px-5 text-right font-semibold tabular-nums">{formatWon(supplyOf(line, quote.vatIncluded))}</td>
                   </tr>
                 );
               })}
@@ -140,7 +170,7 @@ export function QuoteDetailPage() {
           <h2 className="font-semibold">납기</h2>
           <div className="flex flex-wrap items-center gap-2">
             {dueToday ? <span className="rounded-full bg-primary-soft px-3 py-1 text-xs font-semibold text-primary">오늘 납기</span> : null}
-            {canChange ? <Button tone="ghost" onClick={() => { setDue(quote.requestedDueDate); setOpen(true); }}>납기 재산정</Button> : null}
+            {canChange ? <Button tone="ghost" onClick={() => { setDue(quote.requestedDueDate); setOpen((value) => !value); }}>{open ? "재산정 닫기" : "납기 재산정"}</Button> : null}
             {canChange && user ? <Button tone="ghost" onClick={() => act(() => setQuotationStatus(quote.id, "REJECTED", user), "견적을 거절했습니다.")}>거절</Button> : null}
             {canChange && user ? <Button tone="ghost" className="text-danger" onClick={() => act(() => setQuotationStatus(quote.id, "CANCELLED", user), "견적을 취소했습니다.")}>취소</Button> : null}
           </div>
@@ -149,43 +179,99 @@ export function QuoteDetailPage() {
           <Field label="희망 납기" value={quote.requestedDueDate} />
           <Field label="예상 납기" value={quote.estimatedDueDate} />
           <Field label="유효기간" value={quote.validUntil} />
-          <Field label="생산 시작" value={active?.plannedStartDate ?? "-"} />
-          <Field label="생산 완료" value={active?.plannedEndDate ?? "-"} />
+          <Field label="생산 시작" value={quote.plannedStartDate} />
+          <Field label="생산 완료" value={quote.plannedEndDate} />
           <Field label="작성" value={author?.name ?? "-"} />
         </dl>
         <p className="mt-4 text-sm text-muted">이 일정은 견적을 낸 날의 참고입니다. 자리를 잡아 두지 않으며, 수주 등록 때 다시 계산합니다.</p>
-        {history.length > 0 ? (
-          <details className="mt-3 text-sm">
-            <summary className="cursor-pointer text-muted">이전 납기 {history.length}건</summary>
-            <ul className="mt-2 space-y-1 text-muted">
-              {history.map((plan) => <li key={plan.id}>{plan.estimatedDueDate} · {plan.plannedStartDate} ~ {plan.plannedEndDate}</li>)}
-            </ul>
-          </details>
-        ) : null}
-      </section>
-
-      {open ? (
-        <div className="fixed inset-0 z-30 grid place-items-center bg-black/30 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-5">
-            <h2 className="text-lg font-semibold">납기 재산정</h2>
-            <p className="mt-1 text-sm text-muted">예상 납기와 임시 계획만 바꿉니다. 품목과 단가는 그대로입니다.</p>
-            <label className="mt-4 block text-sm">희망 납기
-              <input type="date" className="mt-1 h-10 w-full rounded-lg border border-line px-3" value={due} onChange={(event) => setDue(event.target.value)} />
-            </label>
+        {open && canChange ? (
+          <div className="mt-4 border-t border-line pt-4">
+            <p className="text-sm text-muted">하늘색 날짜만 약속할 수 있습니다. 오늘 등록한다고 보고, 생산은 오늘부터 3일 뒤보다 앞에 두지 않습니다. 그 날이 주말이나 휴일이면 다음 생산일부터 잡습니다. 저장하면 희망 납기, 예상 납기, 생산 시작·완료만 덮어쓰고 이전 날짜는 남기지 않습니다.</p>
+            {scheduleResult && typeof scheduleResult !== "string" ? (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary-soft px-3 py-2.5">
+                <div>
+                  <p className="text-xs font-semibold text-primary">가장 빠른 납기</p>
+                  <p className="mt-0.5 text-base font-bold">{labelDate(scheduleResult.earliestDueDate)}</p>
+                </div>
+                <button
+                  type="button"
+                  className="inline-flex h-9 items-center gap-1 rounded-lg bg-white px-3 text-sm font-semibold text-primary disabled:text-muted"
+                  disabled={due === scheduleResult.earliestDueDate}
+                  onClick={() => { setDue(scheduleResult.earliestDueDate); setDueOpen(false); }}
+                >
+                  {due === scheduleResult.earliestDueDate ? <><Check size={15} />선택됨</> : "이 날짜로 선택"}
+                </button>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm font-semibold text-warning">{typeof scheduleResult === "string" ? scheduleResult : "납기를 계산하지 못했습니다."}</p>
+            )}
+            <div className="relative mt-4 max-w-sm" ref={dueRef}>
+              <span className="text-sm font-semibold">희망 납기</span>
+              <button
+                type="button"
+                className={cn("mt-1 flex h-11 w-full items-center gap-2 rounded-lg border bg-white px-3 text-left text-sm", dueTooSoon ? "border-warning" : "border-line")}
+                onClick={() => setDueOpen((value) => !value)}
+              >
+                <Calendar size={16} className="shrink-0 text-muted" />
+                <span className={due ? "font-semibold" : "text-muted"}>{due ? labelDate(due) : "날짜 선택"}</span>
+              </button>
+              {dueOpen ? (
+                <div className="absolute z-20 mt-1 w-full min-w-[280px]">
+                  <DueDateCalendar
+                    value={due}
+                    earliest={earliest}
+                    ready={quantityForPreview > 0}
+                    emptyHint="수량을 확인하면 색이 표시됩니다."
+                    onChange={(iso) => { setDue(iso); setDueOpen(false); }}
+                  />
+                </div>
+              ) : null}
+              <p className={`mt-1 text-xs ${dueTooSoon ? "font-semibold text-warning" : "text-muted"}`}>
+                {dueTooSoon && earliest ? `이 날은 불가합니다. 가장 빠른 날은 ${labelDate(earliest)}입니다.` : duePlan ? "가능한 납기입니다." : "달력의 하늘색 날짜를 고르세요."}
+              </p>
+            </div>
+            {duePlan ? (
+              <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                <div className="rounded-lg bg-canvas px-3 py-2">
+                  <p className="text-xs text-muted">생산 시작</p>
+                  <p className="mt-1 text-sm font-semibold">{labelDate(duePlan.plannedStartDate)}</p>
+                </div>
+                <div className="rounded-lg bg-canvas px-3 py-2">
+                  <p className="text-xs text-muted">생산 완료</p>
+                  <p className="mt-1 text-sm font-semibold">{labelDate(duePlan.plannedEndDate)}</p>
+                </div>
+                <div className="rounded-lg bg-canvas px-3 py-2">
+                  <p className="text-xs text-muted">희망 납기</p>
+                  <p className="mt-1 text-sm font-semibold">{labelDate(due)}</p>
+                </div>
+              </div>
+            ) : null}
             <div className="mt-4 flex justify-end gap-2">
-              <Button tone="ghost" onClick={() => setOpen(false)}>닫기</Button>
-              <Button onClick={() => act(() => recalculateQuotation(quote.id, due), "임시 계획을 재산정했습니다.")}>재산정</Button>
+              <Button tone="ghost" onClick={() => { setOpen(false); setDueOpen(false); }}>닫기</Button>
+              <Button
+                disabled={!duePlan || (due === quote.requestedDueDate && due === quote.estimatedDueDate && duePlan.plannedStartDate === quote.plannedStartDate && duePlan.plannedEndDate === quote.plannedEndDate)}
+                onClick={() => act(() => recalculateQuotation(quote.id, due), "납기를 다시 계산해 저장했습니다.")}
+              >이 날짜로 저장</Button>
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </section>
     </div>
   );
 }
 
-function supplyOf(line: { quantity: number; unitPrice: number; vatIncluded: boolean }) {
-  const amount = lineAmount(line);
-  return line.vatIncluded ? Math.round(amount / 1.1) : line.quantity * line.unitPrice;
+const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+
+function labelDate(iso: string): string {
+  const date = parseISO(iso);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}.${month}.${day} (${weekdays[date.getDay()]})`;
+}
+
+function supplyOf(line: { quantity: number; unitPrice: number }, vatIncluded: boolean) {
+  const amount = lineAmount(line, vatIncluded);
+  return vatIncluded ? Math.round(amount / 1.1) : line.quantity * line.unitPrice;
 }
 
 function Field({ label, value }: { label: string; value: string }) {

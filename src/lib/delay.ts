@@ -10,7 +10,7 @@ function daysBetween(from: string, to: string): number {
   return Math.round((parseISO(to).getTime() - parseISO(from).getTime()) / 86_400_000);
 }
 
-const beforeShipping: Order["status"][] = ["WAITING", "CONFIRMED", "IN_PRODUCTION", "ON_HOLD", "PACKING", "PACKED", "READY_TO_SHIP"];
+const beforeShipping: Order["status"][] = ["WAITING", "CONFIRMED", "IN_PRODUCTION", "ON_HOLD", "PACKING", "READY_TO_SHIP"];
 const producing: Order["status"][] = ["CONFIRMED", "IN_PRODUCTION", "ON_HOLD"];
 
 export function delayOf(order: Order, workOrder: WorkOrder | undefined, today: string): DelaySignal | null {

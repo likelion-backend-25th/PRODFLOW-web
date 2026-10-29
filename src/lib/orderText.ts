@@ -34,7 +34,6 @@ export function workItems(products: Product[], items: Array<{ productId: string;
     productId: item.productId,
     quantity: item.quantity,
     unitPrice: 0,
-    vatIncluded: true,
   })));
 }
 

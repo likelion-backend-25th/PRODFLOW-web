@@ -9,7 +9,7 @@ import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, reg
 import type { OrderStatus } from "@/types/domain.ts";
 import { delayOf, delayTone, workOrdersOf } from "@/lib/delay.ts";
 import { depositTarget, formatWon, lineAmount, orderQuantity, orderTotal } from "@/lib/money.ts";
-import { DueDateError, cancelOrder, completeDelivery, completePacking, markReadyToShip, recordPayment, shipOrder, updateOrderQuantities, updateShippingAddress } from "@/lib/workflow.ts";
+import { DueDateError, cancelOrder, clientFullAddress, completeDelivery, markReadyToShip, recordPayment, shipOrder, updateOrderQuantities, updateShippingAddress } from "@/lib/workflow.ts";
 import { canManageOrders, canProduce, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
@@ -23,12 +23,14 @@ export function OrderDetailPage() {
   const [carrier, setCarrier] = useState("CJ대한통운");
   const [trackingNo, setTrackingNo] = useState("");
   const [quantities, setQuantities] = useState<Record<string, number>>({});
-  const [prices, setPrices] = useState<Record<string, number>>({});
+  const [editingItems, setEditingItems] = useState(false);
   const [laterDue, setLaterDue] = useState("");
   const [trackingOpen, setTrackingOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   if (!order || !user) return <p>수주를 찾을 수 없습니다.</p>;
+  const currentOrder = order;
+  const actor = user;
 
   const client = db.clients.find((item) => item.id === order.clientId);
   const workOrders = workOrdersOf(db.workOrders, order.id);
@@ -36,13 +38,13 @@ export function OrderDetailPage() {
   const delay = delayOf(order, workOrders.find((item) => item.status === "READY" && !item.assigneeId) ?? workOrders[0], todayISO());
   const qtyMap = Object.fromEntries(order.lines.map((line) => [line.id, quantities[line.id] ?? line.quantity]));
   const locked = order.status === "COMPLETED" || order.status === "CANCELLED";
-  const canEditQty = !locked && !["PACKING", "PACKED", "READY_TO_SHIP", "SHIPPING"].includes(order.status);
+  const canEditQty = !locked && !["PACKING", "READY_TO_SHIP", "SHIPPING"].includes(order.status);
   const editing = editingItems && canEditQty && canManageOrders(user.role);
   const notice = db.notifications.find((item) => item.orderId === order.id && item.success);
   const quote = db.quotations.find((item) => item.id === order.quotationId);
   const shownLines = order.lines.map((line) => ({ ...line, quantity: editing ? (qtyMap[line.id] ?? line.quantity) : line.quantity }));
-  const supply = shownLines.reduce((sum, line) => sum + supplyOf(line), 0);
-  const shownTotal = orderTotal(shownLines);
+  const supply = shownLines.reduce((sum, line) => sum + supplyOf(line, order.vatIncluded), 0);
+  const shownTotal = orderTotal(shownLines, order.vatIncluded);
   const deposit = depositTarget(shownTotal);
   const balance = Math.max(0, shownTotal - order.paidAmount);
   const assignee = db.users.find((item) => item.id === workOrders.find((work) => work.assigneeId)?.assigneeId);
@@ -50,7 +52,7 @@ export function OrderDetailPage() {
   const dueToday = order.dueDate.slice(0, 10) === todayISO();
   const step = progressIndex(order.status);
   const registrar = orderHistory.find((item) => item.fromStatus === "NONE")?.actorName;
-  const depositLabel = order.paymentStatus === "PARTIAL" ? "계약금 입금" : order.paymentStatus === "PAID" ? "입금완료" : "미입금";
+  const depositLabel = order.paymentStatus === "PARTIAL" ? "계약금 입금" : order.paymentStatus === "PAID" ? "전액 입금" : "미입금";
 
   function act(action: () => void, success: string) {
     try {
@@ -64,12 +66,12 @@ export function OrderDetailPage() {
   }
 
   function saveQuantities(acceptLaterDue: boolean) {
-    if (order.lines.some((line) => (qtyMap[line.id] ?? line.quantity) > line.quantity)) {
+    if (currentOrder.lines.some((line) => (qtyMap[line.id] ?? line.quantity) > line.quantity)) {
       show("수량은 줄일 수만 있습니다. 늘리려면 견적을 다시 작성하세요.");
       return;
     }
     try {
-      updateOrderQuantities(order.id, qtyMap, acceptLaterDue, user);
+      updateOrderQuantities(currentOrder.id, qtyMap, acceptLaterDue, actor);
       show(acceptLaterDue ? `${laterDue}로 납기를 변경했습니다.` : "수량을 수정하고 일정을 다시 계산했습니다.");
       setQuantities({});
       setLaterDue("");
@@ -109,7 +111,7 @@ export function OrderDetailPage() {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-semibold">{order.orderNo}</h2>
-              <Badge className={registrationTone(order.status)}>{registrationLabel(order.status)}</Badge>
+              <Badge className={registrationTone(order.confirmationStatus)}>{registrationLabel(order.confirmationStatus)}</Badge>
               <Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge>
               <Badge className={paymentTone(order.paymentStatus)}>{depositLabel}</Badge>
             </div>
@@ -149,7 +151,7 @@ export function OrderDetailPage() {
           <Field label="연락처" value={client?.phone || "-"} />
           <div className="sm:col-span-3">
             <dt className="text-xs text-muted">회사 주소</dt>
-            <dd className="mt-1">{client?.address || "-"}</dd>
+            <dd className="mt-1">{client ? clientFullAddress(client) : "-"}</dd>
           </div>
         </dl>
       </Card>
@@ -187,7 +189,7 @@ export function OrderDetailPage() {
                       ) : line.quantity.toLocaleString("ko-KR")}
                     </td>
                     <td className="px-3 text-right tabular-nums">{line.unitPrice.toLocaleString("ko-KR")}</td>
-                    <td className="px-5 text-right font-semibold tabular-nums">{formatWon(supplyOf({ ...line, quantity: nextQuantity }))}</td>
+                    <td className="px-5 text-right font-semibold tabular-nums">{formatWon(supplyOf({ ...line, quantity: nextQuantity }, order.vatIncluded))}</td>
                   </tr>
                 );
               })}
@@ -196,7 +198,7 @@ export function OrderDetailPage() {
         </div>
         <div className="flex flex-wrap items-end justify-between gap-4 px-5 py-4">
           <div>
-            <p className="rounded-full bg-primary-soft px-3 py-1 text-xs font-semibold text-primary">{order.lines.every((line) => line.vatIncluded) ? "VAT 포함" : "VAT 별도 청구"}</p>
+            <p className="rounded-full bg-primary-soft px-3 py-1 text-xs font-semibold text-primary">{order.vatIncluded ? "VAT 포함" : "VAT 별도 청구"}</p>
             {editing ? (
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button tone="ghost" onClick={() => saveQuantities(false)}>수량 저장</Button>
@@ -299,8 +301,7 @@ export function OrderDetailPage() {
         {order.trackingNo ? <Button tone="ghost" className="mt-3" onClick={() => setTrackingOpen((open) => !open)}>배송조회</Button> : null}
         {trackingOpen ? <p className="mt-3 text-sm">택배넷 샌드박스 예시 응답: {order.carrier} {order.trackingNo} / {order.status === "COMPLETED" ? "배송완료" : "간선상차"}</p> : null}
         <div className="mt-4 space-y-2">
-          {canProduce(user.role) && order.status === "PACKING" ? <Button onClick={() => act(() => completePacking(order.id, user), "포장 완료로 변경했습니다.")}>포장 완료</Button> : null}
-          {canManageOrders(user.role) && order.status === "PACKED" ? <Button onClick={() => act(() => markReadyToShip(order.id, user), "출고대기로 변경했습니다.")}>출고 대기로</Button> : null}
+          {(canProduce(user.role) || canManageOrders(user.role)) && order.status === "PACKING" ? <Button onClick={() => act(() => markReadyToShip(order.id, user), "출고대기로 변경했습니다.")}>출고 대기로</Button> : null}
           {canManageOrders(user.role) && order.status === "READY_TO_SHIP" ? (
             <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
               <TextField label="택배사" value={carrier} onChange={(event) => setCarrier(event.target.value)} />
@@ -392,14 +393,14 @@ function statusText(value: string): string {
 function progressIndex(status: OrderStatus): number {
   if (status === "COMPLETED") return 4;
   if (status === "READY_TO_SHIP" || status === "SHIPPING") return 3;
-  if (status === "PACKING" || status === "PACKED") return 2;
+  if (status === "PACKING") return 2;
   if (status === "CONFIRMED" || status === "IN_PRODUCTION" || status === "ON_HOLD") return 1;
   return 0;
 }
 
-function supplyOf(line: { quantity: number; unitPrice: number; vatIncluded: boolean }) {
-  const amount = lineAmount(line);
-  return line.vatIncluded ? Math.round(amount / 1.1) : line.quantity * line.unitPrice;
+function supplyOf(line: { quantity: number; unitPrice: number }, vatIncluded: boolean) {
+  const amount = lineAmount(line, vatIncluded);
+  return vatIncluded ? Math.round(amount / 1.1) : line.quantity * line.unitPrice;
 }
 
 function Field({ label, value }: { label: string; value: string }) {
