@@ -49,6 +49,8 @@ export interface Client {
   createdAt: string;
 }
 
+export type ProductStatus = "AVAILABLE" | "DISCONTINUED";
+
 export interface Product {
   id: string;
   modelCode: string;
@@ -59,6 +61,7 @@ export interface Product {
   designImageUrl: string;
   drawingPdfName?: string;
   drawingPdfUrl?: string;
+  status: ProductStatus;
   createdAt: string;
   updatedAt: string;
   createdByName: string;

@@ -2,7 +2,7 @@ import { readDb, updateDb } from "@/lib/db.ts";
 import { addDays, nowStamp, todayISO } from "@/lib/dates.ts";
 import { depositTarget, digitsOnly, nextModelCode, orderQuantity, orderTotal, paymentStatusOf, productKey } from "@/lib/money.ts";
 import { capacityUntil, mergeAllocations, packJobs, scheduleBackward, scheduleQuantity, splitProductsAcrossLines, type OccupyingOrder, type PackJob, type ScheduleResult } from "@/lib/schedule.ts";
-import type { ConfirmationStatus, Database, LineStatus, NotifyChannel, Order, OrderLine, OrderStatus, Quotation, Role, User, WorkOrder } from "@/types/domain.ts";
+import type { ConfirmationStatus, Database, LineStatus, NotifyChannel, Order, OrderLine, OrderStatus, ProductStatus, Quotation, Role, User, WorkOrder } from "@/types/domain.ts";
 
 export class DueDateError extends Error {
   earliestDue: string;
@@ -1031,12 +1031,24 @@ export function saveProduct(input: {
       designImageUrl: input.designImageUrl,
       drawingPdfName: input.drawingPdfName ?? "",
       drawingPdfUrl: input.drawingPdfUrl ?? "",
+      status: "AVAILABLE",
       createdAt: nowStamp(),
       updatedAt: nowStamp(),
       createdByName: input.actorName,
     });
   });
   return savedId;
+}
+
+export function setProductAvailability(id: string, status: ProductStatus): void {
+  updateDb((db) => {
+    const product = db.products.find((item) => item.id === id);
+    if (!product) throw new Error("품목을 찾을 수 없습니다.");
+    if (product.status === status) return;
+    // 생산 중단은 새 견적 후보에서만 빼고, 생산 가능으로 되돌리면 다시 후보에 넣는다. 저장된 견적과 수주 단가는 그대로다.
+    product.status = status;
+    product.updatedAt = nowStamp();
+  });
 }
 
 export function saveLine(input: { id?: string; name: string; dailyCapacity: number; reason?: string; actorId?: string }): void {

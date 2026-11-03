@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ArrowLeft, Banknote, Check, ChevronRight, ClipboardList, FileUp, Info, Package, Pencil, Plus, Wallet } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, Banknote, Check, ChevronDown, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, Plus, Wallet } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Badge, Button } from "@/components/ui.tsx";
 import { localDate, todayISO } from "@/lib/dates.ts";
@@ -7,18 +7,38 @@ import { orderStatusLabel, orderStatusTone } from "@/lib/labels.ts";
 import { productTitle } from "@/lib/orderText.ts";
 import { useDb } from "@/lib/db.ts";
 import { formatWon, lineAmount, orderTotal } from "@/lib/money.ts";
-import { saveProduct } from "@/lib/workflow.ts";
+import { saveProduct, setProductAvailability } from "@/lib/workflow.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
+import type { ProductStatus } from "@/types/domain.ts";
 
 export function ProductListPage() {
   const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
+  const show = useToastStore((state) => state.show);
+  const canWrite = canManageOrders(role);
   const [keyword, setKeyword] = useState("");
-  const rows = db.products.filter((product) => `${product.modelCode} ${product.productName} ${product.modelName} ${product.description}`.includes(keyword.trim()));
-  const [selectedId, setSelectedId] = useState(rows[0]?.id ?? "");
-  const selected = db.products.find((product) => product.id === selectedId) ?? rows[0];
+  const [tab, setTab] = useState<"available" | "stopped">("available");
+  const matched = db.products.filter((product) => `${product.modelCode} ${product.productName} ${product.modelName} ${product.description}`.includes(keyword.trim()));
+  const available = matched.filter((product) => product.status !== "DISCONTINUED");
+  const stopped = matched.filter((product) => product.status === "DISCONTINUED");
+  const rows = tab === "available" ? available : stopped;
+  const [selectedId, setSelectedId] = useState("");
+  const selected = rows.find((product) => product.id === selectedId) ?? rows[0];
   const related = (productId: string) => db.orders.filter((order) => order.lines.some((line) => line.productId === productId) && order.status !== "CANCELLED");
+  function moveProduct(id: string) {
+    const product = db.products.find((item) => item.id === id);
+    if (!product) return;
+    const next = product.status === "DISCONTINUED" ? "AVAILABLE" : "DISCONTINUED";
+    try {
+      setProductAvailability(id, next);
+      setSelectedId(id);
+      setTab(next === "DISCONTINUED" ? "stopped" : "available");
+      show(next === "DISCONTINUED" ? "생산 중단으로 바꿨습니다. 이미 발행한 견적과 수주는 그대로입니다." : "생산 가능으로 바꿨습니다.");
+    } catch (error: unknown) {
+      show(error instanceof Error ? error.message : "상태를 바꾸지 못했습니다.");
+    }
+  }
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -31,15 +51,21 @@ export function ProductListPage() {
       <div className="mt-4 grid gap-3 md:grid-cols-3">
         <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 등록 품목</p><p className="mt-2 text-2xl font-semibold">{db.products.length}종</p></section>
         <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">이번 달 생산 품목</p><p className="mt-2 text-2xl font-semibold">{new Set(db.orders.flatMap((order) => order.lines.map((line) => line.productId))).size}종</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">검색 결과</p><p className="mt-2 text-2xl font-semibold">{rows.length}종</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">검색 결과</p><p className="mt-2 text-2xl font-semibold">{matched.length}종</p></section>
       </div>
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <section className="overflow-hidden rounded-xl border border-line bg-white">
-          <div className="flex items-center justify-between px-5 py-4"><h2 className="font-semibold">등록된 생산품목</h2><span className="text-sm text-muted">총 {rows.length}종</span></div>
-          <div className="px-5 pb-3"><input className="h-10 w-full rounded-lg border border-line px-3" value={keyword} placeholder="모델코드, 품목명, 기종명, 설명 검색" onChange={(event) => setKeyword(event.target.value)} /></div>
+          <div className="flex items-end justify-between gap-3 border-b border-line px-5 pt-4">
+            <div className="flex gap-4 text-sm">
+              <button type="button" className={tab === "available" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => setTab("available")}>등록된 생산품목 {available.length}</button>
+              <button type="button" className={tab === "stopped" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => setTab("stopped")}>생산 중단 품목 {stopped.length}</button>
+            </div>
+          </div>
+          <div className="px-5 py-3"><input className="h-10 w-full rounded-lg border border-line px-3" value={keyword} placeholder="모델코드, 품목명, 기종명, 설명 검색" onChange={(event) => setKeyword(event.target.value)} /></div>
           <table className="w-full text-left text-sm">
             <thead className="bg-primary-soft/40 text-muted"><tr><th className="px-5 py-3 font-medium">모델코드</th><th className="py-3 font-medium">품목명</th><th className="py-3 font-medium">기종명</th><th className="py-3 font-medium">설명</th><th className="py-3 font-medium">단가</th><th className="py-3 font-medium">최근 수정</th><th className="py-3 font-medium">상태</th><th className="w-12 py-3 pr-3 font-medium"><span className="sr-only">상세</span></th></tr></thead>
             <tbody>
+              {rows.length === 0 ? <tr><td className="px-5 py-6 text-muted" colSpan={8}>{tab === "available" ? "등록된 생산품목이 없습니다." : "생산 중단 품목이 없습니다."}</td></tr> : null}
               {rows.map((product) => (
                 <tr key={product.id} className={`cursor-pointer border-t border-line ${selected?.id === product.id ? "bg-primary-soft" : ""}`} onClick={() => setSelectedId(product.id)}>
                   <td className="px-5 py-3">{product.modelCode}</td>
@@ -48,7 +74,7 @@ export function ProductListPage() {
                   <td className="max-w-48 truncate">{product.description}</td>
                   <td className="whitespace-nowrap">{formatWon(product.unitPrice)}</td>
                   <td className="whitespace-nowrap">{localDate(product.updatedAt)}</td>
-                  <td><Badge className="bg-slate-100 text-slate-600">생산 가능</Badge></td>
+                  <td><ProductStatusMark status={product.status} canChange={canWrite} onChange={() => moveProduct(product.id)} /></td>
                   <td className="pr-3">
                     <Link
                       to={`/products/${product.id}`}
@@ -72,7 +98,7 @@ export function ProductListPage() {
               <p className="mt-3 text-xs text-muted">{selected.modelCode}</p>
               <p className="text-lg font-semibold">{selected.productName}</p>
               <p className="text-sm text-muted">{selected.modelName}</p>
-              <Badge className="mt-3 bg-slate-100 text-slate-600">생산 가능</Badge>
+              <div className="mt-3"><ProductStatusMark status={selected.status} canChange={canWrite} onChange={() => moveProduct(selected.id)} /></div>
               <p className="mt-3 text-sm">{selected.description}</p>
               <p className="mt-3 font-semibold">{formatWon(selected.unitPrice)}</p>
               {selected.drawingPdfName && selected.drawingPdfUrl ? <a className="mt-2 block text-sm text-primary" href={selected.drawingPdfUrl} download={selected.drawingPdfName}>파일 {selected.drawingPdfName}</a> : null}
@@ -98,10 +124,6 @@ export function ProductListPage() {
 
 const MAX_DRAWING_BYTES = 2 * 1024 * 1024;
 
-function collapsedName(value: string): string {
-  return value.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
 function formatPriceInput(value: string): string {
   const digits = value.replace(/\D/g, "");
   return digits ? Number(digits).toLocaleString("ko-KR") : "";
@@ -125,14 +147,35 @@ function ProductEditor({ productId }: { productId?: string }) {
   const [description, setDescription] = useState(current?.description ?? "");
   const [priceText, setPriceText] = useState(current ? formatPriceInput(String(current.unitPrice)) : "");
   const [codeCheck, setCodeCheck] = useState("");
-  const [nameCheck, setNameCheck] = useState("");
   const [drawingPdfName, setDrawingPdfName] = useState(current?.drawingPdfName ?? "");
   const [drawingPdfUrl, setDrawingPdfUrl] = useState(current?.drawingPdfUrl ?? "");
   const [drawingError, setDrawingError] = useState("");
+  const [deviceOpen, setDeviceOpen] = useState(false);
+  const [deviceDraft, setDeviceDraft] = useState("");
+  const deviceRef = useRef<HTMLDivElement>(null);
   const codeTaken = (code: string) => db.products.some((product) => product.id !== current?.id && product.modelCode.replace(/\s+/g, "").toLowerCase() === code.replace(/\s+/g, "").toLowerCase());
-  const nameTaken = (name: string, device: string) => db.products.some((product) => product.id !== current?.id && collapsedName(product.productName) === collapsedName(name) && collapsedName(product.modelName) === collapsedName(device));
   const devices = [...new Set([...db.products.map((product) => product.modelName.trim()), current?.modelName.trim() ?? ""].filter(Boolean))].sort((left, right) => left.localeCompare(right, "ko"));
+  useEffect(() => {
+    if (!deviceOpen) return;
+    function close(event: MouseEvent) {
+      if (deviceRef.current?.contains(event.target as Node)) return;
+      const typed = deviceDraft.trim();
+      if (typed) setModelName(typed);
+      setDeviceDraft("");
+      setDeviceOpen(false);
+    }
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [deviceOpen, deviceDraft]);
   if (editing && !current) return <p>품목을 찾을 수 없습니다.</p>;
+
+  function pickDevice(name: string) {
+    const next = name.trim();
+    if (!next) return;
+    setModelName(next);
+    setDeviceDraft("");
+    setDeviceOpen(false);
+  }
 
   function checkCode() {
     if (!modelCode.trim()) {
@@ -144,23 +187,6 @@ function ProductEditor({ productId }: { productId?: string }) {
       return false;
     }
     setCodeCheck("사용할 수 있는 모델코드입니다.");
-    return true;
-  }
-
-  function checkName() {
-    if (!productName.trim()) {
-      setNameCheck("품목명을 입력하세요.");
-      return false;
-    }
-    if (!modelName.trim()) {
-      setNameCheck("기종을 선택하세요.");
-      return false;
-    }
-    if (nameTaken(productName, modelName)) {
-      setNameCheck("같은 품목명과 기종의 품목이 있습니다.");
-      return false;
-    }
-    setNameCheck("사용할 수 있는 품목명입니다.");
     return true;
   }
 
@@ -184,8 +210,12 @@ function ProductEditor({ productId }: { productId?: string }) {
             show(!modelCode.trim() ? "모델코드를 입력하세요." : "같은 모델코드가 있습니다.");
             return;
           }
-          if (!checkName()) {
-            show(!productName.trim() ? "품목명을 입력하세요." : !modelName.trim() ? "기종을 선택하세요." : "같은 품목명과 기종의 품목이 있습니다.");
+          if (!productName.trim()) {
+            show("품목명을 입력하세요.");
+            return;
+          }
+          if (!modelName.trim()) {
+            show("기종을 선택하세요.");
             return;
           }
           if (priceText.trim() === "" || !Number.isInteger(unitPrice) || unitPrice < 0) {
@@ -240,36 +270,51 @@ function ProductEditor({ productId }: { productId?: string }) {
             {codeCheck ? <p className={`mt-1 text-xs ${codeCheck.startsWith("사용") ? "text-success" : "text-danger"}`}>{codeCheck}</p> : null}
             <label className="mt-5 block text-sm font-semibold">
               품목명 <span className="text-danger">*</span>
-              <span className="mt-2 flex gap-2">
-                <input
-                  className="h-10 min-w-0 flex-1 rounded-lg border border-line px-3 font-normal"
-                  value={productName}
-                  placeholder="예: 정밀 브러쉬 8형"
-                  onChange={(event) => {
-                    setProductName(event.target.value);
-                    setNameCheck("");
-                  }}
-                />
-                <Button type="button" tone="ghost" onClick={checkName}>중복 확인</Button>
-              </span>
+              <input
+                className="mt-2 h-10 w-full rounded-lg border border-line px-3 font-normal"
+                value={productName}
+                placeholder="예: 정밀 브러쉬 8형"
+                onChange={(event) => setProductName(event.target.value)}
+              />
             </label>
-            <p className="mt-2 text-xs text-muted">같은 품목명이 있는지 확인하세요. 규격이 다르면 이름에 규격이나 모델을 함께 입력해 주세요.</p>
-            {nameCheck ? <p className={`mt-1 text-xs ${nameCheck.startsWith("사용") ? "text-success" : "text-danger"}`}>{nameCheck}</p> : null}
+            <p className="mt-2 text-xs text-muted">규격이 다르면 이름에 규격이나 모델을 함께 입력해 주세요.</p>
             <div className="mt-5 text-sm font-semibold">
               기종명 <span className="text-danger">*</span>
-              <select
-                className="mt-2 h-10 w-full rounded-lg border border-line bg-white px-3 font-normal"
-                value={modelName}
-                onChange={(event) => {
-                  setModelName(event.target.value);
-                  setNameCheck("");
-                }}
-              >
-                <option value="">기종을 선택하세요</option>
-                {devices.map((device) => <option key={device} value={device}>{device}</option>)}
-              </select>
+              <div className="relative mt-2" ref={deviceRef}>
+                <button type="button" className="flex h-10 w-full items-center justify-between rounded-lg border border-line bg-white px-3 text-left font-normal" onClick={() => setDeviceOpen((open) => !open)}>
+                  <span className={modelName ? "text-ink" : "text-muted"}>{modelName || "기종을 선택하세요"}</span>
+                  <ChevronDown size={16} className="text-muted" />
+                </button>
+                {deviceOpen ? (
+                  <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-line bg-white shadow-lg">
+                    <div className="border-b border-line p-2">
+                      <input
+                        className="h-10 w-full rounded-lg border border-line px-3 text-sm font-normal"
+                        value={deviceDraft}
+                        placeholder="새 기종 입력"
+                        autoFocus
+                        onChange={(event) => setDeviceDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          pickDevice(deviceDraft);
+                        }}
+                      />
+                    </div>
+                    <ul className="max-h-52 overflow-y-auto py-1">
+                      {devices.map((device) => (
+                        <li key={device}>
+                          <button type="button" className={`w-full px-3 py-2 text-left text-sm font-normal hover:bg-primary-soft ${device === modelName ? "bg-primary-soft text-primary" : ""}`} onClick={() => pickDevice(device)}>
+                            {device}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
             </div>
-            <p className="mt-2 text-xs text-muted">등록된 기종 중에서 고르세요.</p>
+            <p className="mt-2 text-xs text-muted">맨 위 칸에 새 기종을 입력하고 Enter를 누르거나, 아래 등록된 기종을 고르세요.</p>
             <label className="mt-5 block text-sm font-semibold">
               품목 설명 <span className="font-normal text-muted">(선택)</span>
               <textarea
@@ -388,6 +433,34 @@ function ProductEditor({ productId }: { productId?: string }) {
   );
 }
 
+function ProductStatusMark({ status, canChange, onChange }: { status: ProductStatus; canChange: boolean; onChange: () => void }) {
+  const stopped = status === "DISCONTINUED";
+  const className = stopped ? "bg-slate-100 text-slate-600" : "bg-primary-soft text-primary";
+  const label = stopped ? "생산 중단" : "생산 가능";
+  if (!canChange) return <Badge className={className}>{label}</Badge>;
+  return (
+    <button type="button" className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold ${className}`} onClick={(event) => { event.stopPropagation(); onChange(); }}>
+      {label}
+    </button>
+  );
+}
+
+function ProductFileWindow({ name, url }: { name: string; url: string }) {
+  const ready = Boolean(name && url);
+  return (
+    <section className="flex h-full w-full flex-col rounded-xl border border-line bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">관련 파일</p>
+          <p className="mt-1 text-xs text-muted">생산에 사용하는 파일입니다.</p>
+        </div>
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary"><FileText size={16} /></span>
+      </div>
+      <p className="mt-4 truncate text-sm">{ready ? name : "올린 파일이 없습니다."}</p>
+    </section>
+  );
+}
+
 function productionFinished(status: string): boolean {
   // 출고대기는 포장이 끝난 뒤라 누적 생산량에 포함한다.
   return status === "PACKING" || status === "READY_TO_SHIP" || status === "SHIPPING" || status === "COMPLETED";
@@ -448,21 +521,27 @@ export function ProductDetailPage() {
         <div className="space-y-4">
         <section className="rounded-xl border border-line bg-white p-5">
           <h2 className="font-semibold">생산품목 정보</h2>
-          <div className="mt-4 flex items-start gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary"><Package size={18} /></span>
-            <div>
-              <p className="text-lg font-semibold">{product.productName}</p>
-              <p className="text-sm text-muted">{[product.modelCode, product.modelName, `${localDate(product.createdAt)} 등록`].filter(Boolean).join(" · ")}</p>
+          <div className="mt-4 flex items-start justify-between gap-6">
+            <div className="min-w-0">
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary"><Package size={18} /></span>
+                <div>
+                  <p className="text-lg font-semibold">{product.productName}</p>
+                  <p className="text-sm text-muted">{[product.modelCode, product.modelName, `${localDate(product.createdAt)} 등록`].filter(Boolean).join(" · ")}</p>
+                </div>
+              </div>
+              <p className="mt-5 text-sm text-muted">설명</p>
+              <p className="mt-1">{product.description || "설명이 없습니다."}</p>
+            </div>
+            <div className="w-full max-w-xs shrink-0">
+              <ProductFileWindow name={product.drawingPdfName ?? ""} url={product.drawingPdfUrl ?? ""} />
             </div>
           </div>
-          <p className="mt-5 text-sm text-muted">설명</p>
-          <p className="mt-1">{product.description || "설명이 없습니다."}</p>
           <div className="mt-5 grid gap-4 border-t border-line pt-4 sm:grid-cols-3">
             <div><p className="text-xs text-muted">기종명</p><p className="mt-1 font-semibold">{product.modelName || "-"}</p></div>
             <div><p className="text-xs text-muted">등록자</p><p className="mt-1 font-semibold">{product.createdByName}</p></div>
             <div><p className="text-xs text-muted">기준 단가 · 부가세 별도</p><p className="mt-1 font-semibold">{formatWon(product.unitPrice)}</p></div>
           </div>
-          {product.drawingPdfName && product.drawingPdfUrl ? <a className="mt-4 inline-block text-sm text-primary" href={product.drawingPdfUrl} download={product.drawingPdfName}>파일 {product.drawingPdfName}</a> : null}
         </section>
         <section className="overflow-hidden rounded-xl border border-line bg-white">
           <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
