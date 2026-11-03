@@ -107,7 +107,8 @@ export function QuoteFormPage() {
     : [];
 
   const productMatches = productQuery.trim()
-    ? db.products.filter((item) => `${item.productName} ${item.modelName} ${item.description}`.toLowerCase().includes(productQuery.trim().toLowerCase())).slice(0, 6)
+    // 생산 중단 품목은 새 견적 후보에서 뺀다. 이미 저장된 견적 줄은 그대로다.
+    ? db.products.filter((item) => item.status !== "DISCONTINUED" && `${item.productName} ${item.modelName} ${item.description}`.toLowerCase().includes(productQuery.trim().toLowerCase())).slice(0, 6)
     : [];
 
   function placeProduct(productId: string, unitPrice: number) {

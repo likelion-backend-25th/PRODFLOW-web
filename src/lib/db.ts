@@ -57,6 +57,7 @@ function product(
     description,
     unitPrice,
     designImageUrl: placeholderImage(label, color),
+    status: "AVAILABLE",
     createdAt: at,
     updatedAt: at,
     createdByName,
@@ -185,6 +186,7 @@ function seed(): Database {
       description: "투명 PC 1.0mm, 무인쇄",
       unitPrice: 4500,
       designImageUrl: placeholderImage("CLEAR", "#12786f"),
+      status: "AVAILABLE",
       createdAt: catalogDay,
       updatedAt: stamp(day(-7), "11:00"),
       createdByName: office.name,
@@ -197,6 +199,7 @@ function seed(): Database {
       description: "자석 링 내장, 무선충전 가능",
       unitPrice: 8900,
       designImageUrl: placeholderImage("MAG", "#0f5f59"),
+      status: "AVAILABLE",
       createdAt: catalogDay,
       updatedAt: catalogDay,
       createdByName: office.name,
@@ -209,6 +212,7 @@ function seed(): Database {
       description: "카드 2장 수납, TPU 범퍼",
       unitPrice: 7200,
       designImageUrl: placeholderImage("CARD", "#1c1f23"),
+      status: "AVAILABLE",
       createdAt: catalogDay,
       updatedAt: catalogDay,
       createdByName: office.name,
@@ -221,6 +225,7 @@ function seed(): Database {
       description: "TPU 0.8mm, 무광",
       unitPrice: 3200,
       designImageUrl: placeholderImage("JELLY", "#667085"),
+      status: "AVAILABLE",
       createdAt: catalogDay,
       updatedAt: catalogDay,
       createdByName: office.name,
@@ -916,6 +921,11 @@ function sampleQuotations(clients: Client[], products: Product[], author: { id: 
 
 function repair(db: Database): boolean {
   let changed = false;
+  db.products.forEach((product) => {
+    if (product.status === "AVAILABLE" || product.status === "DISCONTINUED") return;
+    product.status = "AVAILABLE";
+    changed = true;
+  });
   db.orders.forEach((order) => {
     if ((order.status as string) === "PACKED") {
       order.status = "READY_TO_SHIP";

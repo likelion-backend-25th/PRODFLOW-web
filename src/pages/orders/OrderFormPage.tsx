@@ -158,7 +158,7 @@ export function OrderFormPage() {
   const clientQuery = values.companyName;
   const clientMatches = db.clients.filter((item) => `${item.companyName} ${item.representative} ${item.phone} ${item.contactName}`.toLowerCase().includes(clientQuery.trim().toLowerCase()));
   const productMatches = productQuery.trim()
-    ? db.products.filter((item) => `${item.productName} ${item.modelName} ${item.description}`.toLowerCase().includes(productQuery.trim().toLowerCase())).slice(0, 6)
+    ? db.products.filter((item) => item.status !== "DISCONTINUED" && `${item.productName} ${item.modelName} ${item.description}`.toLowerCase().includes(productQuery.trim().toLowerCase())).slice(0, 6)
     : [];
 
   const amounts = values.lines.map((line) => {
