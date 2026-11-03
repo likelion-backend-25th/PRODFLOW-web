@@ -69,7 +69,7 @@ export function ClientListPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1.5">
           <h1 className="text-[27px] font-bold">거래처 관리</h1>
-          <p className="text-xs text-muted">거래처 정보를 정확하게 관리하고 수주 등록 시간을 줄이세요.</p>
+          <p className="text-xs text-muted">거래처 정보를 정확하게 관리하고, 견적 작성 때 바로 찾으세요.</p>
         </div>
         {canWrite ? (
           <div className="flex gap-2">
@@ -236,10 +236,6 @@ export function ClientListPage() {
                   <Link to={`/clients/${selected.client.id}/edit`} className="inline-flex h-8 items-center rounded-lg border border-line bg-white px-3 text-xs font-medium">
                     정보 수정
                   </Link>
-                  <Link to={`/orders/new?clientId=${selected.client.id}`} className="inline-flex h-8 items-center gap-2 rounded-lg bg-primary px-3 text-xs font-medium text-white">
-                    <Plus size={16} />
-                    수주 등록
-                  </Link>
                 </div>
               ) : null}
               <hr className="border-line" />
@@ -280,7 +276,7 @@ export function ClientListPage() {
               <Info size={18} className="shrink-0 text-primary" />
               <div className="space-y-[3px]">
                 <p className="text-xs font-medium text-primary">수주와 연결되는 거래처 정보</p>
-                <p className="text-[11px] text-muted">수주 등록 시 회사명을 검색하면 연락처와 주소가 자동으로 입력됩니다.</p>
+                <p className="text-[11px] text-muted">견적 작성 시 회사명을 검색하면 연락처와 주소가 자동으로 입력됩니다.</p>
               </div>
             </section>
           </aside>
@@ -400,8 +396,8 @@ export function ClientFormPage() {
           <h1 className="text-[27px] font-bold">{editing ? "거래처 수정" : "거래처 등록"}</h1>
           <p className="text-xs text-muted">
             {editing
-              ? "등록된 거래처 정보를 수정합니다. 변경한 정보는 이후 수주 작성 시 자동으로 입력됩니다."
-              : "새 거래처의 기본 정보를 등록합니다. 등록된 정보는 수주 작성 시 자동으로 입력됩니다."}
+              ? "등록된 거래처 정보를 수정합니다. 변경한 정보는 이후 견적 작성 시 자동으로 입력됩니다."
+              : "새 거래처의 기본 정보를 등록합니다. 등록된 정보는 견적 작성 시 자동으로 입력됩니다."}
           </p>
         </div>
         <Link to="/clients" className="inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-4 text-[13px] font-medium">
@@ -607,7 +603,7 @@ function CompanyAddress({
         <MapPin size={15} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
       </span>
       <input placeholder="건물명, 층, 호수 등 상세 주소를 입력하세요" value={detail} className={inputClass} onChange={(event) => onDetail(event.target.value)} />
-      <p className="text-[10px] text-muted">수주 작성 시 기본 배송지로 불러옵니다. 실제 배송지는 수주별로 변경할 수 있습니다.</p>
+      <p className="text-[10px] text-muted">견적 작성 때 거래처 주소로 채워집니다. 배송지는 승인된 견적으로 수주를 등록할 때 확인합니다.</p>
     </div>
   );
 }
@@ -615,7 +611,7 @@ function CompanyAddress({
 const registrationSteps = [
   { title: "기본 정보 입력", body: "회사명과 연락처를 정확하게 입력해 주세요." },
   { title: "기존 거래처 확인", body: "중복 확인으로 같은 회사명과 연락처의 거래처를 비교하세요." },
-  { title: "수주에서 바로 사용", body: "등록 후 수주 작성 화면에서 회사명을 검색할 수 있습니다." },
+  { title: "견적에서 바로 사용", body: "등록 후 견적 작성 화면에서 회사명을 검색할 수 있습니다." },
 ];
 
 function FormField({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
@@ -672,10 +668,6 @@ export function ClientDetailPage() {
                 <Pencil size={13} />
                 정보 수정
               </Link>
-              <Link to={`/orders/new?clientId=${client.id}`} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-[13px] font-medium text-white">
-                <Plus size={16} />
-                수주 등록
-              </Link>
             </>
           ) : null}
         </div>
@@ -719,7 +711,7 @@ export function ClientDetailPage() {
             <Info size={18} className="shrink-0 text-primary" />
             <div className="space-y-1">
               <p className="text-xs font-medium text-primary">수주와 연결되는 거래처 정보</p>
-              <p className="text-[11px] text-muted">수주 등록에서 이 거래처를 선택하면 연락처와 주소가 자동으로 입력됩니다. 배송지는 수주별로 확인해 주세요.</p>
+              <p className="text-[11px] text-muted">견적 작성에서 이 거래처를 선택하면 연락처와 주소가 채워집니다. 배송지는 승인 후 수주 등록에서 확인합니다.</p>
             </div>
           </section>
         </div>

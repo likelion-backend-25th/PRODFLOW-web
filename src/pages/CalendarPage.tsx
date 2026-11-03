@@ -135,7 +135,7 @@ export function CalendarPage() {
                   </li>
                 ))}
               </ul>
-              {canManageOrders(role) ? <Link to="/orders/new"><Button className="w-full">수주 등록</Button></Link> : null}
+              {canManageOrders(role) ? <Link to="/quotations/new"><Button className="w-full">견적 작성</Button></Link> : null}
             </>
           ) : (
             <p className="text-muted">날짜를 누르면 그날의 수주와 남은 생산량이, 막대를 누르면 생산 일정 상세가 열립니다.</p>
