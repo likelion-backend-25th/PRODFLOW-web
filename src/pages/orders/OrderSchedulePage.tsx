@@ -74,8 +74,8 @@ export function OrderSchedulePage() {
         <div className="flex items-center gap-2">
           <span className="rounded-lg border border-line bg-white px-3 py-2 text-sm">{rangeLabel(applied.from, applied.to)}</span>
           {canManageOrders(role) ? (
-            <Link to="/orders/new" className="inline-flex h-10 items-center gap-1 rounded-lg bg-primary px-4 font-semibold text-white">
-              <Plus size={16} /> 생산 일정 등록
+            <Link to="/quotations/new" className="inline-flex h-10 items-center gap-1 rounded-lg bg-primary px-4 font-semibold text-white">
+              <Plus size={16} /> 견적 작성
             </Link>
           ) : null}
         </div>

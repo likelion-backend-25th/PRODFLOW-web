@@ -63,7 +63,7 @@ export function DashboardPage() {
         </div>
         <div className="flex items-center gap-2">
           <span className="rounded-lg border border-line bg-white px-3 py-2 text-sm">{month.replace("-", ".")}.01 - {month.slice(5)}.{lastDay}</span>
-          {canManageOrders(role) ? <Link to="/orders/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 신규 수주 등록</Link> : null}
+          {canManageOrders(role) ? <Link to="/quotations/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 견적 작성</Link> : null}
         </div>
       </div>
       {risks.length > 0 ? (

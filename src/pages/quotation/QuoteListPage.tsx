@@ -43,7 +43,7 @@ export function QuoteListPage() {
     const inRange = (!from || date >= from) && (!to || date <= to);
     const waitingOrder = pendingOnly && quote.status === "APPROVED" && !db.orders.some((order) => order.quotationId === quote.id && order.status !== "CANCELLED");
     return text && inRange && (!status || quote.status === status) && (!pendingOnly || waitingOrder);
-  }), [dateField, db, from, keyword, pendingOnly, status, to]);
+  }).sort((left, right) => quoteDate(right, dateField).localeCompare(quoteDate(left, dateField)) || right.quotationNo.localeCompare(left.quotationNo)), [dateField, db, from, keyword, pendingOnly, status, to]);
   const pageCount = Math.max(1, Math.ceil(rows.length / 12));
   const currentPage = Math.min(page, pageCount - 1);
   const slice = rows.slice(currentPage * 12, currentPage * 12 + 12);
