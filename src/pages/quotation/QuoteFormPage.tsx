@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router";
 import { AddressPicker } from "@/components/AddressPicker.tsx";
 import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { ProductModal } from "@/components/ProductModal.tsx";
+import { QuoteSendConfirmModal } from "@/components/QuoteSendConfirmModal.tsx";
 import { Button } from "@/components/ui.tsx";
 import { cn } from "@/lib/cn.ts";
 import { addDays, parseISO, todayISO } from "@/lib/dates.ts";
@@ -49,6 +50,7 @@ export function QuoteFormPage() {
   const [requestedDueDate, setRequestedDueDate] = useState("");
   const [validityDays, setValidityDays] = useState<7 | 14>(14);
   const [dueOpen, setDueOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const dueRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
 
@@ -132,6 +134,37 @@ export function QuoteFormPage() {
     setClientOpen(false);
   }
 
+  function draftLines() {
+    return lines.filter((line) => line.productId).map((line) => ({ productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice }));
+  }
+
+  function submitQuote() {
+    if (!actor) return;
+    setError("");
+    try {
+      const quote = createQuotation({
+        clientId: clientId || undefined,
+        client: {
+          companyName,
+          contactName,
+          phone: contactPhone,
+          taxEmail: contactEmail,
+          address: companyAddress,
+        },
+        lines: draftLines(),
+        requestedDueDate,
+        validUntil,
+        vatIncluded,
+        actor,
+      });
+      show(`${quote.quotationNo} 견적을 발송했습니다.`);
+      navigate(`/quotations/${quote.id}`);
+    } catch (reason: unknown) {
+      setConfirmOpen(false);
+      setError(reason instanceof Error ? reason.message : "발송하지 못했습니다.");
+    }
+  }
+
   function send() {
     if (!actor) return;
     setError("");
@@ -155,31 +188,24 @@ export function QuoteFormPage() {
       setError("회사 주소를 선택하세요.");
       return;
     }
-    if (lines.some((line) => line.productId && line.quantity < 100)) {
+    const nextLines = draftLines();
+    if (nextLines.length === 0) {
+      setError("품목 줄을 1개 이상 입력하세요.");
+      return;
+    }
+    if (new Set(nextLines.map((line) => line.productId)).size !== nextLines.length) {
+      setError("같은 품목이 두 줄 이상 있습니다. 수량을 한 줄로 합치세요.");
+      return;
+    }
+    if (nextLines.some((line) => line.quantity < 100)) {
       setError("견적 품목 수량은 100개 이상이어야 합니다.");
       return;
     }
-    try {
-      const quote = createQuotation({
-        clientId: clientId || undefined,
-        client: {
-          companyName,
-          contactName,
-          phone: contactPhone,
-          taxEmail: contactEmail,
-          address: companyAddress,
-        },
-        lines: lines.filter((line) => line.productId).map((line) => ({ productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice })),
-        requestedDueDate,
-        validUntil,
-        vatIncluded,
-        actor,
-      });
-      show(`${quote.quotationNo} 견적을 발송했습니다.`);
-      navigate(`/quotations/${quote.id}`);
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "발송하지 못했습니다.");
+    if (!requestedDueDate) {
+      setError("희망 납기일을 선택하세요.");
+      return;
     }
+    setConfirmOpen(true);
   }
 
   return (
@@ -535,7 +561,7 @@ export function QuoteFormPage() {
             <div className="flex justify-between"><dt className="text-muted">잔금 50%</dt><dd>{formatWon(total - depositTarget(total))}</dd></div>
           </dl>
           {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
-          <Button className="mt-4 w-full" onClick={send}>견적 발송</Button>
+          <Button className="mt-4 w-full" onClick={send}>발송 전 확인</Button>
         </aside>
       </div>
       {modalName !== null && actor ? (
@@ -549,6 +575,14 @@ export function QuoteFormPage() {
             placeProduct(productId, unitPrice);
             show("신규 품목을 등록하고 견적에 추가했습니다.");
           }}
+        />
+      ) : null}
+      {confirmOpen ? (
+        <QuoteSendConfirmModal
+          companyName={companyName.trim()}
+          email={contactEmail.trim()}
+          onClose={() => setConfirmOpen(false)}
+          onSend={submitQuote}
         />
       ) : null}
     </div>
