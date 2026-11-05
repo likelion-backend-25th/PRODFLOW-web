@@ -73,10 +73,15 @@ export function refreshAccessToken(): Promise<string> {
   return refreshing;
 }
 
+export function apiStatus(error: unknown): number | undefined {
+  return axios.isAxiosError(error) ? error.response?.status : undefined;
+}
+
 export function readApiErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const message = error.response?.data?.message;
     if (typeof message === "string" && message.length > 0) return message;
+    if (error.response?.status === 403) return "해당 작업을 수행할 권한이 없습니다.";
     if (error.response?.status) return `요청이 실패했습니다. (${error.response.status})`;
   }
   return "요청이 실패했습니다.";
