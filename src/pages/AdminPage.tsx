@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn.ts";
 import { localDateTime } from "@/lib/dates.ts";
 import { resetDb, useDb } from "@/lib/db.ts";
 import { accountStatusLabel, roleLabel } from "@/lib/labels.ts";
-import { deleteHoliday, deleteUser, saveHoliday, saveUser, setUserStatus, type UserInput } from "@/lib/workflow.ts";
+import { deleteUser, saveUser, setUserStatus, type UserInput } from "@/lib/workflow.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { Role, User } from "@/types/domain.ts";
@@ -65,8 +65,6 @@ export function AdminPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [issued, setIssued] = useState("");
-  const [date, setDate] = useState("");
-  const [holidayName, setHolidayName] = useState("");
 
   const accounts = db.users.filter((user) => user.status !== "DELETED");
   const term = keyword.trim().toLowerCase();
@@ -120,7 +118,7 @@ export function AdminPage() {
 
       <div className="grid gap-3 md:grid-cols-3">
         <Stat label="전체 계정" value={accounts.length} icon />
-        <Stat label="활성 계정" value={accounts.filter((user) => user.status === "ACTIVE").length} />
+        <Stat label="사용" value={accounts.filter((user) => user.status === "ACTIVE").length} />
         <Stat label="비활성" value={accounts.filter((user) => user.status === "INACTIVE").length} />
       </div>
 
@@ -137,7 +135,7 @@ export function AdminPage() {
             </label>
             <select className="h-10 rounded-lg border border-line bg-white px-3 text-sm" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as typeof statusFilter); setPage(1); }}>
               <option value="ALL">전체 상태</option>
-              <option value="ACTIVE">활성</option>
+              <option value="ACTIVE">사용</option>
               <option value="INACTIVE">비활성</option>
             </select>
           </div>
@@ -198,8 +196,8 @@ export function AdminPage() {
                     <button type="button" className="block w-full px-3 py-2 text-left hover:bg-primary-soft/40 disabled:opacity-40" disabled={isMe} onClick={() => {
                       setMenuOpen(false);
                       const next = selected.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
-                      act(() => setUserStatus(selected.id, next, me?.id ?? ""), next === "ACTIVE" ? "계정을 활성화했습니다." : "계정을 비활성화했습니다.");
-                    }}>{selected.status === "ACTIVE" ? "계정 비활성화" : "계정 활성화"}</button>
+                      act(() => setUserStatus(selected.id, next, me?.id ?? ""), next === "ACTIVE" ? "계정을 사용으로 바꿨습니다." : "계정을 비활성으로 바꿨습니다.");
+                    }}>{selected.status === "ACTIVE" ? "비활성으로 변경" : "사용으로 변경"}</button>
                   </div>
                 ) : null}
               </div>
@@ -244,32 +242,9 @@ export function AdminPage() {
         </aside>
       </div>
 
-      <section className="rounded-xl border border-line bg-white p-5">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-semibold">휴일</h2>
-          <Button tone="ghost" onClick={() => { resetDb(); setSelectedId(""); show("예시 데이터를 처음 상태로 되돌렸습니다."); }}>예시 데이터 초기화</Button>
-        </div>
-        <p className="mb-3 text-sm text-muted">토요일과 일요일은 항상 쉽니다. 여기 날짜도 생산량 계산에서 빠지며, 이미 잡힌 수주는 옮기지 않습니다.</p>
-        <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => {
-          event.preventDefault();
-          if (act(() => saveHoliday(date, holidayName), "휴일을 등록했습니다.")) {
-            setDate("");
-            setHolidayName("");
-          }
-        }}>
-          <TextField label="날짜" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
-          <TextField label="이름" value={holidayName} onChange={(event) => setHolidayName(event.target.value)} />
-          <Button type="submit">등록</Button>
-        </form>
-        <ul className="mt-3 divide-y divide-line text-sm">
-          {db.holidays.map((holiday) => (
-            <li key={holiday.id} className="flex items-center justify-between py-2">
-              <span>{holiday.date} {holiday.name}</span>
-              <Button tone="ghost" onClick={() => deleteHoliday(holiday.id)}>삭제</Button>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <div className="flex justify-end">
+        <Button tone="ghost" onClick={() => { resetDb(); setSelectedId(""); show("예시 데이터를 처음 상태로 되돌렸습니다."); }}>예시 데이터 초기화</Button>
+      </div>
 
       {draft ? (
         <div className="fixed inset-0 z-20 grid place-items-center bg-ink/40 p-4">
@@ -286,7 +261,7 @@ export function AdminPage() {
               </SelectField>
               {draft.id ? (
                 <SelectField label="상태" value={draft.status} disabled={draft.id === me?.id} onChange={(event) => setDraft({ ...draft, status: event.target.value as Draft["status"] })}>
-                  <option value="ACTIVE">활성</option>
+                  <option value="ACTIVE">사용</option>
                   <option value="INACTIVE">비활성</option>
                 </SelectField>
               ) : null}

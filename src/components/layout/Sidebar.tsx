@@ -1,5 +1,6 @@
-import { Box, Building2, ChevronRight, ClipboardList, Factory, LayoutGrid, LogOut, Sparkles, UsersRound } from "lucide-react";
-import { NavLink, useLocation } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { Box, Building2, ClipboardList, EllipsisVertical, Factory, FileText, LayoutGrid, LogOut, Sparkles, UserRound, UsersRound, Wallet } from "lucide-react";
+import { NavLink, useLocation, useNavigate } from "react-router";
 import { cn } from "@/lib/cn.ts";
 import { useDb } from "@/lib/db.ts";
 import { roleLabel } from "@/lib/labels.ts";
@@ -8,10 +9,26 @@ import { useAuthStore } from "@/stores/useAuthStore.ts";
 export function Sidebar() {
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
+  const navigate = useNavigate();
   const db = useDb();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const orders = db.orders.filter((order) => order.status !== "CANCELLED").length;
-  const shipping = db.orders.filter((order) => order.status === "PACKING" || order.status === "PACKED" || order.status === "SHIPPING" || (order.status === "COMPLETED" && order.paymentStatus !== "PAID")).length;
+  const shipping = db.orders.filter((order) => order.status === "PACKING" || order.status === "READY_TO_SHIP" || order.status === "SHIPPING" || (order.status === "COMPLETED" && order.paymentStatus !== "PAID")).length;
   const location = useLocation();
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function close(event: MouseEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuOpen]);
 
   return (
     <aside className="sticky top-0 flex h-screen w-[232px] shrink-0 flex-col border-r border-line bg-white px-3 py-4">
@@ -19,24 +36,23 @@ export function Sidebar() {
         <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-white">
           <LayoutGrid size={16} />
         </span>
-        <span className="text-base font-semibold tracking-tight">생산플로우</span>
+        <span className="text-base font-semibold tracking-tight">PRODFLOW</span>
       </div>
-      <button type="button" className="mt-4 flex items-center justify-between rounded-lg bg-canvas px-3 py-2 text-left text-sm">
-        <span>본사 · 생산운영팀</span>
-        <ChevronRight size={14} className="rotate-90 text-muted" />
-      </button>
       <p className="mt-5 px-3 text-[11px] font-semibold tracking-wide text-muted">WORKSPACE</p>
       <nav className="mt-2 flex flex-1 flex-col gap-1">
         <Item to="/" end icon={LayoutGrid} label="대시보드" />
-        <Item to="/orders" icon={ClipboardList} label="수주 및 생산기록" badge={orders} active={location.pathname.startsWith("/work-orders") || location.pathname.startsWith("/shipping") || location.pathname.startsWith("/calendar")} />
-        <Item to="/calendar" icon={Factory} label="수주 일정 관리" nested />
+        <Item to="/quotations" icon={FileText} label="견적 관리" active={location.pathname.startsWith("/quotations")} />
+        <Item to="/orders" icon={ClipboardList} label="수주 및 생산기록" badge={orders} active={location.pathname.startsWith("/work-orders") || location.pathname.startsWith("/shipping") || location.pathname.startsWith("/orders/schedule") || location.pathname.startsWith("/production-plans")} />
+        <Item to="/orders" end icon={Factory} label="수주 관리" nested />
         <Item to="/work-orders" icon={Factory} label="작업지시 관리" nested />
+        <Item to="/production-plans" icon={Factory} label="일일 생산계획" nested />
         <Item to="/shipping" icon={Factory} label="배송 관리" nested badge={shipping} />
         <Item to="/clients" icon={Building2} label="거래처 관리" />
         <Item to="/products" icon={Box} label="생산품목 관리" />
         <Item to="/lines" icon={Factory} label="생산라인" />
-        <Item to="/assistant" icon={Sparkles} label="AI 챗봇" />
+        <Item to="/payments" icon={Wallet} label="입금 관리" />
         {user?.role === "SUPER_ADMIN" ? <Item to="/admin" icon={UsersRound} label="계정 관리" /> : null}
+        <Item to="/assistant" icon={Sparkles} label="AI 챗봇" />
       </nav>
       <div className="space-y-2 px-1 pb-3 text-xs text-muted">
         <div className="rounded-xl bg-canvas p-3">
@@ -46,14 +62,46 @@ export function Sidebar() {
         <p>이용 가이드 및 문의</p>
       </div>
       {user ? (
-        <div className="flex items-center gap-2 border-t border-line px-2 pt-3">
+        <div ref={menuRef} className="relative flex items-center gap-2 border-t border-line px-2 pt-3">
+          {menuOpen ? (
+            <div className="absolute right-0 bottom-full z-30 mb-2 w-44 rounded-xl border border-line bg-white p-1 shadow-lg">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink hover:bg-canvas"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    navigate("/me");
+                  }}
+                >
+                  <UserRound size={16} className="text-muted" />
+                  내 정보
+                </button>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink hover:bg-canvas"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    logout();
+                  }}
+                >
+                  <LogOut size={16} className="text-muted" />
+                  로그아웃
+                </button>
+            </div>
+          ) : null}
           <span className="grid h-8 w-8 place-items-center rounded-full bg-primary-soft text-xs font-semibold text-primary">{user.name.slice(0, 1)}</span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-semibold">{user.name}</span>
             <span className="block truncate text-xs text-muted">{roleLabel[user.role]}</span>
           </span>
-          <button type="button" className="text-muted" onClick={logout} aria-label="로그아웃">
-            <LogOut size={16} />
+          <button
+            type="button"
+            className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-canvas"
+            aria-label="사용자 메뉴"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <EllipsisVertical size={16} />
           </button>
         </div>
       ) : null}
@@ -98,17 +146,28 @@ function Item({
 }
 
 export function crumbs(pathname: string): string[] {
+  if (pathname === "/orders") return ["워크스페이스", "수주 및 생산기록", "수주 관리"];
+  if (pathname.startsWith("/orders/schedule")) return ["워크스페이스", "수주 및 생산기록", "생산 일정 관리"];
   if (pathname.startsWith("/work-orders")) return ["워크스페이스", "수주 및 생산기록", "작업지시 관리"];
+  if (pathname.startsWith("/production-plans")) return ["워크스페이스", "수주 및 생산기록", "일일 생산계획"];
   if (pathname.startsWith("/shipping")) return ["워크스페이스", "수주 및 생산기록", "배송 관리"];
+  if (pathname === "/quotations/new") return ["워크스페이스", "견적 관리", "견적 작성"];
+  if (pathname.startsWith("/quotations")) return ["워크스페이스", "견적 관리"];
+  if (pathname === "/orders/new") return ["워크스페이스", "수주 및 생산기록", "수주 등록"];
   if (pathname.startsWith("/orders")) return ["워크스페이스", "수주 및 생산기록"];
+  if (pathname === "/clients/new") return ["워크스페이스", "거래처 관리", "거래처 등록"];
+  if (pathname.endsWith("/edit") && pathname.startsWith("/clients/")) return ["워크스페이스", "거래처 관리", "거래처 수정"];
+  if (/^\/clients\/[^/]+$/.test(pathname)) return ["워크스페이스", "거래처 관리", "거래처 상세"];
   if (pathname.startsWith("/clients")) return ["워크스페이스", "거래처 관리"];
   if (pathname === "/products/new") return ["워크스페이스", "생산품목 관리", "생산품목 등록"];
   if (pathname.endsWith("/edit") && pathname.startsWith("/products/")) return ["워크스페이스", "생산품목 관리", "생산품목 수정"];
   if (/^\/products\/[^/]+$/.test(pathname)) return ["워크스페이스", "생산품목 관리", "생산품목 상세"];
   if (pathname.startsWith("/products")) return ["워크스페이스", "생산품목 관리"];
   if (pathname.startsWith("/lines")) return ["워크스페이스", "생산라인"];
+  if (pathname.startsWith("/payments")) return ["워크스페이스", "입금 관리"];
   if (pathname.startsWith("/admin")) return ["워크스페이스", "계정 관리"];
   if (pathname.startsWith("/assistant")) return ["워크스페이스", "AI 챗봇"];
-  if (pathname.startsWith("/calendar")) return ["워크스페이스", "수주 및 생산기록", "수주 일정 관리"];
+  if (pathname.startsWith("/me")) return ["워크스페이스", "내 정보"];
+  if (pathname.startsWith("/calendar")) return ["워크스페이스", "대시보드", "생산 캘린더"];
   return ["워크스페이스", "대시보드"];
 }

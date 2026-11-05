@@ -21,7 +21,7 @@ export function DashboardPage() {
   const active = db.orders.filter((order) => order.status !== "CANCELLED");
   const monthOrders = active.filter((order) => localDate(order.createdAt).startsWith(month));
   const produced = db.workOrders
-    .filter((item) => item.status === "COMPLETED" && item.completedAt && localDate(item.completedAt).startsWith(month))
+    .filter((item) => (item.status === "PACK" || item.status === "PACK_DONE") && item.completedAt && localDate(item.completedAt).startsWith(month))
     .reduce((sum, item) => sum + item.quantity, 0);
   const completed = active.filter((order) => order.status === "COMPLETED");
   const onTime = completed.filter((order) => order.completedAt && localDate(order.completedAt) <= order.dueDate).length;
@@ -63,7 +63,7 @@ export function DashboardPage() {
         </div>
         <div className="flex items-center gap-2">
           <span className="rounded-lg border border-line bg-white px-3 py-2 text-sm">{month.replace("-", ".")}.01 - {month.slice(5)}.{lastDay}</span>
-          {canManageOrders(role) ? <Link to="/orders/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 신규 수주 등록</Link> : null}
+          {canManageOrders(role) ? <Link to="/quotations/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 견적 작성</Link> : null}
         </div>
       </div>
       {risks.length > 0 ? (
@@ -177,7 +177,7 @@ export function DashboardPage() {
                     <td>{client?.companyName} · {orderItemsText(db.products, order.lines)}</td>
                     <td>{order.dueDate}</td>
                     <td><Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge></td>
-                    <td className="pr-5"><Badge className={paymentTone(order.paymentStatus)}>{paymentStatusLabel[order.paymentStatus]}</Badge> · {orderQuantity(order.lines).toLocaleString("ko-KR")}개 · {formatWon(orderTotal(order.lines))}</td>
+                    <td className="pr-5"><Badge className={paymentTone(order.paymentStatus)}>{paymentStatusLabel[order.paymentStatus]}</Badge> · {orderQuantity(order.lines).toLocaleString("ko-KR")}개 · {formatWon(orderTotal(order.lines, order.vatIncluded))}</td>
                   </tr>
                 );
               })}

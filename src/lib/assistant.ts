@@ -1,5 +1,5 @@
 import { localDate, parseISO, todayISO, toISO } from "@/lib/dates.ts";
-import { lineStatusLabel, lineTone, orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, workOrderStatusLabel } from "@/lib/labels.ts";
+import { lineStatusLabel, lineTone, orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, workOrderStatusLabel, workOrderTone } from "@/lib/labels.ts";
 import { formatWon, orderQuantity, orderTotal } from "@/lib/money.ts";
 import { orderItemsText } from "@/lib/orderText.ts";
 import type { Database, Order, WorkOrder } from "@/types/domain.ts";
@@ -50,8 +50,8 @@ export function answerQuestion(db: Database, question: string, context: Assistan
   if (/이번\s*주/.test(text) && /납기/.test(text)) return dueThisWeek(db, today);
   if (/이번\s*달/.test(text) && /수주/.test(text)) return monthSummary(db, today);
   if (/라인/.test(text)) return lineAssignments(db);
-  if (/작업지시/.test(text) && /진행|생산중/.test(text)) return workOrdersByStatus(db, "IN_PRODUCTION", "현재 생산 중인 작업지시서");
-  if (/작업지시/.test(text) && /시작하지 않|시작 전|대기|준비/.test(text)) return workOrdersByStatus(db, "READY", "작업을 시작하지 않은 작업지시서");
+  if (/작업지시/.test(text) && /진행|생산중/.test(text)) return workOrdersByStatus(db, "PRODUCE", "현재 생산 중인 작업지시서");
+  if (/작업지시/.test(text) && /시작하지 않|시작 전|대기|준비/.test(text)) return workOrdersByStatus(db, "PREPARE", "작업을 시작하지 않은 작업지시서");
   if (mentioned) return ordersTable(db, [mentioned], `${mentioned.orderNo} 수주입니다.`);
   return say("저장된 수주, 작업지시, 생산라인에서 아래 질문만 답할 수 있습니다. 추천 질문을 눌러 주세요.");
 }
@@ -93,7 +93,7 @@ function unpaid(db: Database): AssistantAnswer {
         cells: [
           { text: clientName(db, order.clientId) },
           { text: order.orderNo },
-          { text: formatWon(orderTotal(order.lines)) },
+          { text: formatWon(orderTotal(order.lines, order.vatIncluded)) },
           { text: formatWon(order.paidAmount) },
           { text: paymentStatusLabel[order.paymentStatus], className: paymentTone(order.paymentStatus) },
         ],
@@ -118,7 +118,7 @@ function monthSummary(db: Database, today: string): AssistantAnswer {
         { text: orderStatusLabel[status], className: orderStatusTone(status) },
         { text: `${list.length}건` },
         { text: `${list.reduce((sum, order) => sum + orderQuantity(order.lines), 0).toLocaleString("ko-KR")}개` },
-        { text: formatWon(list.reduce((sum, order) => sum + orderTotal(order.lines), 0)) },
+        { text: formatWon(list.reduce((sum, order) => sum + orderTotal(order.lines, order.vatIncluded), 0)) },
       ],
     }));
   return {
@@ -130,7 +130,7 @@ function monthSummary(db: Database, today: string): AssistantAnswer {
 
 function lineAssignments(db: Database): AssistantAnswer {
   const rows = db.lines.map((line) => {
-    const job = db.workOrders.find((item) => item.lineId === line.id && (item.status === "IN_PRODUCTION" || item.status === "PAUSED"));
+    const job = db.workOrders.find((item) => item.lineId === line.id && (item.status === "PRODUCE" || item.status === "SUSPEND"));
     const order = job ? db.orders.find((item) => item.id === job.orderId) : undefined;
     return {
       href: `/lines/${line.id}`,
@@ -161,7 +161,7 @@ function workOrdersOf(db: Database, orderIds: string[]): AssistantAnswer {
   const orders = orderIds
     .map((id) => db.orders.find((order) => order.id === id))
     .filter((order): order is Order => order !== undefined);
-  const jobs = db.workOrders.filter((item) => orderIds.includes(item.orderId) && item.status !== "CANCELLED");
+  const jobs = db.workOrders.filter((item) => orderIds.includes(item.orderId));
   const label = orders.map((order) => order.orderNo).join(", ");
   return workOrderTable(db, jobs, `${label || "선택한 수주"}에 연결된 작업지시는 ${jobs.length}건입니다.`, orderIds);
 }
@@ -247,11 +247,7 @@ function personName(db: Database, userId: string | null): string {
 }
 
 function workTone(status: WorkOrder["status"]): string {
-  if (status === "IN_PRODUCTION") return "bg-primary-soft text-primary";
-  if (status === "PAUSED") return "bg-warning-soft text-warning";
-  if (status === "COMPLETED") return "bg-emerald-50 text-emerald-700";
-  if (status === "CANCELLED") return "bg-red-50 text-danger";
-  return "bg-warning-soft text-warning";
+  return workOrderTone(status);
 }
 
 function dot(iso: string): string {

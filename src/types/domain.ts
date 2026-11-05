@@ -1,21 +1,22 @@
 export type Role = "SUPER_ADMIN" | "ORDER_MANAGER" | "PRODUCTION_MANAGER" | "VIEWER";
 
+/** 수주 진행 상태. VARCHAR(20). 본선: WAITING→CONFIRMED→IN_PRODUCTION→PACKING→READY_TO_SHIP→SHIPPING→COMPLETED. 예외: ON_HOLD, CANCELLED. */
 export type OrderStatus =
   | "WAITING"
   | "ON_HOLD"
   | "CONFIRMED"
   | "IN_PRODUCTION"
   | "PACKING"
-  | "PACKED"
+  | "READY_TO_SHIP"
   | "SHIPPING"
   | "COMPLETED"
   | "CANCELLED";
 
-export type WorkOrderStatus = "READY" | "IN_PRODUCTION" | "PAUSED" | "COMPLETED" | "CANCELLED";
+export type WorkOrderStatus = "PREPARE" | "PRODUCE" | "SUSPEND" | "HALT" | "PACK" | "PACK_DONE";
 
 export type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID";
 
-export type LineStatus = "AVAILABLE" | "RUNNING" | "MAINTENANCE" | "BROKEN";
+export type LineStatus = "AVAILABLE" | "OPERATING" | "INSPECTION" | "BROKEN";
 
 export type AccountStatus = "ACTIVE" | "INACTIVE" | "DELETED";
 
@@ -36,18 +37,23 @@ export interface User {
 
 export interface Client {
   id: string;
-  businessNumber: string;
   companyName: string;
   representative: string;
-  address: string;
+  zipcode: string;
+  roadAddress: string;
+  detailAddress: string;
   phone: string;
   contactName: string;
   contactMobile: string;
   taxEmail: string;
+  createdAt: string;
 }
+
+export type ProductStatus = "AVAILABLE" | "DISCONTINUED";
 
 export interface Product {
   id: string;
+  modelCode: string;
   productName: string;
   modelName: string;
   description: string;
@@ -55,6 +61,7 @@ export interface Product {
   designImageUrl: string;
   drawingPdfName?: string;
   drawingPdfUrl?: string;
+  status: ProductStatus;
   createdAt: string;
   updatedAt: string;
   createdByName: string;
@@ -65,31 +72,61 @@ export interface OrderLine {
   productId: string;
   quantity: number;
   unitPrice: number;
-  vatIncluded: boolean;
 }
+
+export type ConfirmationStatus = "PENDING" | "CONFIRMED" | "CANCELLED";
 
 export interface DayAllocation {
   date: string;
   quantity: number;
 }
 
+export interface WorkOrderItem {
+  productId: string;
+  quantity: number;
+}
+
 export type NotifyChannel = "SMS" | "EMAIL";
+
+export type QuotationStatus = "DRAFT" | "SENT" | "APPROVED" | "REJECTED" | "CANCELLED" | "EXPIRED";
+
+export interface Quotation {
+  id: string;
+  quotationNo: string;
+  clientId: string;
+  userId: string;
+  lines: OrderLine[];
+  requestedDueDate: string;
+  estimatedDueDate: string;
+  plannedStartDate: string;
+  plannedEndDate: string;
+  validUntil: string;
+  status: QuotationStatus;
+  vatIncluded: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface Order {
   id: string;
   orderNo: string;
+  quotationId?: string;
   clientId: string;
   lines: OrderLine[];
   requestedDueDate: string;
   dueDate: string;
   plannedStartDate: string;
   plannedEndDate: string;
+  depositDueDate: string;
   allocations: DayAllocation[];
   shippingAddress: string;
+  receiverName: string;
   receiverPhone: string;
   notifyChannel: NotifyChannel;
   memo: string;
   status: OrderStatus;
+  confirmationStatus: ConfirmationStatus;
+  vatIncluded: boolean;
   paymentStatus: PaymentStatus;
   paidAmount: number;
   virtualAccount: string;
@@ -108,6 +145,7 @@ export interface WorkOrder {
   assigneeId: string | null;
   lineId: string | null;
   quantity: number;
+  items: WorkOrderItem[];
   allocations: DayAllocation[];
   issuedAt: string;
   plannedStartDate: string;
@@ -121,6 +159,16 @@ export interface Line {
   name: string;
   dailyCapacity: number;
   status: LineStatus;
+}
+
+export interface LineCapacityLog {
+  id: string;
+  lineId: string;
+  beforeCapacity: number;
+  afterCapacity: number;
+  reason: string;
+  userId: string;
+  changedAt: string;
 }
 
 export interface Holiday {
@@ -160,9 +208,11 @@ export interface Database {
   users: User[];
   clients: Client[];
   products: Product[];
+  quotations: Quotation[];
   orders: Order[];
   workOrders: WorkOrder[];
   lines: Line[];
+  lineCapacityLogs: LineCapacityLog[];
   holidays: Holiday[];
   histories: StatusHistory[];
   notifications: NotificationLog[];

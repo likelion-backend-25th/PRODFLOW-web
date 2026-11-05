@@ -1,11 +1,30 @@
 import type {
   AccountStatus,
+  ConfirmationStatus,
   LineStatus,
   OrderStatus,
   PaymentStatus,
+  QuotationStatus,
   Role,
   WorkOrderStatus,
 } from "@/types/domain.ts";
+
+export const quotationStatusLabel: Record<QuotationStatus, string> = {
+  DRAFT: "초안",
+  SENT: "발송완료",
+  APPROVED: "승인",
+  REJECTED: "거절",
+  CANCELLED: "취소",
+  EXPIRED: "만료",
+};
+
+export function quotationStatusTone(status: QuotationStatus): string {
+  if (status === "DRAFT") return "bg-amber-50 text-amber-700";
+  if (status === "SENT") return "bg-blue-50 text-blue-700";
+  if (status === "APPROVED") return "bg-emerald-50 text-emerald-700";
+  if (status === "REJECTED" || status === "CANCELLED") return "bg-red-50 text-red-700";
+  return "bg-slate-100 text-slate-600";
+}
 
 export const roleLabel: Record<Role, string> = {
   SUPER_ADMIN: "최고 관리자",
@@ -19,7 +38,7 @@ export const orderStatusLabel: Record<OrderStatus, string> = {
   CONFIRMED: "생산대기",
   IN_PRODUCTION: "생산중",
   PACKING: "포장중",
-  PACKED: "포장완료",
+  READY_TO_SHIP: "출고대기",
   SHIPPING: "배송중",
   COMPLETED: "완료",
   ON_HOLD: "생산보류",
@@ -31,48 +50,59 @@ export const workStatusOrder: OrderStatus[] = [
   "CONFIRMED",
   "IN_PRODUCTION",
   "PACKING",
-  "PACKED",
+  "READY_TO_SHIP",
   "SHIPPING",
   "COMPLETED",
   "ON_HOLD",
   "CANCELLED",
 ];
 
-export function registrationStatus(status: OrderStatus): "RESERVED" | "CONFIRMED" {
-  return status === "WAITING" || status === "CANCELLED" ? "RESERVED" : "CONFIRMED";
+export function registrationLabel(status: ConfirmationStatus): string {
+  if (status === "CANCELLED") return "취소";
+  return status === "PENDING" ? "예정" : "확정";
 }
 
-export function registrationLabel(status: OrderStatus): string {
-  return registrationStatus(status) === "RESERVED" ? "예정" : "확정";
-}
-
-export function registrationTone(status: OrderStatus): string {
-  return registrationStatus(status) === "RESERVED" ? "bg-orange-50 text-orange-700" : "bg-cyan-50 text-cyan-800";
+export function registrationTone(status: ConfirmationStatus): string {
+  if (status === "CANCELLED") return "bg-slate-100 text-slate-600";
+  return status === "PENDING" ? "bg-orange-50 text-orange-700" : "bg-cyan-50 text-cyan-800";
 }
 
 export const workOrderStatusLabel: Record<WorkOrderStatus, string> = {
-  READY: "준비",
-  IN_PRODUCTION: "생산중",
-  PAUSED: "일시정지",
-  COMPLETED: "생산완료",
-  CANCELLED: "취소",
+  PREPARE: "준비",
+  PRODUCE: "생산",
+  SUSPEND: "일시정지",
+  HALT: "생산 중지",
+  PACK: "포장",
+  PACK_DONE: "포장완료",
 };
+
+export function workOrderTone(status: WorkOrderStatus): string {
+  if (status === "PRODUCE") return "bg-primary-soft text-primary";
+  if (status === "PACK") return "bg-primary-soft text-primary";
+  if (status === "PACK_DONE") return "bg-emerald-50 text-success";
+  if (status === "HALT") return "bg-red-50 text-danger";
+  return "bg-warning-soft text-warning";
+}
+
+export function workProductionDone(status: WorkOrderStatus): boolean {
+  return status === "PACK" || status === "PACK_DONE";
+}
 
 export const paymentStatusLabel: Record<PaymentStatus, string> = {
   UNPAID: "미입금",
-  PARTIAL: "부분입금",
-  PAID: "입금완료",
+  PARTIAL: "계약금 입금",
+  PAID: "전액 입금",
 };
 
 export const lineStatusLabel: Record<LineStatus, string> = {
-  AVAILABLE: "가동가능",
-  RUNNING: "가동중",
-  MAINTENANCE: "점검중",
+  AVAILABLE: "가동 가능",
+  OPERATING: "가동 중",
+  INSPECTION: "점검",
   BROKEN: "고장",
 };
 
 export const accountStatusLabel: Record<AccountStatus, string> = {
-  ACTIVE: "활성",
+  ACTIVE: "사용",
   INACTIVE: "비활성",
   DELETED: "삭제",
 };
@@ -82,7 +112,7 @@ export function orderStatusTone(status: OrderStatus): string {
   if (status === "CONFIRMED") return "bg-blue-50 text-blue-700";
   if (status === "IN_PRODUCTION") return "bg-primary-soft text-primary";
   if (status === "PACKING") return "bg-violet-50 text-violet-700";
-  if (status === "PACKED") return "bg-indigo-50 text-indigo-700";
+  if (status === "READY_TO_SHIP") return "bg-teal-50 text-teal-800";
   if (status === "SHIPPING") return "bg-sky-50 text-sky-700";
   if (status === "COMPLETED") return "bg-emerald-50 text-emerald-700";
   if (status === "ON_HOLD") return "bg-amber-50 text-amber-800";
@@ -97,7 +127,7 @@ export function paymentTone(status: PaymentStatus): string {
 
 export function lineTone(status: LineStatus): string {
   if (status === "AVAILABLE") return "bg-slate-100 text-muted";
-  if (status === "MAINTENANCE") return "bg-warning-soft text-warning";
+  if (status === "INSPECTION") return "bg-warning-soft text-warning";
   if (status === "BROKEN") return "bg-red-50 text-danger";
   return "bg-primary-soft text-primary";
 }

@@ -1,125 +1,274 @@
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { AddressPicker } from "@/components/AddressPicker.tsx";
-import { Button, Card, PageHeader, TextField } from "@/components/ui.tsx";
-import { localDate } from "@/lib/dates.ts";
-import { useDb } from "@/lib/db.ts";
+import { ArrowLeft, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Ellipsis, FileSpreadsheet, Info, MapPin, Pencil, Plus, Search } from "lucide-react";
+import { Button } from "@/components/ui.tsx";
+import { cn } from "@/lib/cn.ts";
 import { digitsOnly } from "@/lib/money.ts";
-import { importClients, saveClient } from "@/lib/workflow.ts";
+import { readApiErrorMessage } from "@/lib/apiClient.ts";
+import { createClient, getClient, importClientsFile, listClients, updateClient, type ClientDetail, type ClientListItem, type ClientPage } from "@/lib/clientApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
-const template = "사업자등록번호,회사명,대표자,주소,대표전화,담당자명,담당자휴대번호,세금계산서이메일\n";
+const PAGE_SIZE = 8;
+
+type ClientSort = "RECENT" | "NAME";
+
+const sortLabel: Record<ClientSort, string> = {
+  RECENT: "최근 등록순",
+  NAME: "회사명순",
+};
+
+interface ClientRow {
+  item: ClientListItem;
+  detail: ClientDetail | null;
+}
+
+const emptyClientPage: ClientPage = { content: [], totalElements: 0, totalPages: 0, number: 0, size: PAGE_SIZE };
 
 export function ClientListPage() {
-  const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
   const show = useToastStore((state) => state.show);
   const [keyword, setKeyword] = useState("");
+  const [sort, setSort] = useState<ClientSort>("RECENT");
+  const [page, setPage] = useState(1);
   const [result, setResult] = useState("");
-  const rows = db.clients.filter((client) => `${client.companyName} ${client.representative} ${client.phone} ${client.address}`.includes(keyword.trim()));
-  const [selectedId, setSelectedId] = useState(rows[0]?.id ?? "");
-  const selected = db.clients.find((client) => client.id === selectedId) ?? rows[0];
-  const month = new Date().toLocaleDateString("en-CA").slice(0, 7);
-  const traded = new Set(db.orders.filter((order) => order.createdAt.startsWith(month)).map((order) => order.clientId)).size;
-  const ordersOf = (clientId: string) => db.orders.filter((order) => order.clientId === clientId && order.status !== "CANCELLED");
+  const [selectedId, setSelectedId] = useState("");
+  const [list, setList] = useState<ClientPage>(emptyClientPage);
+  const [loadError, setLoadError] = useState("");
+  const [details, setDetails] = useState<Record<number, ClientDetail>>({});
+  const [reloadKey, setReloadKey] = useState(0);
+  const canWrite = canManageOrders(role);
+  useEffect(() => {
+    let ignore = false;
+    listClients({
+      keyword: keyword.trim(),
+      page: page - 1,
+      size: PAGE_SIZE,
+      sort: sort === "NAME" ? "company,asc" : "createdAt,desc",
+    }).then((response) => {
+      if (ignore) return;
+      setList(response);
+      setLoadError("");
+    }).catch((error: unknown) => {
+      if (ignore) return;
+      setList(emptyClientPage);
+      setLoadError(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [keyword, page, reloadKey, sort]);
+  const pageRows: ClientRow[] = list.content.map((item) => ({ item, detail: details[item.id] ?? null }));
+  const selected = pageRows.find((row) => String(row.item.id) === selectedId) ?? pageRows[0];
+  useEffect(() => {
+    const id = selected?.item.id;
+    if (!id || details[id]) return;
+    let ignore = false;
+    getClient(id).then((detail) => {
+      if (!ignore) setDetails((current) => ({ ...current, [id]: detail }));
+    }).catch(() => undefined);
+    return () => {
+      ignore = true;
+    };
+  }, [details, selected]);
 
   return (
-    <div>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">클라이언트 관리</h1>
-          <p className="mt-1 text-muted">거래처 정보를 정확하게 관리하고 수주 등록 시간을 줄이세요.</p>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-1.5">
+          <h1 className="text-[27px] font-bold">거래처 관리</h1>
+          <p className="text-xs text-muted">거래처 정보를 정확하게 관리하고, 견적 작성 때 바로 찾으세요.</p>
         </div>
-        {canManageOrders(role) ? (
+        {canWrite ? (
           <div className="flex gap-2">
-            <Button tone="ghost" onClick={() => download(template, "거래처양식.csv")}>양식 다운로드</Button>
-            <label className="inline-flex h-10 cursor-pointer items-center rounded-lg border border-line bg-white px-4 font-semibold">
+            <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-4 text-[13px] font-medium">
+              <Plus size={16} />
               엑셀 일괄등록
-              <input className="hidden" type="file" accept=".csv,text/csv" onChange={async (event) => {
-                const file = event.target.files?.[0];
+              <input className="hidden" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={async (event) => {
+                const input = event.currentTarget;
+                const file = input.files?.[0];
+                input.value = "";
                 if (!file) return;
-                const text = (await file.text()).replace(/^\uFEFF/, "");
-                const lines = text.split(/\r?\n/).slice(1).filter((line) => line.trim());
-                const imported = importClients(lines.map((line) => {
-                  const [businessNumber, companyName, representative, address, phone, contactName, contactMobile, taxEmail] = line.split(",");
-                  return { businessNumber: businessNumber ?? "", companyName: companyName ?? "", representative: representative ?? "", address: address ?? "", phone: phone ?? "", contactName: contactName ?? "", contactMobile: contactMobile ?? "", taxEmail: taxEmail ?? "" };
-                }));
-                setResult(`성공 ${imported.created}건${imported.errors.length ? ` / ${imported.errors.join(" ")}` : ""}`);
-                show("엑셀 등록을 반영했습니다.");
+                try {
+                  const imported = await importClientsFile(file);
+                  setResult(`성공 ${imported.length}건`);
+                  setPage(1);
+                  setReloadKey((value) => value + 1);
+                  show("엑셀 등록을 반영했습니다.");
+                } catch (error: unknown) {
+                  setResult(readApiErrorMessage(error));
+                }
               }} />
             </label>
-            <Link to="/clients/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 클라이언트 등록</Link>
+            <Link to="/clients/new" className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-[13px] font-medium text-white">
+              <Plus size={16} />
+              거래처 등록
+            </Link>
           </div>
         ) : null}
       </div>
-      {result ? <p className="mt-2 text-sm text-muted">{result}</p> : null}
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 클라이언트</p><p className="mt-2 text-2xl font-semibold">{db.clients.length}개사</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">이번 달 거래</p><p className="mt-2 text-2xl font-semibold">{traded}개사</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">등록 거래처</p><p className="mt-2 text-2xl font-semibold">{rows.length}개사</p></section>
+      {result ? <p className="-mt-3 text-sm text-muted">{result}</p> : null}
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <Metric label="전체 거래처" value={list.totalElements} icon={<Building2 size={23} className="text-primary" />} />
+        <Metric label="이 페이지" value={pageRows.length} />
+        <Metric label="검색 결과" value={loadError ? 0 : list.totalElements} />
       </div>
-      <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <section className="overflow-hidden rounded-xl border border-line bg-white">
-          <div className="flex items-center justify-between gap-3 px-5 py-4">
-            <h2 className="font-semibold">등록된 클라이언트</h2>
-            <span className="text-sm text-muted">총 {rows.length}개사</span>
-          </div>
-          <div className="px-5 pb-3">
-            <input className="h-10 w-full rounded-lg border border-line px-3" value={keyword} placeholder="회사명, 대표자명, 연락처 검색" onChange={(event) => setKeyword(event.target.value)} />
-          </div>
-          <table className="w-full text-left">
-            <thead className="bg-primary-soft/40 text-sm text-muted">
-              <tr><th className="px-5 py-3 font-medium">회사명</th><th className="py-3 font-medium">대표자</th><th className="py-3 font-medium">연락처</th><th className="py-3 font-medium">소재지</th><th className="py-3 font-medium">누적 수주</th><th className="py-3 pr-5 font-medium">최근 수주일</th></tr>
-            </thead>
-            <tbody>
-              {rows.map((client) => {
-                const orders = ordersOf(client.id);
-                const latest = orders.map((order) => localDate(order.createdAt)).sort().at(-1) ?? "-";
-                return (
-                  <tr key={client.id} className={`cursor-pointer border-t border-line ${selected?.id === client.id ? "bg-primary-soft" : ""}`} onClick={() => setSelectedId(client.id)}>
-                    <td className="px-5 py-3 font-semibold">{client.companyName}</td>
-                    <td>{client.representative}</td>
-                    <td>{client.phone}</td>
-                    <td className="max-w-40 truncate">{client.address}</td>
-                    <td>{orders.length}건</td>
-                    <td className="pr-5">{latest}</td>
+
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_316px]">
+        <div className="min-w-0 space-y-5">
+          <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold">등록된 거래처</h2>
+              <span className="text-[11px] text-muted">총 {list.totalElements}개사</span>
+            </div>
+            <div className="flex flex-wrap justify-between gap-2">
+              <label className="relative block w-[300px] max-w-full">
+                <Search size={15} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />
+                <input
+                  className="h-[38px] w-full rounded-[7px] border border-line bg-white pr-3 pl-[35px] text-xs placeholder:text-muted"
+                  value={keyword}
+                  placeholder="회사명, 대표자명, 연락처 검색"
+                  onChange={(event) => {
+                    setKeyword(event.target.value);
+                    setPage(1);
+                  }}
+                />
+              </label>
+              <label className="relative block">
+                <select
+                  aria-label="정렬"
+                  className="h-[38px] appearance-none rounded-[7px] border border-line bg-white pr-[41px] pl-3 text-xs"
+                  value={sort}
+                  onChange={(event) => {
+                    setSort(event.target.value as ClientSort);
+                    setPage(1);
+                  }}
+                >
+                  {(Object.keys(sortLabel) as ClientSort[]).map((key) => <option key={key} value={key}>{sortLabel[key]}</option>)}
+                </select>
+                <ChevronDown size={13} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2" />
+              </label>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-left whitespace-nowrap">
+                <thead className="border-y border-line bg-canvas/60 text-[11px] text-muted">
+                  <tr className="h-10 [&_th]:font-medium">
+                    <th className="pl-[14px]">회사명</th>
+                    <th>대표자</th>
+                    <th>연락처</th>
+                    <th>이메일</th>
+                    <th>누적 수주</th>
+                    <th className="text-right">누적 거래액</th>
+                    <th className="text-center">최근 수주일</th>
+                    <th className="w-8 pr-[14px]"><span className="sr-only">상세</span></th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
-        {selected ? (
-          <aside className="space-y-3">
-            <section className="rounded-xl border border-line bg-white p-5">
-              <h2 className="font-semibold">클라이언트 상세</h2>
-              <p className="mt-3 text-lg font-semibold">{selected.companyName}</p>
-              <p className="text-sm text-muted">{selected.businessNumber}</p>
-              <dl className="mt-4 space-y-2 text-sm">
-                <div><dt className="text-muted">대표자명</dt><dd>{selected.representative}</dd></div>
-                <div><dt className="text-muted">연락처</dt><dd>{selected.phone}</dd></div>
-                <div><dt className="text-muted">주소</dt><dd>{selected.address}</dd></div>
-              </dl>
-              <div className="mt-4 flex gap-2">
-                {canManageOrders(role) ? <Link to={`/clients/${selected.id}/edit`} className="inline-flex h-10 items-center rounded-lg border border-line px-3">정보 수정</Link> : null}
-                {canManageOrders(role) ? <Link to={`/orders/new?clientId=${selected.id}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-3 font-semibold text-white">+ 수주 등록</Link> : null}
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                <p>누적 수주<br /><span className="text-lg font-semibold">{ordersOf(selected.id).length}건</span></p>
-                <p>누적 거래액<br /><span className="text-lg font-semibold">{ordersOf(selected.id).reduce((sum, order) => sum + order.lines.reduce((lineSum, line) => lineSum + line.quantity * line.unitPrice, 0), 0).toLocaleString("ko-KR")}원</span></p>
+                </thead>
+                <tbody>
+                  {pageRows.map(({ item }) => {
+                    const active = selected?.item.id === item.id;
+                    return (
+                      <tr key={item.id} className={cn("h-[61px] cursor-pointer border-b border-line", active && "bg-primary-soft")} onClick={() => setSelectedId(String(item.id))}>
+                        <td className="pl-[14px]">
+                          <span className="flex items-center gap-2">
+                            <span className={cn("flex size-7 items-center justify-center rounded-[7px] text-[10px] font-bold", active ? "bg-primary/15 text-primary" : "bg-canvas")}>
+                              {item.company.slice(0, 1)}
+                            </span>
+                            <span className="text-[11px] font-bold">{item.company}</span>
+                          </span>
+                        </td>
+                        <td className="text-xs">{item.employee}</td>
+                        <td className="text-[10px]">{item.phone}</td>
+                        <td className="text-[10px] text-muted">{item.email}</td>
+                        <td className="text-xs">{item.totalOrder}건</td>
+                        <td className="text-right text-xs">₩{item.totalAmount.toLocaleString("ko-KR")}</td>
+                        <td className="text-center text-[10px] text-muted">-</td>
+                        <td className="pr-[14px]">
+                          <Link to={`/clients/${item.id}`} aria-label={`${item.company} 상세`} className="flex text-muted" onClick={(event) => event.stopPropagation()}>
+                            <ChevronRight size={14} />
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {loadError ? <tr><td colSpan={8} className="py-10 text-center text-xs text-danger">{loadError}</td></tr> : null}
+                  {!loadError && pageRows.length === 0 ? (
+                    <tr><td colSpan={8} className="py-10 text-center text-xs text-muted">조건에 맞는 거래처가 없습니다.</td></tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <Pager total={list.totalElements} page={page} pageSize={PAGE_SIZE} unit="개사" onChange={setPage} />
+          </section>
+
+          {canWrite ? (
+            <section className="flex items-start gap-[14px] rounded-[10px] border border-line bg-white p-[18px]">
+              <span className="size-[42px] shrink-0 rounded-[10px] bg-primary-soft" />
+              <div className="min-w-0 flex-1 space-y-1">
+                <p className="text-xs font-bold">여러 거래처를 한 번에 등록하세요</p>
+                <div className="text-[10px] text-muted">
+                  <p>첫 줄은 company, employee, email, phone, zipcode, road_address, detail_address, user_id, created_at, updated_at, created_by, updated_by 입니다.</p>
+                  <p>지원 형식 .xlsx, .xls</p>
+                </div>
               </div>
             </section>
-            <section className="rounded-xl border border-line bg-white p-5">
-              <h3 className="font-semibold">최근 수주</h3>
-              <ul className="mt-3 space-y-2 text-sm">
-                {ordersOf(selected.id).slice(0, 3).map((order) => (
-                  <li key={order.id} className="flex justify-between gap-2">
-                    <Link className="text-primary" to={`/orders/${order.id}`}>{order.orderNo}</Link>
-                    <span className="text-muted">{order.dueDate}</span>
-                  </li>
-                ))}
-              </ul>
+          ) : null}
+        </div>
+
+        {selected ? (
+          <aside className="space-y-4">
+            <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-bold">거래처 정보</h2>
+                <Link to={`/clients/${selected.item.id}`} aria-label="거래처 상세" className="text-muted">
+                  <Ellipsis size={18} />
+                </Link>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="flex size-[46px] items-center justify-center rounded-xl bg-primary-soft text-primary">
+                  <Building2 size={24} />
+                </span>
+                <div className="space-y-1">
+                  <p className="text-xl font-bold">{selected.item.company}</p>
+                  <p className="text-[10px] text-muted">{selected.detail?.userName || "담당 직원"}</p>
+                </div>
+              </div>
+              <hr className="border-line" />
+              <InfoRow label="대표자명" value={selected.item.employee} />
+              <InfoRow label="이메일" value={selected.item.email} muted />
+              <InfoRow label="연락처" value={selected.item.phone} />
+              <InfoRow label="주소" value={selected.detail?.address || "-"} />
+              {canWrite ? (
+                <div className="flex gap-2">
+                  <Link to={`/clients/${selected.item.id}/edit`} className="inline-flex h-8 items-center rounded-lg border border-line bg-white px-3 text-xs font-medium">
+                    정보 수정
+                  </Link>
+                </div>
+              ) : null}
+              <hr className="border-line" />
+              <div className="flex items-start justify-between">
+                <div className="space-y-[5px]">
+                  <p className="text-[10px] text-muted">누적 수주</p>
+                  <p className="text-xl font-bold">{selected.item.totalOrder}건</p>
+                </div>
+                <div className="space-y-[5px]">
+                  <p className="text-[10px] text-muted">누적 거래액</p>
+                  <p className="text-lg font-bold">₩{selected.item.totalAmount.toLocaleString("ko-KR")}</p>
+                </div>
+              </div>
+            </section>
+
+            <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
+              <h2 className="text-base font-bold">진행 중 수주</h2>
+              <p className="text-xs text-muted">{selected.detail ? `${selected.detail.ongoingOrders}건` : "불러오는 중입니다."}</p>
+            </section>
+
+            <section className="flex items-center gap-3 rounded-lg bg-primary-soft p-[15px]">
+              <Info size={18} className="shrink-0 text-primary" />
+              <div className="space-y-[3px]">
+                <p className="text-xs font-medium text-primary">수주와 연결되는 거래처 정보</p>
+                <p className="text-[11px] text-muted">견적 작성 시 회사명을 검색하면 연락처와 주소가 자동으로 입력됩니다.</p>
+              </div>
             </section>
           </aside>
         ) : null}
@@ -128,74 +277,526 @@ export function ClientListPage() {
   );
 }
 
-export function ClientFormPage() {
-  const { clientId } = useParams();
-  const db = useDb();
-  const navigate = useNavigate();
-  const show = useToastStore((state) => state.show);
-  const current = db.clients.find((client) => client.id === clientId);
-  const [form, setForm] = useState(current ?? { businessNumber: "", companyName: "", representative: "", address: "", phone: "", contactName: "", contactMobile: "", taxEmail: "" });
+function Metric({ label, value, icon }: { label: string; value: number; icon?: ReactNode }) {
   return (
-    <div>
-      <PageHeader title={current ? "거래처 수정" : "거래처 등록"} />
-      <form className="max-w-3xl" onSubmit={(event) => {
-        event.preventDefault();
-        try {
-          saveClient({ ...form, id: current?.id, businessNumber: digitsOnly(form.businessNumber) });
-          show("거래처를 저장했습니다.");
-          navigate("/clients");
-        } catch (error: unknown) {
-          show(error instanceof Error ? error.message : "저장하지 못했습니다.");
-        }
-      }}>
-        <Card className="grid gap-3 md:grid-cols-2">
-        <TextField label="사업자등록번호" value={form.businessNumber} onChange={(event) => setForm({ ...form, businessNumber: event.target.value })} />
-        <TextField label="회사명" value={form.companyName} onChange={(event) => setForm({ ...form, companyName: event.target.value })} />
-        <TextField label="대표자" value={form.representative} onChange={(event) => setForm({ ...form, representative: event.target.value })} />
-        <AddressPicker label="주소" value={form.address} onChange={(address) => setForm({ ...form, address })} />
-        <TextField label="대표전화" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
-        <TextField label="담당자명" value={form.contactName} onChange={(event) => setForm({ ...form, contactName: event.target.value })} />
-        <TextField label="담당자 휴대번호" value={form.contactMobile} onChange={(event) => setForm({ ...form, contactMobile: event.target.value })} />
-        <TextField label="세금계산서 이메일" value={form.taxEmail} onChange={(event) => setForm({ ...form, taxEmail: event.target.value })} />
-        <div className="flex justify-end md:col-span-2"><Button type="submit">저장</Button></div>
-        </Card>
-      </form>
+    <section className="flex items-center justify-between rounded-[10px] border border-line bg-white p-5">
+      <div className="space-y-[7px]">
+        <p className="text-[11px] text-muted">{label}</p>
+        <p className="text-2xl font-bold">{value}개사</p>
+      </div>
+      {icon}
+    </section>
+  );
+}
+
+function pageCountOf(total: number, pageSize: number): number {
+  return Math.max(1, Math.ceil(total / pageSize));
+}
+
+function Pager({ total, page, pageSize, unit, onChange }: { total: number; page: number; pageSize: number; unit: string; onChange: (page: number) => void }) {
+  const pageCount = pageCountOf(total, pageSize);
+  const first = (page - 1) * pageSize + 1;
+  const last = Math.min(total, page * pageSize);
+  return (
+    <div className="flex items-center justify-between">
+      <p className="text-[11px] text-muted">총 {total}{unit} 중 {total ? `${first}–${last}` : "0"}{unit} 표시</p>
+      {pageCount > 1 ? (
+        <div className="flex items-center gap-[5px] text-[11px] font-medium">
+          <button type="button" aria-label="이전 페이지" className="text-muted disabled:opacity-40" disabled={page === 1} onClick={() => onChange(page - 1)}>
+            <ChevronLeft size={15} />
+          </button>
+          {Array.from({ length: pageCount }, (_, index) => index + 1).map((number) => (
+            <button
+              key={number}
+              type="button"
+              className={cn("size-[29px] rounded-md", number === page ? "bg-primary-soft text-primary" : "bg-white text-muted")}
+              onClick={() => onChange(number)}
+            >
+              {number}
+            </button>
+          ))}
+          <button type="button" aria-label="다음 페이지" className="text-muted disabled:opacity-40" disabled={page === pageCount} onClick={() => onChange(page + 1)}>
+            <ChevronRight size={15} />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
+
+function InfoRow({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
+  return (
+    <div className="space-y-[5px]">
+      <p className="text-[10px] text-muted">{label}</p>
+      <p className={cn("text-xs", muted && "text-muted")}>{value || "-"}</p>
+    </div>
+  );
+}
+
+const emptyClient = { companyName: "", representative: "", zipcode: "", roadAddress: "", detailAddress: "", phone: "", contactName: "", contactMobile: "", taxEmail: "" };
+
+export function ClientFormPage() {
+  const { clientId } = useParams();
+  const navigate = useNavigate();
+  const show = useToastStore((state) => state.show);
+  const manager = useAuthStore((state) => state.user);
+  const [form, setForm] = useState(emptyClient);
+  const [checked, setChecked] = useState(false);
+  const [duplicates, setDuplicates] = useState<ClientListItem[]>([]);
+  const editing = Boolean(clientId);
+  useEffect(() => {
+    if (!clientId) return;
+    const id = Number(clientId);
+    if (!Number.isInteger(id)) return;
+    getClient(id).then((detail) => {
+      setForm({
+        companyName: detail.company,
+        representative: detail.employee,
+        zipcode: "",
+        roadAddress: detail.address,
+        detailAddress: "",
+        phone: detail.phone,
+        contactName: detail.userName,
+        contactMobile: detail.userPhone,
+        taxEmail: detail.email,
+      });
+    }).catch((error: unknown) => show(readApiErrorMessage(error)));
+  }, [clientId, show]);
+  const patch = (next: Partial<typeof form>) => {
+    setForm({ ...form, ...next });
+    setChecked(false);
+  };
+  const runDuplicateCheck = () => {
+    const companyName = form.companyName.trim();
+    if (!companyName) {
+      show("회사명을 입력한 뒤 중복을 확인하세요.");
+      return;
+    }
+    const phone = digitsOnly(form.phone);
+    void listClients({ keyword: companyName, page: 0, size: 20 }).then((response) => {
+      const found = response.content.filter((client) =>
+        String(client.id) !== clientId
+        && client.company.trim() === companyName
+        && (!phone || digitsOnly(client.phone) === phone),
+      );
+      setDuplicates(found);
+      setChecked(true);
+      show(found.length ? `같은 회사명의 거래처가 ${found.length}곳 있습니다.` : "겹치는 거래처가 없습니다.");
+    }).catch((error: unknown) => show(readApiErrorMessage(error)));
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-1.5">
+          <h1 className="text-[27px] font-bold">{editing ? "거래처 수정" : "거래처 등록"}</h1>
+          <p className="text-xs text-muted">
+            {editing
+              ? "등록된 거래처 정보를 수정합니다. 변경한 정보는 이후 견적 작성 시 자동으로 입력됩니다."
+              : "새 거래처의 기본 정보를 등록합니다. 등록된 정보는 견적 작성 시 자동으로 입력됩니다."}
+          </p>
+        </div>
+        <Link to="/clients" className="inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-4 text-[13px] font-medium">
+          <ArrowLeft size={16} className="text-muted" />
+          거래처 목록으로
+        </Link>
+      </div>
+
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <form
+          className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!checked) {
+              show("등록 전에 중복 확인을 눌러 주세요.");
+              return;
+            }
+            const userId = Number(manager?.id);
+            if (!Number.isInteger(userId) || userId <= 0) {
+              show("로그인한 계정으로만 거래처를 저장할 수 있습니다.");
+              return;
+            }
+            const input = {
+              company: form.companyName.trim(),
+              employee: form.representative.trim(),
+              email: form.taxEmail.trim(),
+              phone: form.phone.trim(),
+              userId,
+              address: { zipcode: form.zipcode.trim(), roadAddress: form.roadAddress.trim(), detailAddress: form.detailAddress.trim() },
+            };
+            const request = editing && clientId ? updateClient(Number(clientId), input) : createClient(input);
+            void request.then(() => {
+              show(editing ? "거래처를 수정했습니다." : "거래처를 등록했습니다.");
+              navigate("/clients");
+            }).catch((error: unknown) => show(readApiErrorMessage(error)));
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="space-y-[3px]">
+              <h2 className="text-base font-bold">거래처 기본 정보</h2>
+              <p className="text-[11px] text-muted">회사명, 대표자, 주소, 대표전화는 필수 입력 항목입니다.</p>
+            </div>
+            <span className="text-[10px] text-muted">* 필수 입력 항목</span>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-end gap-2.5">
+              <FormField label="회사명 *" className="flex-1">
+                <input required placeholder="정식 회사명을 입력하세요" value={form.companyName} className={inputClass} onChange={(event) => patch({ companyName: event.target.value })} />
+              </FormField>
+              <Button tone="ghost" className="shrink-0 text-[13px] font-medium" onClick={runDuplicateCheck}>중복 확인</Button>
+            </div>
+            <p className="text-[10px] text-muted">
+              {checked
+                ? duplicates.length
+                  ? "같은 회사명의 거래처가 있습니다. 아래 목록을 확인한 뒤 새로 등록할지 정하세요."
+                  : "겹치는 거래처가 없습니다. 등록을 계속하세요."
+                : "회사명과 연락처가 같은 거래처가 있는지 먼저 확인해 주세요."}
+            </p>
+            {checked && duplicates.length > 0 ? (
+              <ul className="rounded-[7px] border border-line">
+                {duplicates.map((client) => (
+                  <li key={client.id}>
+                    <Link to={`/clients/${client.id}`} className="flex items-center justify-between px-3 py-2 text-xs hover:bg-primary-soft">
+                      <span className="font-medium">{client.company}</span>
+                      <span className="text-muted">{client.employee} · {client.phone}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+
+          <div className="grid gap-[14px] sm:grid-cols-2">
+            <FormField label="대표자명 *">
+              <input required placeholder="예: 홍길동" value={form.representative} className={inputClass} onChange={(event) => patch({ representative: event.target.value })} />
+            </FormField>
+            <FormField label="연락처 *">
+              <input required placeholder="예: 02-1234-5678" value={form.phone} className={inputClass} onChange={(event) => patch({ phone: event.target.value })} />
+            </FormField>
+            <FormField label="이메일">
+              <input type="email" placeholder="예: user1234@company.com" value={form.taxEmail} className={inputClass} onChange={(event) => patch({ taxEmail: event.target.value })} />
+            </FormField>
+            <FormField label="담당 직원">
+              <span className="relative block">
+                <select
+                  className={`${inputClass} appearance-none pr-9`}
+                  value={manager?.id ?? ""}
+                  onChange={() => undefined}
+                >
+                  <option value={manager?.id ?? ""}>{manager ? `${manager.name} · 로그인한 계정` : "로그인 필요"}</option>
+                </select>
+                <ChevronDown size={14} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
+              </span>
+            </FormField>
+          </div>
+
+          <hr className="border-line" />
+
+          <CompanyAddress
+            zipcode={form.zipcode}
+            road={form.roadAddress}
+            detail={form.detailAddress}
+            onSearch={() => {
+              if (!window.daum?.Postcode) {
+                show("우편번호 서비스를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+                return;
+              }
+              new window.daum.Postcode({
+                oncomplete: (data) => {
+                  patch({
+                    zipcode: data.zonecode,
+                    roadAddress: data.roadAddress || data.address,
+                  });
+                },
+              }).open();
+            }}
+            onDetail={(detailAddress) => patch({ detailAddress })}
+          />
+
+          <section className="flex items-start gap-3 rounded-lg bg-primary-soft p-[15px]">
+            <Info size={18} className="shrink-0 text-primary" />
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-primary">등록 전 중복 여부를 확인하세요</p>
+              <p className="text-[11px] text-muted">이미 등록된 회사라면 새로 등록하지 않고 기존 정보를 수정해 주세요. 같은 이름의 회사는 연락처와 주소를 함께 확인하세요.</p>
+            </div>
+          </section>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">
+            <p className="text-[11px] text-muted">입력 내용을 확인한 후 등록해 주세요.</p>
+            <div className="flex gap-2">
+              <Button tone="ghost" className="text-[13px] font-medium" onClick={() => navigate("/clients")}>취소</Button>
+              <Button type="submit" className="gap-2 text-[13px] font-medium">
+                <Check size={16} />
+                {editing ? "수정 저장" : "거래처 등록"}
+              </Button>
+            </div>
+          </div>
+        </form>
+
+        <aside className="space-y-4">
+          <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
+            <h2 className="text-base font-bold">등록 안내</h2>
+            <ol className="space-y-5">
+              {registrationSteps.map((step, index) => (
+                <li key={step.title} className="flex items-start gap-2.5">
+                  <span className="flex size-[23px] shrink-0 items-center justify-center rounded-xl bg-primary-soft text-[10px] font-bold text-primary">{index + 1}</span>
+                  <span className="space-y-[5px]">
+                    <span className="block text-xs font-medium">{step.title}</span>
+                    <span className="block text-[11px] text-muted">{step.body}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
+          <section className="flex items-start gap-3 rounded-lg bg-primary-soft p-[15px]">
+            <Info size={18} className="shrink-0 text-primary" />
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-primary">다음 수주부터 더 빠르게</p>
+              <p className="text-[11px] text-muted">회사명을 선택하면 연락처와 주소를 다시 입력하지 않아도 됩니다.</p>
+            </div>
+          </section>
+          {editing ? null : (
+            <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
+              <h2 className="text-base font-bold">여러 거래처를 등록하나요?</h2>
+              <div className="flex items-start gap-2.5">
+                <FileSpreadsheet size={20} className="shrink-0 text-primary" />
+                <p className="text-[11px] text-muted">거래처 관리의 엑셀 일괄등록을 이용하세요. 지정 양식의 .xlsx, .xls 파일을 지원합니다.</p>
+              </div>
+              <Link to="/clients" className="block text-[11px] text-primary">거래처 관리로 →</Link>
+            </section>
+          )}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+const inputClass = "h-[41px] w-full rounded-[7px] border border-line bg-white px-3 text-xs placeholder:text-muted/70";
+
+function CompanyAddress({
+  zipcode,
+  road,
+  detail,
+  onSearch,
+  onDetail,
+}: {
+  zipcode: string;
+  road: string;
+  detail: string;
+  onSearch: () => void;
+  onDetail: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-[7px]">
+      <p className="text-xs font-medium">회사 주소 *</p>
+      <div className="flex items-center gap-2">
+        <input readOnly value={zipcode} placeholder="우편번호" className={inputClass} />
+        <button type="button" className="h-[41px] shrink-0 rounded-[7px] border border-line bg-white px-4 text-[13px] font-medium" onClick={onSearch}>
+          우편번호 찾기
+        </button>
+      </div>
+      <span className="relative block">
+        <input readOnly value={road} placeholder="도로명 주소를 입력하세요" className={`${inputClass} pr-9`} />
+        <MapPin size={15} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
+      </span>
+      <input placeholder="건물명, 층, 호수 등 상세 주소를 입력하세요" value={detail} className={inputClass} onChange={(event) => onDetail(event.target.value)} />
+      <p className="text-[10px] text-muted">견적 작성 때 거래처 주소로 채워집니다. 배송지는 승인된 견적으로 수주를 등록할 때 확인합니다.</p>
+    </div>
+  );
+}
+
+const registrationSteps = [
+  { title: "기본 정보 입력", body: "회사명과 연락처를 정확하게 입력해 주세요." },
+  { title: "기존 거래처 확인", body: "중복 확인으로 같은 회사명과 연락처의 거래처를 비교하세요." },
+  { title: "견적에서 바로 사용", body: "등록 후 견적 작성 화면에서 회사명을 검색할 수 있습니다." },
+];
+
+function FormField({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <label className={cn("block space-y-[7px]", className)}>
+      <span className="block text-xs font-medium">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+const HISTORY_PAGE_SIZE = 10;
 
 export function ClientDetailPage() {
   const { clientId = "" } = useParams();
-  const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
-  const client = db.clients.find((item) => item.id === clientId);
-  if (!client) return <p>거래처를 찾을 수 없습니다.</p>;
-  const orders = db.orders.filter((order) => order.clientId === client.id);
+  const [page, setPage] = useState(1);
+  const [detail, setDetail] = useState<ClientDetail | null>(null);
+  const [loadError, setLoadError] = useState("");
+  useEffect(() => {
+    const id = Number(clientId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setLoadError("거래처를 찾을 수 없습니다.");
+      return;
+    }
+    let ignore = false;
+    getClient(id).then((response) => {
+      if (!ignore) setDetail(response);
+    }).catch((error: unknown) => {
+      if (!ignore) setLoadError(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [clientId]);
+  if (loadError) return <p>{loadError}</p>;
+  if (!detail) return <p>거래처를 불러오는 중입니다.</p>;
+  const client = {
+    id: String(detail.id),
+    companyName: detail.company,
+    representative: detail.employee,
+    phone: detail.phone,
+    contactName: detail.userName,
+    contactMobile: detail.userPhone,
+    taxEmail: detail.email,
+  };
+  const canWrite = canManageOrders(role);
+  const history: never[] = [];
+  const breakdown = `진행 중 ${detail.ongoingOrders}건`;
+  const currentPage = Math.min(page, pageCountOf(history.length, HISTORY_PAGE_SIZE));
+
   return (
-    <div className="space-y-4">
-      <PageHeader title={client.companyName} action={canManageOrders(role) ? <Link to={`/clients/${client.id}/edit`}><Button tone="ghost">수정</Button></Link> : null} />
-      <Card className="grid gap-2 md:grid-cols-2">
-        <p>사업자번호 {client.businessNumber}</p>
-        <p>대표 {client.representative}</p>
-        <p>주소 {client.address}</p>
-        <p>전화 {client.phone}</p>
-        <p>담당 {client.contactName} {client.contactMobile}</p>
-        <p>이메일 {client.taxEmail}</p>
-      </Card>
-      <Card>
-        <h2 className="mb-2 font-semibold">관련 수주</h2>
-        <ul>{orders.map((order) => <li key={order.id}><Link className="text-primary" to={`/orders/${order.id}`}>{order.orderNo}</Link></li>)}</ul>
-      </Card>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-1.5">
+          <h1 className="text-[27px] font-bold">거래처 상세</h1>
+          <p className="text-xs text-muted">거래처 기본 정보와 연결된 수주 및 거래 내역을 확인합니다.</p>
+        </div>
+        <div className="flex gap-2">
+          <Link to="/clients" className="inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-4 text-[13px] font-medium">
+            <ArrowLeft size={16} className="text-muted" />
+            목록으로
+          </Link>
+          {canWrite ? (
+            <>
+              <Link to={`/clients/${client.id}/edit`} className="inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-4 text-[13px] font-medium">
+                <Pencil size={13} />
+                정보 수정
+              </Link>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <DetailMetric label="누적 수주" icon={<ClipboardList size={20} />} value={`${detail.totalOrder}건`} caption={breakdown} />
+        <DetailMetric label="누적 거래액" icon={<Building2 size={20} />} value={`₩${detail.totalAmount.toLocaleString("ko-KR")}`} caption="서버에 집계된 수주 금액" />
+        <DetailMetric
+          label="진행 중 수주"
+          icon={<CalendarDays size={20} />}
+          value={`${detail.ongoingOrders}건`}
+          caption="완료되지 않은 수주"
+        />
+      </div>
+
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_316px]">
+        <div className="min-w-0 space-y-5">
+          <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
+            <h2 className="text-base font-bold">거래처 정보</h2>
+            <div className="flex items-center gap-[14px]">
+              <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
+                <Building2 size={26} />
+              </span>
+              <div className="space-y-1">
+                <p className="text-[21px] font-bold">{client.companyName}</p>
+                <p className="text-[11px] text-muted">{detail.userName} 담당</p>
+              </div>
+            </div>
+            <hr className="border-line" />
+            <div className="grid gap-[18px] sm:grid-cols-2 sm:gap-x-6">
+              <DetailField label="대표자명" value={client.representative} />
+              <DetailField label="연락처" value={client.phone} />
+              <DetailField label="담당 직원" value={client.contactName} />
+              <DetailField label="담당자 휴대번호" value={client.contactMobile} />
+              <DetailField label="회사 주소" value={detail.address} wide />
+              <DetailField label="거래처 이메일" value={client.taxEmail} wide />
+            </div>
+          </section>
+          <section className="flex items-start gap-3 rounded-lg bg-primary-soft p-[15px]">
+            <Info size={18} className="shrink-0 text-primary" />
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-primary">수주와 연결되는 거래처 정보</p>
+              <p className="text-[11px] text-muted">견적 작성에서 이 거래처를 선택하면 연락처와 주소가 채워집니다. 배송지는 승인 후 수주 등록에서 확인합니다.</p>
+            </div>
+          </section>
+        </div>
+
+        <aside className="space-y-4">
+          <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
+            <h2 className="text-base font-bold">최근 수주</h2>
+            <p className="text-xs text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</p>
+          </section>
+          <section className="flex items-start justify-between rounded-[10px] border border-line bg-white p-[18px] text-xs">
+            <span className="text-muted">진행 중인 수주</span>
+            <span className="font-bold text-primary">{detail.ongoingOrders}건</span>
+          </section>
+        </aside>
+      </div>
+
+      <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
+        <div className="flex items-center justify-between gap-3">
+          <div className="space-y-[3px]">
+            <h2 className="text-base font-bold">수주 이력</h2>
+            <p className="text-[11px] text-muted">{client.companyName}의 전체 수주 {history.length}건 · 최근 등록순</p>
+          </div>
+          <span className="text-[11px] text-muted">금액은 VAT 포함</span>
+        </div>
+        <div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-left [&_td]:pr-4 [&_th]:pr-4">
+              <thead className="border-y border-line bg-canvas/60 text-[11px] text-muted">
+                <tr className="h-10 whitespace-nowrap [&_th]:font-normal">
+                  <th className="w-[173px] pl-[14px]">수주번호 / 등록일</th>
+                  <th>생산 품목</th>
+                  <th>총 생산 수량</th>
+                  <th className="w-[145px]">수주 금액</th>
+                  <th className="w-[125px]">납기일</th>
+                  <th className="w-[100px]">진행 상태</th>
+                  <th className="w-[105px]">입금 확인</th>
+                  <th className="w-[34px] pr-[14px]"><span className="sr-only">상세</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.length === 0 ? (
+                  <tr><td colSpan={8} className="py-10 text-center text-xs text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</td></tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+          <div className="pt-4">
+            <Pager total={history.length} page={currentPage} pageSize={HISTORY_PAGE_SIZE} unit="건" onChange={setPage} />
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
 
-function download(content: string, name: string) {
-  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = name;
-  link.click();
-  URL.revokeObjectURL(url);
+function DetailMetric({ label, icon, value, caption }: { label: string; icon: ReactNode; value: string; caption: string }) {
+  return (
+    <section className="space-y-2 rounded-[10px] border border-line bg-white p-5">
+      <div className="flex items-start justify-between">
+        <p className="text-[11px] text-muted">{label}</p>
+        <span className="text-primary">{icon}</span>
+      </div>
+      <p className="text-2xl font-bold">{value}</p>
+      <p className="text-[10px] text-muted">{caption}</p>
+    </section>
+  );
 }
+
+function DetailField({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+  return (
+    <div className={cn("space-y-1.5", wide && "sm:col-span-2")}>
+      <p className="text-[11px] text-muted">{label}</p>
+      <p className="text-[13px]">{value || "-"}</p>
+    </div>
+  );
+}
+
