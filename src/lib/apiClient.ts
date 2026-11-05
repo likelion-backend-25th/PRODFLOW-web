@@ -2,7 +2,6 @@ import axios from "axios";
 
 export const apiClient = axios.create({
   baseURL: "/api/v1",
-  withCredentials: true,
 });
 
 apiClient.interceptors.request.use((config) => {
@@ -14,23 +13,6 @@ apiClient.interceptors.request.use((config) => {
   }
   return config;
 });
-
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error: unknown) => {
-    if (axios.isAxiosError(error) && error.response?.status === 401) {
-      const url = error.config?.url ?? "";
-      const loggingIn = url.includes("/auth/login");
-      if (!loggingIn) {
-        localStorage.removeItem("prodflow-session");
-        if (!window.location.pathname.startsWith("/login")) {
-          window.location.assign("/login");
-        }
-      }
-    }
-    return Promise.reject(error);
-  },
-);
 
 export function readApiErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
