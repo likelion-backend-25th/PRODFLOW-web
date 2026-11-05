@@ -344,7 +344,7 @@ function timestamp(): number {
 }
 
 function todayStats(db: Database): Array<{ label: string; value: string; question: string }> {
-  const running = db.workOrders.filter((item) => item.status === "IN_PRODUCTION").length;
+  const running = db.workOrders.filter((item) => item.status === "PRODUCE").length;
   const available = db.lines.filter((line) => line.status === "AVAILABLE").length;
   const unpaidClients = new Set(db.orders.filter((order) => order.status !== "CANCELLED" && order.paymentStatus !== "PAID").map((order) => order.clientId)).size;
   return [

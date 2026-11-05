@@ -77,7 +77,7 @@ function byCreated(left: Order, right: Order): number {
 }
 
 function lockedWorkOrders(db: Database, orderId: string): WorkOrder[] {
-  return orderWorkOrders(db, orderId).filter((item) => item.status !== "READY");
+  return orderWorkOrders(db, orderId).filter((item) => item.status !== "PREPARE");
 }
 
 function lockedAllocations(db: Database, orderId: string): ReturnType<typeof mergeAllocations> {
@@ -205,22 +205,28 @@ function rescheduleFactory(db: Database, actor: Actor, focus?: { orderId: string
 }
 
 function orderWorkOrders(db: Database, orderId: string): WorkOrder[] {
-  return db.workOrders.filter((item) => item.orderId === orderId && item.status !== "CANCELLED");
+  return db.workOrders.filter((item) => item.orderId === orderId);
+}
+
+function productionDone(status: WorkOrder["status"]): boolean {
+  return status === "PACK" || status === "PACK_DONE";
 }
 
 function syncOrderFromWorkOrders(db: Database, order: Order, actor: Actor, note?: string): void {
   const active = orderWorkOrders(db, order.id);
-  order.producedQuantity = active.filter((item) => item.status === "COMPLETED").reduce((sum, item) => sum + item.quantity, 0);
+  order.producedQuantity = active.filter((item) => productionDone(item.status)).reduce((sum, item) => sum + item.quantity, 0);
   if (active.length === 0) return;
-  if (active.every((item) => item.status === "COMPLETED")) {
-    setOrderStatus(db, order, "PACKING", actor, note);
+  if (active.every((item) => productionDone(item.status))) {
+    if (order.status === "CONFIRMED" || order.status === "IN_PRODUCTION" || order.status === "ON_HOLD" || order.status === "PACKING") {
+      setOrderStatus(db, order, "PACKING", actor, note);
+    }
     return;
   }
-  if (active.some((item) => item.status === "IN_PRODUCTION")) {
+  if (active.some((item) => item.status === "PRODUCE")) {
     setOrderStatus(db, order, "IN_PRODUCTION", actor, note);
     return;
   }
-  if (active.some((item) => item.status === "PAUSED")) {
+  if (active.some((item) => item.status === "SUSPEND")) {
     setOrderStatus(db, order, "ON_HOLD", actor, note);
     return;
   }
@@ -230,7 +236,7 @@ function syncOrderFromWorkOrders(db: Database, order: Order, actor: Actor, note?
 function openReadyWork(db: Database): Array<{ workOrder: WorkOrder; order: Order }> {
   const assignable = new Set<OrderStatus>(["CONFIRMED", "IN_PRODUCTION", "ON_HOLD"]);
   return db.workOrders
-    .filter((item) => item.status === "READY" && !item.assigneeId)
+    .filter((item) => item.status === "PREPARE" && !item.assigneeId)
     .map((item) => ({ workOrder: item, order: db.orders.find((order) => order.id === item.orderId) }))
     .filter((item): item is { workOrder: WorkOrder; order: Order } => Boolean(item.order && assignable.has(item.order.status)))
     .sort((left, right) => left.order.dueDate.localeCompare(right.order.dueDate));
@@ -238,7 +244,7 @@ function openReadyWork(db: Database): Array<{ workOrder: WorkOrder; order: Order
 
 function assignOne(db: Database): void {
   const busy = new Set(
-    db.workOrders.filter((item) => item.status === "IN_PRODUCTION" && item.assigneeId).map((item) => item.assigneeId as string),
+    db.workOrders.filter((item) => item.status === "PRODUCE" && item.assigneeId).map((item) => item.assigneeId as string),
   );
   const candidates = db.users.filter(
     (user) => user.role === "PRODUCTION_MANAGER" && user.status === "ACTIVE" && user.clockedIn && !busy.has(user.id),
@@ -248,7 +254,7 @@ function assignOne(db: Database): void {
     return;
   }
   const unstarted = (userId: string) =>
-    db.workOrders.filter((item) => item.assigneeId === userId && item.status === "READY").reduce((sum, item) => sum + item.quantity, 0);
+    db.workOrders.filter((item) => item.assigneeId === userId && item.status === "PREPARE").reduce((sum, item) => sum + item.quantity, 0);
   let guard = 0;
   while (guard < 80) {
     const target = openReadyWork(db)[0];
@@ -268,7 +274,7 @@ function assignByNextDayCount(db: Database): void {
     db.workOrders.filter(
       (item) =>
         item.assigneeId === userId &&
-        (item.status === "READY" || item.status === "IN_PRODUCTION" || item.status === "PAUSED") &&
+        (item.status === "PREPARE" || item.status === "PRODUCE" || item.status === "SUSPEND" || item.status === "HALT") &&
         item.allocations.some((slot) => slot.date === tomorrow),
     ).length;
   let guard = 0;
@@ -284,27 +290,28 @@ function assignByNextDayCount(db: Database): void {
 }
 
 function occupiesLineCapacity(status: WorkOrder["status"]): boolean {
-  return status === "READY" || status === "IN_PRODUCTION" || status === "PAUSED";
+  return status === "PREPARE" || status === "PRODUCE" || status === "SUSPEND" || status === "HALT";
 }
 
 function occupyingWorkOrders(db: Database, orderId: string, pendingReady: Set<string>): WorkOrder[] {
   return db.workOrders.filter((item) => {
     if (!item.lineId || !occupiesLineCapacity(item.status)) return false;
-    if (item.orderId === orderId && item.status === "READY") return false;
-    if (item.status === "READY" && pendingReady.has(item.orderId)) return false;
+    if (item.orderId === orderId && item.status === "PREPARE") return false;
+    if (item.status === "PREPARE" && pendingReady.has(item.orderId)) return false;
     return true;
   });
 }
 
 function rebuildReadyWorkOrders(db: Database, order: Order, actor: Actor, pendingReady: Set<string>): void {
   if (order.coveredQuantity <= 0) return;
-  const locked = orderWorkOrders(db, order.id).filter((item) => item.status !== "READY");
+  const locked = orderWorkOrders(db, order.id).filter((item) => item.status !== "PREPARE");
   const lockedQty = locked.reduce((sum, item) => sum + item.quantity, 0);
   const readyQty = order.coveredQuantity - lockedQty;
   if (readyQty < 0) throw new Error("이미 생산 중인 수량보다 줄일 수 없습니다.");
-  const existingReady = db.workOrders.filter((item) => item.orderId === order.id && item.status === "READY");
+  const existingReady = db.workOrders.filter((item) => item.orderId === order.id && item.status === "PREPARE");
   if (readyQty === 0) {
-    for (const item of existingReady) item.status = "CANCELLED";
+    const drop = new Set(existingReady.map((item) => item.id));
+    db.workOrders = db.workOrders.filter((item) => !drop.has(item.id));
     return;
   }
   const holidays = db.holidays.map((holiday) => holiday.date);
@@ -336,7 +343,7 @@ function rebuildReadyWorkOrders(db: Database, order: Order, actor: Actor, pendin
     db.workOrders.unshift({
       id,
       orderId: order.id,
-      status: "READY",
+      status: "PREPARE",
       assigneeId: null,
       lineId: chunk.lineId,
       quantity: chunk.quantity,
@@ -348,11 +355,10 @@ function rebuildReadyWorkOrders(db: Database, order: Order, actor: Actor, pendin
       startedAt: null,
       completedAt: null,
     });
-    pushHistory(db, "WORK_ORDER", id, "NONE", "READY", actor);
+    pushHistory(db, "WORK_ORDER", id, "NONE", "PREPARE", actor);
   }
-  for (const item of existingReady) {
-    if (!used.has(item.id)) item.status = "CANCELLED";
-  }
+  const unused = new Set(existingReady.filter((item) => !used.has(item.id)).map((item) => item.id));
+  if (unused.size > 0) db.workOrders = db.workOrders.filter((item) => !unused.has(item.id));
 }
 
 function syncCoveredQuantity(order: Order): void {
@@ -363,7 +369,7 @@ function syncCoveredQuantity(order: Order): void {
 
 function lineCandidates(db: Database): string[] {
   const held = new Set(
-    db.workOrders.filter((item) => item.lineId && (item.status === "IN_PRODUCTION" || item.status === "PAUSED")).map((item) => item.lineId as string),
+    db.workOrders.filter((item) => item.lineId && (item.status === "PRODUCE" || item.status === "SUSPEND")).map((item) => item.lineId as string),
   );
   return db.lines.filter((line) => line.status === "AVAILABLE" && !held.has(line.id)).map((line) => line.id);
 }
@@ -782,7 +788,7 @@ export function clockOut(userId: string): void {
   updateDb((db) => {
     const user = db.users.find((item) => item.id === userId);
     if (!user || !user.clockedIn) throw new Error("출근 중이 아닙니다.");
-    const running = db.workOrders.some((item) => item.assigneeId === userId && item.status === "IN_PRODUCTION");
+    const running = db.workOrders.some((item) => item.assigneeId === userId && item.status === "PRODUCE");
     if (running) throw new Error("생산중인 작업을 완료하거나 일시정지한 뒤에 퇴근하세요.");
     endShift(db, user);
   });
@@ -793,7 +799,7 @@ export function startProduction(workOrderId: string, lineId: string, actor: Acto
     const workOrder = requireWorkOrder(db, workOrderId);
     const order = requireOrder(db, workOrder.orderId);
     if (workOrder.assigneeId !== actor.id) throw new Error("배정된 담당자만 생산을 시작할 수 있습니다.");
-    if (workOrder.status !== "READY" || !["CONFIRMED", "IN_PRODUCTION", "ON_HOLD"].includes(order.status)) {
+    if (workOrder.status !== "PREPARE" || !["CONFIRMED", "IN_PRODUCTION", "ON_HOLD"].includes(order.status)) {
       throw new Error("생산 시작은 준비 상태 작업에서만 할 수 있습니다.");
     }
     if (workOrder.plannedStartDate > todayISO()) {
@@ -803,11 +809,11 @@ export function startProduction(workOrderId: string, lineId: string, actor: Acto
     const line = db.lines.find((item) => item.id === lineId);
     if (!line) throw new Error("라인을 찾을 수 없습니다.");
     workOrder.lineId = lineId;
-    workOrder.status = "IN_PRODUCTION";
+    workOrder.status = "PRODUCE";
     workOrder.startedAt = nowStamp();
-    line.status = "RUNNING";
+    line.status = "OPERATING";
     setOrderStatus(db, order, "IN_PRODUCTION", actor);
-    pushHistory(db, "WORK_ORDER", workOrder.id, "READY", "IN_PRODUCTION", actor);
+    pushHistory(db, "WORK_ORDER", workOrder.id, "PREPARE", "PRODUCE", actor);
   });
 }
 
@@ -816,13 +822,27 @@ export function stopProduction(workOrderId: string, reason: string, actor: Actor
   updateDb((db) => {
     const workOrder = requireWorkOrder(db, workOrderId);
     const order = requireOrder(db, workOrder.orderId);
-    if (workOrder.status !== "IN_PRODUCTION") throw new Error("생산중인 작업만 중지할 수 있습니다.");
+    if (workOrder.status !== "PRODUCE" && workOrder.status !== "SUSPEND") throw new Error("생산중이거나 일시정지인 작업만 중지할 수 있습니다.");
+    const from = workOrder.status;
     const line = db.lines.find((item) => item.id === workOrder.lineId);
     if (line) line.status = "AVAILABLE";
-    workOrder.status = "READY";
+    workOrder.status = "HALT";
     workOrder.startedAt = null;
     syncOrderFromWorkOrders(db, order, actor, note);
-    pushHistory(db, "WORK_ORDER", workOrder.id, "IN_PRODUCTION", "READY", actor, note);
+    pushHistory(db, "WORK_ORDER", workOrder.id, from, "HALT", actor, note);
+  });
+}
+
+export function returnToPrepare(workOrderId: string, actor: Actor): void {
+  updateDb((db) => {
+    const workOrder = requireWorkOrder(db, workOrderId);
+    const order = requireOrder(db, workOrder.orderId);
+    if (workOrder.status !== "HALT") throw new Error("생산 중지인 작업만 준비로 되돌릴 수 있습니다.");
+    if (order.status === "CANCELLED") throw new Error("취소된 수주의 작업은 다시 준비할 수 없습니다.");
+    workOrder.status = "PREPARE";
+    workOrder.startedAt = null;
+    syncOrderFromWorkOrders(db, order, actor);
+    pushHistory(db, "WORK_ORDER", workOrder.id, "HALT", "PREPARE", actor);
   });
 }
 
@@ -831,10 +851,10 @@ export function holdProduction(workOrderId: string, reason: string, actor: Actor
   updateDb((db) => {
     const workOrder = requireWorkOrder(db, workOrderId);
     const order = requireOrder(db, workOrder.orderId);
-    if (workOrder.status !== "IN_PRODUCTION") throw new Error("생산중인 작업만 보류할 수 있습니다.");
-    workOrder.status = "PAUSED";
+    if (workOrder.status !== "PRODUCE") throw new Error("생산중인 작업만 일시정지할 수 있습니다.");
+    workOrder.status = "SUSPEND";
     syncOrderFromWorkOrders(db, order, actor, note);
-    pushHistory(db, "WORK_ORDER", workOrder.id, "IN_PRODUCTION", "PAUSED", actor, note);
+    pushHistory(db, "WORK_ORDER", workOrder.id, "PRODUCE", "SUSPEND", actor, note);
   });
 }
 
@@ -842,10 +862,10 @@ export function resumeProduction(workOrderId: string, actor: Actor): void {
   updateDb((db) => {
     const workOrder = requireWorkOrder(db, workOrderId);
     const order = requireOrder(db, workOrder.orderId);
-    if (workOrder.status !== "PAUSED") throw new Error("보류 중인 작업만 해제할 수 있습니다.");
-    workOrder.status = "IN_PRODUCTION";
+    if (workOrder.status !== "SUSPEND") throw new Error("일시정지인 작업만 다시 시작할 수 있습니다.");
+    workOrder.status = "PRODUCE";
     syncOrderFromWorkOrders(db, order, actor);
-    pushHistory(db, "WORK_ORDER", workOrder.id, "PAUSED", "IN_PRODUCTION", actor);
+    pushHistory(db, "WORK_ORDER", workOrder.id, "SUSPEND", "PRODUCE", actor);
   });
 }
 
@@ -853,14 +873,14 @@ export function completeProduction(workOrderId: string, actor: Actor): void {
   updateDb((db) => {
     const workOrder = requireWorkOrder(db, workOrderId);
     const order = requireOrder(db, workOrder.orderId);
-    if (workOrder.status !== "IN_PRODUCTION") throw new Error("생산중인 작업만 완료할 수 있습니다.");
+    if (workOrder.status !== "PRODUCE") throw new Error("생산중인 작업만 포장으로 넘길 수 있습니다.");
     const from = workOrder.status;
-    workOrder.status = "COMPLETED";
+    workOrder.status = "PACK";
     workOrder.completedAt = nowStamp();
     const line = db.lines.find((item) => item.id === workOrder.lineId);
-    if (line && line.status === "RUNNING") line.status = "AVAILABLE";
+    if (line && line.status === "OPERATING") line.status = "AVAILABLE";
     syncOrderFromWorkOrders(db, order, actor);
-    pushHistory(db, "WORK_ORDER", workOrder.id, from, "COMPLETED", actor);
+    pushHistory(db, "WORK_ORDER", workOrder.id, from, "PACK", actor);
     rescheduleFactory(db, actor);
     assignOne(db);
   });
@@ -870,6 +890,10 @@ export function markReadyToShip(orderId: string, actor: Actor): void {
   updateDb((db) => {
     const order = requireOrder(db, orderId);
     if (order.status !== "PACKING") throw new Error("포장중인 수주만 출고대기로 바꿀 수 있습니다.");
+    db.workOrders.filter((item) => item.orderId === order.id && item.status === "PACK").forEach((item) => {
+      item.status = "PACK_DONE";
+      pushHistory(db, "WORK_ORDER", item.id, "PACK", "PACK_DONE", actor);
+    });
     setOrderStatus(db, order, "READY_TO_SHIP", actor);
   });
 }
@@ -905,10 +929,10 @@ export function completeDelivery(orderId: string, actor: Actor): void {
 export function reassign(workOrderId: string, assigneeId: string, actor: Actor): void {
   updateDb((db) => {
     const workOrder = requireWorkOrder(db, workOrderId);
-    if (workOrder.status === "COMPLETED" || workOrder.status === "CANCELLED") throw new Error("끝난 작업지시의 담당자는 바꿀 수 없습니다.");
+    if (workOrder.status === "PACK" || workOrder.status === "PACK_DONE") throw new Error("포장으로 넘어간 작업지시의 담당자는 바꿀 수 없습니다.");
     const user = db.users.find((item) => item.id === assigneeId && item.role === "PRODUCTION_MANAGER" && item.status === "ACTIVE");
     if (!user) throw new Error("현장 관리자 계정만 담당자로 지정할 수 있습니다.");
-    if (workOrder.status === "IN_PRODUCTION" && db.workOrders.some((item) => item.id !== workOrder.id && item.assigneeId === user.id && item.status === "IN_PRODUCTION")) {
+    if (workOrder.status === "PRODUCE" && db.workOrders.some((item) => item.id !== workOrder.id && item.assigneeId === user.id && item.status === "PRODUCE")) {
       throw new Error(`${user.name}님은 이미 생산중인 작업이 있습니다.`);
     }
     const previous = db.users.find((item) => item.id === workOrder.assigneeId)?.name ?? "미배정";
@@ -920,15 +944,15 @@ export function reassign(workOrderId: string, assigneeId: string, actor: Actor):
 export function changeLine(workOrderId: string, lineId: string, actor: Actor): void {
   updateDb((db) => {
     const workOrder = requireWorkOrder(db, workOrderId);
-    if (workOrder.status !== "READY" && workOrder.status !== "IN_PRODUCTION" && workOrder.status !== "PAUSED") {
-      throw new Error("준비·생산중·보류 중에서만 라인을 바꿀 수 있습니다.");
+    if (workOrder.status !== "PREPARE" && workOrder.status !== "PRODUCE" && workOrder.status !== "SUSPEND" && workOrder.status !== "HALT") {
+      throw new Error("준비·생산·일시정지·생산 중지 중에서만 라인을 바꿀 수 있습니다.");
     }
     if (!lineCandidates(db).includes(lineId) && lineId !== workOrder.lineId) throw new Error("비어 있는 가동 가능 라인만 선택할 수 있습니다.");
     const previous = db.lines.find((item) => item.id === workOrder.lineId);
     const next = db.lines.find((item) => item.id === lineId);
-    if (workOrder.status !== "READY") {
+    if (workOrder.status === "PRODUCE" || workOrder.status === "SUSPEND") {
       if (previous) previous.status = "AVAILABLE";
-      if (next) next.status = "RUNNING";
+      if (next) next.status = "OPERATING";
     }
     workOrder.lineId = lineId;
     pushHistory(db, "WORK_ORDER", workOrder.id, workOrder.status, workOrder.status, actor, `라인 ${previous?.name ?? "없음"} → ${next?.name ?? lineId}`);
@@ -1097,8 +1121,8 @@ export function setLineStatus(lineId: string, status: LineStatus): void {
   updateDb((db) => {
     const line = db.lines.find((item) => item.id === lineId);
     if (!line) throw new Error("라인을 찾을 수 없습니다.");
-    const running = db.workOrders.some((item) => item.lineId === lineId && (item.status === "IN_PRODUCTION" || item.status === "PAUSED"));
-    if (running && status !== "RUNNING") throw new Error("생산이 걸려 있는 라인은 다른 라인으로 옮긴 뒤에 상태를 바꿉니다.");
+    const running = db.workOrders.some((item) => item.lineId === lineId && (item.status === "PRODUCE" || item.status === "SUSPEND"));
+    if (running && status !== "OPERATING") throw new Error("생산이 걸려 있는 라인은 다른 라인으로 옮긴 뒤에 상태를 바꿉니다.");
     line.status = status;
   });
 }
@@ -1121,7 +1145,7 @@ function endShift(db: Database, user: User): void {
 }
 
 function openWorkOrders(db: Database, userId: string): number {
-  return db.workOrders.filter((item) => item.assigneeId === userId && (item.status === "READY" || item.status === "IN_PRODUCTION" || item.status === "PAUSED")).length;
+  return db.workOrders.filter((item) => item.assigneeId === userId && (item.status === "PREPARE" || item.status === "PRODUCE" || item.status === "SUSPEND" || item.status === "HALT")).length;
 }
 
 function requireAccountChange(db: Database, user: User, next: { role: User["role"]; status: User["status"] }, actorId: string): void {

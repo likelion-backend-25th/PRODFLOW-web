@@ -34,16 +34,16 @@ export function delayTone(level: DelaySignal["level"]): string {
 }
 
 export function workOrdersOf(workOrders: WorkOrder[], orderId: string): WorkOrder[] {
-  return workOrders.filter((item) => item.orderId === orderId && item.status !== "CANCELLED");
+  return workOrders.filter((item) => item.orderId === orderId);
 }
 
 export function activeWorkOrder(workOrders: WorkOrder[], orderId: string): WorkOrder | undefined {
   const list = workOrdersOf(workOrders, orderId);
   return (
-    list.find((item) => item.status === "IN_PRODUCTION") ??
-    list.find((item) => item.status === "PAUSED") ??
-    list.find((item) => item.status === "READY" && !item.assigneeId) ??
-    list.find((item) => item.status === "READY") ??
+    list.find((item) => item.status === "PRODUCE") ??
+    list.find((item) => item.status === "SUSPEND") ??
+    list.find((item) => item.status === "PREPARE" && !item.assigneeId) ??
+    list.find((item) => item.status === "PREPARE") ??
     list[0]
   );
 }

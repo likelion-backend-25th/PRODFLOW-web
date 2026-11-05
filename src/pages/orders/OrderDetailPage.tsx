@@ -35,7 +35,7 @@ export function OrderDetailPage() {
   const client = db.clients.find((item) => item.id === order.clientId);
   const workOrders = workOrdersOf(db.workOrders, order.id);
   const orderHistory = db.histories.filter((item) => item.entity === "ORDER" && item.entityId === order.id);
-  const delay = delayOf(order, workOrders.find((item) => item.status === "READY" && !item.assigneeId) ?? workOrders[0], todayISO());
+  const delay = delayOf(order, workOrders.find((item) => item.status === "PREPARE" && !item.assigneeId) ?? workOrders[0], todayISO());
   const qtyMap = Object.fromEntries(order.lines.map((line) => [line.id, quantities[line.id] ?? line.quantity]));
   const locked = order.status === "COMPLETED" || order.status === "CANCELLED";
   const canEditQty = !locked && !["PACKING", "READY_TO_SHIP", "SHIPPING"].includes(order.status);

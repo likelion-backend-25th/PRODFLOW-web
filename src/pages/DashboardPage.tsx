@@ -21,7 +21,7 @@ export function DashboardPage() {
   const active = db.orders.filter((order) => order.status !== "CANCELLED");
   const monthOrders = active.filter((order) => localDate(order.createdAt).startsWith(month));
   const produced = db.workOrders
-    .filter((item) => item.status === "COMPLETED" && item.completedAt && localDate(item.completedAt).startsWith(month))
+    .filter((item) => (item.status === "PACK" || item.status === "PACK_DONE") && item.completedAt && localDate(item.completedAt).startsWith(month))
     .reduce((sum, item) => sum + item.quantity, 0);
   const completed = active.filter((order) => order.status === "COMPLETED");
   const onTime = completed.filter((order) => order.completedAt && localDate(order.completedAt) <= order.dueDate).length;

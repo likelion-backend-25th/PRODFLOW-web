@@ -17,6 +17,7 @@ import { QuoteDetailPage } from "@/pages/quotation/QuoteDetailPage.tsx";
 import { QuoteFormPage } from "@/pages/quotation/QuoteFormPage.tsx";
 import { QuoteListPage } from "@/pages/quotation/QuoteListPage.tsx";
 import { PaymentsPage } from "@/pages/PaymentsPage.tsx";
+import { ProductionPlanPage } from "@/pages/plans/ProductionPlanPage.tsx";
 import { ProfilePage } from "@/pages/ProfilePage.tsx";
 import { ProductDetailPage, ProductFormPage, ProductListPage } from "@/pages/products/ProductPages.tsx";
 import { ShippingPage } from "@/pages/ShippingPage.tsx";
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="/orders/:orderId" element={<OrderDetailPage />} />
           <Route path="/work-orders" element={<WorkOrderListPage />} />
           <Route path="/work-orders/:workOrderId" element={<WorkOrderDetailPage />} />
+          <Route path="/production-plans" element={<ProductionPlanPage />} />
           <Route path="/shipping" element={<ShippingPage />} />
           <Route path="/clients" element={<ClientListPage />} />
           <Route path="/clients/new" element={<OrderWriters><ClientFormPage /></OrderWriters>} />
@@ -64,7 +66,7 @@ export default function App() {
           <Route path="/lines" element={<LineListPage />} />
           <Route path="/lines/new" element={<OrderWriters><LineFormPage /></OrderWriters>} />
           <Route path="/lines/:lineId" element={<LineDetailPage />} />
-          <Route path="/lines/:lineId/edit" element={<AdminOnly><LineFormPage /></AdminOnly>} />
+          <Route path="/lines/:lineId/edit" element={<OrderWriters><LineFormPage /></OrderWriters>} />
           <Route path="/payments" element={<PaymentsPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/admin" element={<AdminOnly><AdminPage /></AdminOnly>} />
