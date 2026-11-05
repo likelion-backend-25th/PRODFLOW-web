@@ -1,34 +1,31 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Ellipsis, FileSpreadsheet, Info, MapPin, Pencil, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui.tsx";
-import type { Client } from "@/types/domain.ts";
 import { cn } from "@/lib/cn.ts";
-import { localDate, todayISO } from "@/lib/dates.ts";
-import { useDb } from "@/lib/db.ts";
-import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, workStatusOrder } from "@/lib/labels.ts";
-import { digitsOnly, orderQuantity, orderTotal } from "@/lib/money.ts";
-import { orderItems, orderItemsText } from "@/lib/orderText.ts";
-import { clientFullAddress, importClients, saveClient } from "@/lib/workflow.ts";
+import { digitsOnly } from "@/lib/money.ts";
+import { readApiErrorMessage } from "@/lib/apiClient.ts";
+import { createClient, getClient, importClientsFile, listClients, updateClient, type ClientDetail, type ClientListItem, type ClientPage } from "@/lib/clientApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
-const template = "회사명,대표자,주소,대표전화,담당자명,담당자휴대번호,세금계산서이메일\n";
-
 const PAGE_SIZE = 8;
 
-type ClientSort = "RECENT" | "NAME" | "AMOUNT";
+type ClientSort = "RECENT" | "NAME";
 
 const sortLabel: Record<ClientSort, string> = {
-  RECENT: "최근 거래순",
+  RECENT: "최근 등록순",
   NAME: "회사명순",
-  AMOUNT: "누적 거래액순",
 };
 
-const dotted = (iso: string) => iso.replaceAll("-", ".");
+interface ClientRow {
+  item: ClientListItem;
+  detail: ClientDetail | null;
+}
+
+const emptyClientPage: ClientPage = { content: [], totalElements: 0, totalPages: 0, number: 0, size: PAGE_SIZE };
 
 export function ClientListPage() {
-  const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
   const show = useToastStore((state) => state.show);
   const [keyword, setKeyword] = useState("");
@@ -36,33 +33,44 @@ export function ClientListPage() {
   const [page, setPage] = useState(1);
   const [result, setResult] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const [list, setList] = useState<ClientPage>(emptyClientPage);
+  const [loadError, setLoadError] = useState("");
+  const [details, setDetails] = useState<Record<number, ClientDetail>>({});
+  const [reloadKey, setReloadKey] = useState(0);
   const canWrite = canManageOrders(role);
-  const month = todayISO().slice(0, 7);
-
-  const stats = db.clients.map((client) => {
-    const orders = db.orders
-      .filter((order) => order.clientId === client.id && order.status !== "CANCELLED")
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    return {
-      client,
-      orders,
-      amount: orders.reduce((sum, order) => sum + orderTotal(order.lines, order.vatIncluded), 0),
-      latest: orders[0] ? localDate(orders[0].createdAt) : "",
-    };
-  });
-  const query = keyword.trim();
-  const rows = stats
-    .filter(({ client }) => `${client.companyName} ${client.representative} ${client.phone} ${client.contactMobile}`.includes(query))
-    .sort((left, right) => {
-      if (sort === "NAME") return left.client.companyName.localeCompare(right.client.companyName, "ko");
-      if (sort === "AMOUNT") return right.amount - left.amount;
-      return right.latest.localeCompare(left.latest) || left.client.companyName.localeCompare(right.client.companyName, "ko");
+  useEffect(() => {
+    let ignore = false;
+    listClients({
+      keyword: keyword.trim(),
+      page: page - 1,
+      size: PAGE_SIZE,
+      sort: sort === "NAME" ? "company,asc" : "createdAt,desc",
+    }).then((response) => {
+      if (ignore) return;
+      setList(response);
+      setLoadError("");
+    }).catch((error: unknown) => {
+      if (ignore) return;
+      setList(emptyClientPage);
+      setLoadError(readApiErrorMessage(error));
     });
-  const currentPage = Math.min(page, pageCountOf(rows.length, PAGE_SIZE));
-  const pageRows = rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const selected = rows.find((row) => row.client.id === selectedId) ?? pageRows[0];
-  const traded = new Set(db.orders.filter((order) => order.status !== "CANCELLED" && localDate(order.createdAt).startsWith(month)).map((order) => order.clientId)).size;
-  const joined = db.clients.filter((client) => localDate(client.createdAt).startsWith(month)).length;
+    return () => {
+      ignore = true;
+    };
+  }, [keyword, page, reloadKey, sort]);
+  const pageRows: ClientRow[] = list.content.map((item) => ({ item, detail: details[item.id] ?? null }));
+  const selected = pageRows.find((row) => String(row.item.id) === selectedId) ?? pageRows[0];
+  useEffect(() => {
+    const id = selected?.item.id;
+    if (!id || details[id]) return;
+    let ignore = false;
+    getClient(id).then((detail) => {
+      if (!ignore) setDetails((current) => ({ ...current, [id]: detail }));
+    }).catch(() => undefined);
+    return () => {
+      ignore = true;
+    };
+  }, [details, selected]);
 
   return (
     <div className="space-y-6">
@@ -76,19 +84,20 @@ export function ClientListPage() {
             <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-4 text-[13px] font-medium">
               <Plus size={16} />
               엑셀 일괄등록
-              <input className="hidden" type="file" accept=".csv,text/csv" onChange={async (event) => {
+              <input className="hidden" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={async (event) => {
                 const input = event.currentTarget;
                 const file = input.files?.[0];
-                if (!file) return;
-                const text = (await file.text()).replace(/^\uFEFF/, "");
                 input.value = "";
-                const lines = text.split(/\r?\n/).slice(1).filter((line) => line.trim());
-                const imported = importClients(lines.map((line) => {
-                  const [companyName, representative, address, phone, contactName, contactMobile, taxEmail] = line.split(",");
-                  return { companyName: companyName ?? "", representative: representative ?? "", zipcode: "", roadAddress: address ?? "", detailAddress: "", phone: phone ?? "", contactName: contactName ?? "", contactMobile: contactMobile ?? "", taxEmail: taxEmail ?? "" };
-                }));
-                setResult(`성공 ${imported.created}건${imported.errors.length ? ` / ${imported.errors.join(" ")}` : ""}`);
-                show("엑셀 등록을 반영했습니다.");
+                if (!file) return;
+                try {
+                  const imported = await importClientsFile(file);
+                  setResult(`성공 ${imported.length}건`);
+                  setPage(1);
+                  setReloadKey((value) => value + 1);
+                  show("엑셀 등록을 반영했습니다.");
+                } catch (error: unknown) {
+                  setResult(readApiErrorMessage(error));
+                }
               }} />
             </label>
             <Link to="/clients/new" className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-[13px] font-medium text-white">
@@ -101,9 +110,9 @@ export function ClientListPage() {
       {result ? <p className="-mt-3 text-sm text-muted">{result}</p> : null}
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Metric label="전체 거래처" value={db.clients.length} icon={<Building2 size={23} className="text-primary" />} />
-        <Metric label="이번 달 거래" value={traded} />
-        <Metric label="이번 달 신규 등록" value={joined} />
+        <Metric label="전체 거래처" value={list.totalElements} icon={<Building2 size={23} className="text-primary" />} />
+        <Metric label="이 페이지" value={pageRows.length} />
+        <Metric label="검색 결과" value={loadError ? 0 : list.totalElements} />
       </div>
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_316px]">
@@ -111,7 +120,7 @@ export function ClientListPage() {
           <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-bold">등록된 거래처</h2>
-              <span className="text-[11px] text-muted">총 {rows.length}개사</span>
+              <span className="text-[11px] text-muted">총 {list.totalElements}개사</span>
             </div>
             <div className="flex flex-wrap justify-between gap-2">
               <label className="relative block w-[300px] max-w-full">
@@ -156,39 +165,40 @@ export function ClientListPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pageRows.map(({ client, orders, amount, latest }) => {
-                    const active = selected?.client.id === client.id;
+                  {pageRows.map(({ item }) => {
+                    const active = selected?.item.id === item.id;
                     return (
-                      <tr key={client.id} className={cn("h-[61px] cursor-pointer border-b border-line", active && "bg-primary-soft")} onClick={() => setSelectedId(client.id)}>
+                      <tr key={item.id} className={cn("h-[61px] cursor-pointer border-b border-line", active && "bg-primary-soft")} onClick={() => setSelectedId(String(item.id))}>
                         <td className="pl-[14px]">
                           <span className="flex items-center gap-2">
                             <span className={cn("flex size-7 items-center justify-center rounded-[7px] text-[10px] font-bold", active ? "bg-primary/15 text-primary" : "bg-canvas")}>
-                              {client.companyName.slice(0, 1)}
+                              {item.company.slice(0, 1)}
                             </span>
-                            <span className="text-[11px] font-bold">{client.companyName}</span>
+                            <span className="text-[11px] font-bold">{item.company}</span>
                           </span>
                         </td>
-                        <td className="text-xs">{client.representative}</td>
-                        <td className="text-[10px]">{client.phone}</td>
-                        <td className="text-[10px] text-muted">{client.taxEmail}</td>
-                        <td className="text-xs">{orders.length}건</td>
-                        <td className="text-right text-xs">₩{amount.toLocaleString("ko-KR")}</td>
-                        <td className="text-center text-[10px] text-muted">{latest ? dotted(latest) : "-"}</td>
+                        <td className="text-xs">{item.employee}</td>
+                        <td className="text-[10px]">{item.phone}</td>
+                        <td className="text-[10px] text-muted">{item.email}</td>
+                        <td className="text-xs">{item.totalOrder}건</td>
+                        <td className="text-right text-xs">₩{item.totalAmount.toLocaleString("ko-KR")}</td>
+                        <td className="text-center text-[10px] text-muted">-</td>
                         <td className="pr-[14px]">
-                          <Link to={`/clients/${client.id}`} aria-label={`${client.companyName} 상세`} className="flex text-muted" onClick={(event) => event.stopPropagation()}>
+                          <Link to={`/clients/${item.id}`} aria-label={`${item.company} 상세`} className="flex text-muted" onClick={(event) => event.stopPropagation()}>
                             <ChevronRight size={14} />
                           </Link>
                         </td>
                       </tr>
                     );
                   })}
-                  {pageRows.length === 0 ? (
+                  {loadError ? <tr><td colSpan={8} className="py-10 text-center text-xs text-danger">{loadError}</td></tr> : null}
+                  {!loadError && pageRows.length === 0 ? (
                     <tr><td colSpan={8} className="py-10 text-center text-xs text-muted">조건에 맞는 거래처가 없습니다.</td></tr>
                   ) : null}
                 </tbody>
               </table>
             </div>
-            <Pager total={rows.length} page={currentPage} pageSize={PAGE_SIZE} unit="개사" onChange={setPage} />
+            <Pager total={list.totalElements} page={page} pageSize={PAGE_SIZE} unit="개사" onChange={setPage} />
           </section>
 
           {canWrite ? (
@@ -197,13 +207,10 @@ export function ClientListPage() {
               <div className="min-w-0 flex-1 space-y-1">
                 <p className="text-xs font-bold">여러 거래처를 한 번에 등록하세요</p>
                 <div className="text-[10px] text-muted">
-                  <p>양식에 회사명 · 대표자 · 주소 · 연락처를 입력한 뒤 업로드하세요.</p>
-                  <p>지원 형식 .csv · 회사명이 없는 행은 등록하지 않고 오류로 표시합니다.</p>
+                  <p>첫 줄은 company, employee, email, phone, zipcode, road_address, detail_address, user_id, created_at, updated_at, created_by, updated_by 입니다.</p>
+                  <p>지원 형식 .xlsx, .xls</p>
                 </div>
               </div>
-              <button type="button" className="shrink-0 text-[11px] font-medium text-primary" onClick={() => download(template, "거래처양식.csv")}>
-                양식 다운로드
-              </button>
             </section>
           ) : null}
         </div>
@@ -213,7 +220,7 @@ export function ClientListPage() {
             <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-bold">거래처 정보</h2>
-                <Link to={`/clients/${selected.client.id}`} aria-label="거래처 상세" className="text-muted">
+                <Link to={`/clients/${selected.item.id}`} aria-label="거래처 상세" className="text-muted">
                   <Ellipsis size={18} />
                 </Link>
               </div>
@@ -222,18 +229,18 @@ export function ClientListPage() {
                   <Building2 size={24} />
                 </span>
                 <div className="space-y-1">
-                  <p className="text-xl font-bold">{selected.client.companyName}</p>
-                  <p className="text-[10px] text-muted">{dotted(localDate(selected.client.createdAt))} 등록</p>
+                  <p className="text-xl font-bold">{selected.item.company}</p>
+                  <p className="text-[10px] text-muted">{selected.detail?.userName || "담당 직원"}</p>
                 </div>
               </div>
               <hr className="border-line" />
-              <InfoRow label="대표자명" value={selected.client.representative} />
-              <InfoRow label="이메일" value={selected.client.taxEmail} muted />
-              <InfoRow label="연락처" value={selected.client.phone} />
-              <InfoRow label="주소" value={clientFullAddress(selected.client)} />
+              <InfoRow label="대표자명" value={selected.item.employee} />
+              <InfoRow label="이메일" value={selected.item.email} muted />
+              <InfoRow label="연락처" value={selected.item.phone} />
+              <InfoRow label="주소" value={selected.detail?.address || "-"} />
               {canWrite ? (
                 <div className="flex gap-2">
-                  <Link to={`/clients/${selected.client.id}/edit`} className="inline-flex h-8 items-center rounded-lg border border-line bg-white px-3 text-xs font-medium">
+                  <Link to={`/clients/${selected.item.id}/edit`} className="inline-flex h-8 items-center rounded-lg border border-line bg-white px-3 text-xs font-medium">
                     정보 수정
                   </Link>
                 </div>
@@ -242,34 +249,18 @@ export function ClientListPage() {
               <div className="flex items-start justify-between">
                 <div className="space-y-[5px]">
                   <p className="text-[10px] text-muted">누적 수주</p>
-                  <p className="text-xl font-bold">{selected.orders.length}건</p>
+                  <p className="text-xl font-bold">{selected.item.totalOrder}건</p>
                 </div>
                 <div className="space-y-[5px]">
                   <p className="text-[10px] text-muted">누적 거래액</p>
-                  <p className="text-lg font-bold">₩{selected.amount.toLocaleString("ko-KR")}</p>
+                  <p className="text-lg font-bold">₩{selected.item.totalAmount.toLocaleString("ko-KR")}</p>
                 </div>
               </div>
             </section>
 
             <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-bold">최근 수주</h2>
-                <Link to={`/clients/${selected.client.id}`} className="text-[10px] text-primary">전체 →</Link>
-              </div>
-              {selected.orders.length === 0 ? <p className="text-xs text-muted">아직 수주가 없습니다.</p> : null}
-              {selected.orders.slice(0, 3).map((order) => (
-                <Link key={order.id} to={`/orders/${order.id}`} className="block space-y-2">
-                  <span className="flex items-start justify-between">
-                    <span className="text-[10px] text-muted">{order.orderNo}</span>
-                    <StatusPill label={orderStatusLabel[order.status]} tone={orderStatusTone(order.status)} />
-                  </span>
-                  <span className="block text-xs font-bold">{orderItemsText(db.products, order.lines)}</span>
-                  <span className="flex items-start justify-between">
-                    <span className="text-[10px] text-muted">납기 {dotted(order.dueDate)}</span>
-                    <span className="text-xs font-bold">₩{orderTotal(order.lines, order.vatIncluded).toLocaleString("ko-KR")}</span>
-                  </span>
-                </Link>
-              ))}
+              <h2 className="text-base font-bold">진행 중 수주</h2>
+              <p className="text-xs text-muted">{selected.detail ? `${selected.detail.ongoingOrders}건` : "불러오는 중입니다."}</p>
             </section>
 
             <section className="flex items-center gap-3 rounded-lg bg-primary-soft p-[15px]">
@@ -333,15 +324,6 @@ function Pager({ total, page, pageSize, unit, onChange }: { total: number; page:
   );
 }
 
-function StatusPill({ label, tone }: { label: string; tone: string }) {
-  return (
-    <span className={cn("inline-flex items-center gap-[5px] rounded-md px-[9px] py-1 text-[11px] font-medium whitespace-nowrap", tone)}>
-      <span className="size-1 rounded-[2px] bg-current" />
-      {label}
-    </span>
-  );
-}
-
 function InfoRow({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
   return (
     <div className="space-y-[5px]">
@@ -355,19 +337,31 @@ const emptyClient = { companyName: "", representative: "", zipcode: "", roadAddr
 
 export function ClientFormPage() {
   const { clientId } = useParams();
-  const db = useDb();
   const navigate = useNavigate();
   const show = useToastStore((state) => state.show);
-  const current = db.clients.find((client) => client.id === clientId);
-  const [form, setForm] = useState(current ?? emptyClient);
+  const manager = useAuthStore((state) => state.user);
+  const [form, setForm] = useState(emptyClient);
   const [checked, setChecked] = useState(false);
-  const [duplicates, setDuplicates] = useState<Client[]>([]);
-  const editing = Boolean(current);
-  // 비활성·삭제 계정은 거래처 담당으로 새로 고르지 않는다.
-  const staff = db.users
-    .filter((user) => user.status === "ACTIVE")
-    .sort((left, right) => left.name.localeCompare(right.name, "ko"));
-  const selectedStaff = staff.find((user) => user.name === form.contactName);
+  const [duplicates, setDuplicates] = useState<ClientListItem[]>([]);
+  const editing = Boolean(clientId);
+  useEffect(() => {
+    if (!clientId) return;
+    const id = Number(clientId);
+    if (!Number.isInteger(id)) return;
+    getClient(id).then((detail) => {
+      setForm({
+        companyName: detail.company,
+        representative: detail.employee,
+        zipcode: "",
+        roadAddress: detail.address,
+        detailAddress: "",
+        phone: detail.phone,
+        contactName: detail.userName,
+        contactMobile: detail.userPhone,
+        taxEmail: detail.email,
+      });
+    }).catch((error: unknown) => show(readApiErrorMessage(error)));
+  }, [clientId, show]);
   const patch = (next: Partial<typeof form>) => {
     setForm({ ...form, ...next });
     setChecked(false);
@@ -379,14 +373,16 @@ export function ClientFormPage() {
       return;
     }
     const phone = digitsOnly(form.phone);
-    const found = db.clients.filter((client) =>
-      client.id !== current?.id
-      && client.companyName.trim() === companyName
-      && (!phone || digitsOnly(client.phone) === phone),
-    );
-    setDuplicates(found);
-    setChecked(true);
-    show(found.length ? `같은 회사명의 거래처가 ${found.length}곳 있습니다.` : "겹치는 거래처가 없습니다.");
+    void listClients({ keyword: companyName, page: 0, size: 20 }).then((response) => {
+      const found = response.content.filter((client) =>
+        String(client.id) !== clientId
+        && client.company.trim() === companyName
+        && (!phone || digitsOnly(client.phone) === phone),
+      );
+      setDuplicates(found);
+      setChecked(true);
+      show(found.length ? `같은 회사명의 거래처가 ${found.length}곳 있습니다.` : "겹치는 거래처가 없습니다.");
+    }).catch((error: unknown) => show(readApiErrorMessage(error)));
   };
 
   return (
@@ -415,13 +411,24 @@ export function ClientFormPage() {
               show("등록 전에 중복 확인을 눌러 주세요.");
               return;
             }
-            try {
-              saveClient({ ...form, id: current?.id });
+            const userId = Number(manager?.id);
+            if (!Number.isInteger(userId) || userId <= 0) {
+              show("로그인한 계정으로만 거래처를 저장할 수 있습니다.");
+              return;
+            }
+            const input = {
+              company: form.companyName.trim(),
+              employee: form.representative.trim(),
+              email: form.taxEmail.trim(),
+              phone: form.phone.trim(),
+              userId,
+              address: { zipcode: form.zipcode.trim(), roadAddress: form.roadAddress.trim(), detailAddress: form.detailAddress.trim() },
+            };
+            const request = editing && clientId ? updateClient(Number(clientId), input) : createClient(input);
+            void request.then(() => {
               show(editing ? "거래처를 수정했습니다." : "거래처를 등록했습니다.");
               navigate("/clients");
-            } catch (error: unknown) {
-              show(error instanceof Error ? error.message : "저장하지 못했습니다.");
-            }
+            }).catch((error: unknown) => show(readApiErrorMessage(error)));
           }}
         >
           <div className="flex items-center justify-between gap-3">
@@ -451,8 +458,8 @@ export function ClientFormPage() {
                 {duplicates.map((client) => (
                   <li key={client.id}>
                     <Link to={`/clients/${client.id}`} className="flex items-center justify-between px-3 py-2 text-xs hover:bg-primary-soft">
-                      <span className="font-medium">{client.companyName}</span>
-                      <span className="text-muted">{client.representative} · {client.phone}</span>
+                      <span className="font-medium">{client.company}</span>
+                      <span className="text-muted">{client.employee} · {client.phone}</span>
                     </Link>
                   </li>
                 ))}
@@ -474,17 +481,10 @@ export function ClientFormPage() {
               <span className="relative block">
                 <select
                   className={`${inputClass} appearance-none pr-9`}
-                  value={selectedStaff?.id ?? (form.contactName ? currentContact : "")}
-                  onChange={(event) => {
-                    const user = staff.find((item) => item.id === event.target.value);
-                    patch({ contactName: user?.name ?? (event.target.value === currentContact ? form.contactName : "") });
-                  }}
+                  value={manager?.id ?? ""}
+                  onChange={() => undefined}
                 >
-                  <option value="">담당 직원을 선택하세요</option>
-                  {form.contactName && !selectedStaff ? <option value={currentContact}>{form.contactName}</option> : null}
-                  {staff.map((user) => (
-                    <option key={user.id} value={user.id}>{user.name} · {user.department}</option>
-                  ))}
+                  <option value={manager?.id ?? ""}>{manager ? `${manager.name} · 로그인한 계정` : "로그인 필요"}</option>
                 </select>
                 <ChevronDown size={14} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
               </span>
@@ -561,7 +561,7 @@ export function ClientFormPage() {
               <h2 className="text-base font-bold">여러 거래처를 등록하나요?</h2>
               <div className="flex items-start gap-2.5">
                 <FileSpreadsheet size={20} className="shrink-0 text-primary" />
-                <p className="text-[11px] text-muted">거래처 관리의 엑셀 일괄등록을 이용하세요. 지정 양식의 .csv 파일을 지원합니다.</p>
+                <p className="text-[11px] text-muted">거래처 관리의 엑셀 일괄등록을 이용하세요. 지정 양식의 .xlsx, .xls 파일을 지원합니다.</p>
               </div>
               <Link to="/clients" className="block text-[11px] text-primary">거래처 관리로 →</Link>
             </section>
@@ -571,8 +571,6 @@ export function ClientFormPage() {
     </div>
   );
 }
-
-const currentContact = "current";
 
 const inputClass = "h-[41px] w-full rounded-[7px] border border-line bg-white px-3 text-xs placeholder:text-muted/70";
 
@@ -627,28 +625,41 @@ const HISTORY_PAGE_SIZE = 10;
 
 export function ClientDetailPage() {
   const { clientId = "" } = useParams();
-  const db = useDb();
-  const navigate = useNavigate();
   const role = useAuthStore((state) => state.user?.role);
   const [page, setPage] = useState(1);
-  const client = db.clients.find((item) => item.id === clientId);
-  if (!client) return <p>거래처를 찾을 수 없습니다.</p>;
-
+  const [detail, setDetail] = useState<ClientDetail | null>(null);
+  const [loadError, setLoadError] = useState("");
+  useEffect(() => {
+    const id = Number(clientId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setLoadError("거래처를 찾을 수 없습니다.");
+      return;
+    }
+    let ignore = false;
+    getClient(id).then((response) => {
+      if (!ignore) setDetail(response);
+    }).catch((error: unknown) => {
+      if (!ignore) setLoadError(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [clientId]);
+  if (loadError) return <p>{loadError}</p>;
+  if (!detail) return <p>거래처를 불러오는 중입니다.</p>;
+  const client = {
+    id: String(detail.id),
+    companyName: detail.company,
+    representative: detail.employee,
+    phone: detail.phone,
+    contactName: detail.userName,
+    contactMobile: detail.userPhone,
+    taxEmail: detail.email,
+  };
   const canWrite = canManageOrders(role);
-  const history = db.orders
-    .filter((order) => order.clientId === client.id)
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  // 취소 건은 거래 실적이 아니므로 누적 수주·거래액에서 뺀다.
-  const active = history.filter((order) => order.status !== "CANCELLED");
-  const open = active.filter((order) => order.status !== "COMPLETED");
-  const latest = active[0];
-  const breakdown = workStatusOrder
-    .map((status) => ({ status, count: active.filter((order) => order.status === status).length }))
-    .filter((item) => item.count > 0)
-    .map((item) => `${orderStatusLabel[item.status]} ${item.count}`)
-    .join(" · ");
+  const history: never[] = [];
+  const breakdown = `진행 중 ${detail.ongoingOrders}건`;
   const currentPage = Math.min(page, pageCountOf(history.length, HISTORY_PAGE_SIZE));
-  const pageRows = history.slice((currentPage - 1) * HISTORY_PAGE_SIZE, currentPage * HISTORY_PAGE_SIZE);
 
   return (
     <div className="space-y-6">
@@ -674,13 +685,13 @@ export function ClientDetailPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <DetailMetric label="누적 수주" icon={<ClipboardList size={20} />} value={`${active.length}건`} caption={breakdown || "아직 수주가 없습니다."} />
-        <DetailMetric label="누적 거래액" icon={<Building2 size={20} />} value={`₩${active.reduce((sum, order) => sum + orderTotal(order.lines, order.vatIncluded), 0).toLocaleString("ko-KR")}`} caption="취소 건을 뺀 수주 금액 합계" />
+        <DetailMetric label="누적 수주" icon={<ClipboardList size={20} />} value={`${detail.totalOrder}건`} caption={breakdown} />
+        <DetailMetric label="누적 거래액" icon={<Building2 size={20} />} value={`₩${detail.totalAmount.toLocaleString("ko-KR")}`} caption="서버에 집계된 수주 금액" />
         <DetailMetric
-          label="최근 수주일"
+          label="진행 중 수주"
           icon={<CalendarDays size={20} />}
-          value={latest ? dotted(localDate(latest.createdAt)) : "-"}
-          caption={latest ? `${latest.orderNo} · ${orderStatusLabel[latest.status]}` : "아직 수주가 없습니다."}
+          value={`${detail.ongoingOrders}건`}
+          caption="완료되지 않은 수주"
         />
       </div>
 
@@ -694,7 +705,7 @@ export function ClientDetailPage() {
               </span>
               <div className="space-y-1">
                 <p className="text-[21px] font-bold">{client.companyName}</p>
-                <p className="text-[11px] text-muted">{dotted(localDate(client.createdAt))} 등록</p>
+                <p className="text-[11px] text-muted">{detail.userName} 담당</p>
               </div>
             </div>
             <hr className="border-line" />
@@ -703,7 +714,7 @@ export function ClientDetailPage() {
               <DetailField label="연락처" value={client.phone} />
               <DetailField label="담당 직원" value={client.contactName} />
               <DetailField label="담당자 휴대번호" value={client.contactMobile} />
-              <DetailField label="회사 주소" value={clientFullAddress(client)} wide />
+              <DetailField label="회사 주소" value={detail.address} wide />
               <DetailField label="거래처 이메일" value={client.taxEmail} wide />
             </div>
           </section>
@@ -718,38 +729,12 @@ export function ClientDetailPage() {
 
         <aside className="space-y-4">
           <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold">최근 수주</h2>
-              {latest ? <Link to={`/orders/${latest.id}`} className="text-[11px] text-primary">상세 →</Link> : null}
-            </div>
-            {latest ? (
-              <>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-muted">{latest.orderNo}</span>
-                  <StatusPill label={orderStatusLabel[latest.status]} tone={orderStatusTone(latest.status)} />
-                </div>
-                <p className="text-sm font-bold">{orderItemsText(db.products, latest.lines)}</p>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-muted">납기일</span>
-                  <span className="text-xs">{dotted(latest.dueDate)}{latest.dueDate === todayISO() ? " · 오늘" : ""}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-muted">수주 금액 · VAT 포함</span>
-                  <span className="text-sm font-bold">₩{orderTotal(latest.lines, latest.vatIncluded).toLocaleString("ko-KR")}</span>
-                </div>
-                <hr className="border-line" />
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-muted">입금 확인</span>
-                  <StatusPill label={paymentStatusLabel[latest.paymentStatus]} tone={paymentTone(latest.paymentStatus)} />
-                </div>
-              </>
-            ) : (
-              <p className="text-xs text-muted">아직 수주가 없습니다.</p>
-            )}
+            <h2 className="text-base font-bold">최근 수주</h2>
+            <p className="text-xs text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</p>
           </section>
           <section className="flex items-start justify-between rounded-[10px] border border-line bg-white p-[18px] text-xs">
             <span className="text-muted">진행 중인 수주</span>
-            <span className="font-bold text-primary">{open.length}건 · ₩{open.reduce((sum, order) => sum + orderTotal(order.lines, order.vatIncluded), 0).toLocaleString("ko-KR")}</span>
+            <span className="font-bold text-primary">{detail.ongoingOrders}건</span>
           </section>
         </aside>
       </div>
@@ -778,25 +763,8 @@ export function ClientDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {pageRows.map((order) => (
-                  <tr key={order.id} className="cursor-pointer border-b border-line hover:bg-primary-soft/40" onClick={() => navigate(`/orders/${order.id}`)}>
-                    <td className="py-[13px] pl-[14px]">
-                      <Link to={`/orders/${order.id}`} className="block text-xs font-medium text-primary" onClick={(event) => event.stopPropagation()}>{order.orderNo}</Link>
-                      <span className="mt-1 block text-[10px] text-muted">{dotted(localDate(order.createdAt))}</span>
-                    </td>
-                    <td className="py-[13px] pr-4 text-xs font-medium">
-                      {orderItems(db.products, order.lines).names.map((name) => <span key={name} className="block whitespace-nowrap">{name}</span>)}
-                    </td>
-                    <td className="text-xs font-medium">{orderQuantity(order.lines).toLocaleString("ko-KR")}</td>
-                    <td className="text-xs font-medium">₩{orderTotal(order.lines, order.vatIncluded).toLocaleString("ko-KR")}</td>
-                    <td className="text-xs">{dotted(order.dueDate)}</td>
-                    <td><StatusPill label={orderStatusLabel[order.status]} tone={orderStatusTone(order.status)} /></td>
-                    <td><StatusPill label={paymentStatusLabel[order.paymentStatus]} tone={paymentTone(order.paymentStatus)} /></td>
-                    <td className="pr-[14px] text-muted"><ChevronRight size={14} /></td>
-                  </tr>
-                ))}
                 {history.length === 0 ? (
-                  <tr><td colSpan={8} className="py-10 text-center text-xs text-muted">아직 등록된 수주가 없습니다.</td></tr>
+                  <tr><td colSpan={8} className="py-10 text-center text-xs text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</td></tr>
                 ) : null}
               </tbody>
             </table>
@@ -832,12 +800,3 @@ function DetailField({ label, value, wide = false }: { label: string; value: str
   );
 }
 
-function download(content: string, name: string) {
-  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = name;
-  link.click();
-  URL.revokeObjectURL(url);
-}

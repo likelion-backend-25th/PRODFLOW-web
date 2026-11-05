@@ -1,46 +1,67 @@
 import { Calendar, Check } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { Badge, Button } from "@/components/ui.tsx";
 import { cn } from "@/lib/cn.ts";
 import { parseISO, todayISO } from "@/lib/dates.ts";
-import { useDb } from "@/lib/db.ts";
+import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { quotationStatusLabel, quotationStatusTone } from "@/lib/labels.ts";
-import { depositTarget, formatWon, lineAmount, orderQuantity, orderTotal } from "@/lib/money.ts";
-import { clientFullAddress, previewDuePlan, previewSchedule, quoteNotBefore, recalculateQuotation, setQuotationStatus } from "@/lib/workflow.ts";
+import { formatWon } from "@/lib/money.ts";
+import { getQuotation, previewQuotationReschedule, updateQuotationSchedule, type QuotationDetail, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
 export function QuoteDetailPage() {
   const { quotationId = "" } = useParams();
-  const db = useDb();
-  const user = useAuthStore((state) => state.user);
-  const role = user?.role;
+  const role = useAuthStore((state) => state.user?.role);
   const show = useToastStore((state) => state.show);
-  const quote = db.quotations.find((item) => item.id === quotationId);
+  const [quote, setQuote] = useState<QuotationDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [open, setOpen] = useState(false);
-  const [due, setDue] = useState(quote?.requestedDueDate ?? "");
+  const [due, setDue] = useState("");
   const [dueOpen, setDueOpen] = useState(false);
+  const [savingDue, setSavingDue] = useState(false);
+  const [scheduleResult, setScheduleResult] = useState<QuotationSchedulePreview | string | null>(null);
   const dueRef = useRef<HTMLDivElement>(null);
-  const quantityForPreview = quote?.lines.reduce((sum, line) => sum + line.quantity, 0) ?? 0;
-  const scheduleResult = useMemo(() => {
-    if (!open || quantityForPreview <= 0) return null;
-    try {
-      return previewSchedule(quantityForPreview, undefined, quoteNotBefore());
-    } catch (reason: unknown) {
-      return reason instanceof Error ? reason.message : "납기를 계산하지 못했습니다.";
+  useEffect(() => {
+    const id = Number(quotationId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setLoading(false);
+      setLoadError("견적서를 찾을 수 없습니다.");
+      return;
     }
-  }, [db, open, quantityForPreview]);
-  const earliest = scheduleResult && typeof scheduleResult !== "string" ? scheduleResult.earliestDueDate : null;
-  const duePlan = useMemo(() => {
-    if (!due || !earliest || due < earliest) return null;
-    try {
-      return previewDuePlan(quantityForPreview, due, quoteNotBefore());
-    } catch {
-      return null;
-    }
-  }, [db, due, earliest, quantityForPreview]);
+    let ignore = false;
+    setLoading(true);
+    getQuotation(id).then((detail) => {
+      if (ignore) return;
+      setQuote(detail);
+      setDue(detail.requestedDueDate);
+      setLoadError("");
+      setLoading(false);
+    }).catch((error: unknown) => {
+      if (ignore) return;
+      setQuote(null);
+      setLoadError(readApiErrorMessage(error));
+      setLoading(false);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [quotationId]);
+  useEffect(() => {
+    if (!open || !quote) return;
+    let ignore = false;
+    previewQuotationReschedule(quote.id, due || undefined).then((preview) => {
+      if (!ignore) setScheduleResult(preview);
+    }).catch((error: unknown) => {
+      if (!ignore) setScheduleResult(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [due, open, quote]);
   useEffect(() => {
     if (!dueOpen) return;
     function close(event: MouseEvent) {
@@ -49,25 +70,36 @@ export function QuoteDetailPage() {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [dueOpen]);
-  if (!quote) return <p>견적서를 찾을 수 없습니다.</p>;
+  if (loading) return <p>견적을 불러오는 중입니다.</p>;
+  if (!quote) return <p>{loadError || "견적서를 찾을 수 없습니다."}</p>;
 
-  const client = db.clients.find((item) => item.id === quote.clientId);
-  const author = db.users.find((item) => item.id === quote.userId);
-  const order = db.orders.find((item) => item.quotationId === quote.id && item.status !== "CANCELLED");
-  const total = orderTotal(quote.lines, quote.vatIncluded);
-  const supply = quote.lines.reduce((sum, line) => sum + supplyOf(line, quote.vatIncluded), 0);
+  const hasOrder = quote.customerOrderId != null && Boolean(quote.orderNo) && quote.orderNo !== "-";
   const canChange = quote.status === "SENT" && canManageOrders(role);
+  const earliest = scheduleResult && typeof scheduleResult !== "string" ? scheduleResult.earliestDueDate : null;
+  const duePlan = scheduleResult && typeof scheduleResult !== "string" && scheduleResult.feasible && scheduleResult.plannedStartDate && scheduleResult.plannedEndDate
+    ? { plannedStartDate: scheduleResult.plannedStartDate, plannedEndDate: scheduleResult.plannedEndDate }
+    : null;
   const dueTooSoon = Boolean(due && earliest && due < earliest);
-  const deposit = depositTarget(total);
   const dueToday = quote.estimatedDueDate.slice(0, 10) === todayISO();
+  const quotationKey = quote.id;
 
-  function act(action: () => void, message: string) {
+  function unsupportedStatus() {
+    show("승인, 거절, 취소는 아직 견적 API에 없습니다.");
+  }
+
+  async function saveDue() {
+    if (!duePlan || savingDue) return;
+    setSavingDue(true);
     try {
-      action();
-      show(message);
+      const next = await updateQuotationSchedule(quotationKey, due);
+      setQuote(next);
+      setDue(next.requestedDueDate);
+      show("납기를 다시 계산해 저장했습니다.");
       setOpen(false);
     } catch (error: unknown) {
-      show(error instanceof Error ? error.message : "처리하지 못했습니다.");
+      show(readApiErrorMessage(error));
+    } finally {
+      setSavingDue(false);
     }
   }
 
@@ -82,17 +114,18 @@ export function QuoteDetailPage() {
           </div>
           <p className="mt-1 text-sm text-muted">
             {quote.status === "SENT" ? "이 단가로 유효기간 안에 승인할 수 있습니다. 수주를 등록할 때 납기를 다시 확인합니다." : null}
-            {quote.status === "APPROVED" && !order ? "승인된 견적입니다. 수주는 아직 없습니다. 등록 화면에서 납기를 다시 계산합니다." : null}
-            {quote.status === "APPROVED" && order ? "이 견적으로 수주가 등록되어 있습니다. 단가와 수량은 견적에 남은 값입니다." : null}
+            {quote.status === "DRAFT" ? "발송 전 초안입니다. 메일은 아직 보내지 않았습니다." : null}
+            {quote.status === "APPROVED" && !hasOrder ? "승인된 견적입니다. 수주는 아직 없습니다. 등록 화면에서 납기를 다시 계산합니다." : null}
+            {quote.status === "APPROVED" && hasOrder ? "이 견적으로 수주가 등록되어 있습니다. 단가와 수량은 견적에 남은 값입니다." : null}
             {quote.status === "EXPIRED" ? "유효기간이 지났습니다. 거래처가 다시 연락하면 견적을 새로 작성합니다." : null}
             {quote.status === "REJECTED" || quote.status === "CANCELLED" ? "거절되거나 취소된 견적은 수주를 만들 수 없습니다." : null}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {canChange && user ? <Button onClick={() => act(() => setQuotationStatus(quote.id, "APPROVED", user), "견적을 승인했습니다.")}>승인</Button> : null}
-          {canChange && user ? <Button tone="ghost" onClick={() => act(() => setQuotationStatus(quote.id, "REJECTED", user), "견적을 거절했습니다.")}>거절</Button> : null}
-          {quote.status === "APPROVED" && !order && canManageOrders(role) ? <Link to={`/orders/new?quotationId=${quote.id}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">수주 등록</Link> : null}
-          {order ? <Link to={`/orders/${order.id}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">수주 {order.orderNo}</Link> : null}
+          {canChange ? <Button onClick={unsupportedStatus}>승인</Button> : null}
+          {canChange ? <Button tone="ghost" onClick={unsupportedStatus}>거절</Button> : null}
+          {quote.status === "APPROVED" && !hasOrder && canManageOrders(role) ? <Link to={`/orders/new?quotationId=${quote.id}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">수주 등록</Link> : null}
+          {hasOrder ? <Link to={`/orders/${quote.customerOrderId}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">수주 {quote.orderNo}</Link> : null}
           {quote.status === "EXPIRED" && canManageOrders(role) ? <Link to="/quotations/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">새 견적 작성</Link> : null}
         </div>
       </div>
@@ -100,16 +133,16 @@ export function QuoteDetailPage() {
       <section className="rounded-xl border border-line bg-white p-5">
         <div className="flex items-center justify-between gap-3">
           <h2 className="font-semibold">거래처 정보</h2>
-          {client ? <Link to={`/clients/${client.id}`} className="text-sm font-semibold text-primary">거래처 상세 →</Link> : null}
+          <Link to={`/clients/${quote.clientId}`} className="text-sm font-semibold text-primary">거래처 상세 →</Link>
         </div>
         <dl className="mt-4 grid gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
-          <Field label="회사명" value={client?.companyName || "-"} />
-          <Field label="담당자명" value={client?.contactName || client?.representative || "-"} />
-          <Field label="연락처" value={client?.phone || "-"} />
-          <Field label="이메일" value={client?.taxEmail || "-"} />
+          <Field label="회사명" value={quote.clientCompany || "-"} />
+          <Field label="담당자명" value={quote.clientName || "-"} />
+          <Field label="연락처" value={quote.clientPhone || "-"} />
+          <Field label="이메일" value={quote.clientEmail || "-"} />
           <div className="sm:col-span-2">
             <dt className="text-xs text-muted">회사 주소</dt>
-            <dd className="mt-1">{client ? clientFullAddress(client) : "-"}</dd>
+            <dd className="mt-1">{quote.clientAddress || "-"}</dd>
           </div>
         </dl>
       </section>
@@ -120,7 +153,7 @@ export function QuoteDetailPage() {
             <h2 className="font-semibold">생산품목 및 금액</h2>
             <p className="mt-1 text-sm text-muted">견적에 담긴 품목과 단가입니다.</p>
           </div>
-          <p className="text-sm text-muted">{quote.lines.length}개 품목 · 총 {orderQuantity(quote.lines).toLocaleString("ko-KR")}개</p>
+          <p className="text-sm text-muted">{quote.itemCount}개 품목 · 총 {quote.totalQuantity.toLocaleString("ko-KR")}개</p>
         </div>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-sm">
@@ -133,33 +166,30 @@ export function QuoteDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {quote.lines.map((line) => {
-                const product = db.products.find((item) => item.id === line.productId);
-                return (
-                  <tr key={line.id} className="border-b border-line">
-                    <td className="px-5 py-3">
-                      <p className="font-semibold">{product?.productName ?? "품목"}</p>
-                      <p className="text-xs text-muted">{[product?.modelName, product?.description].filter(Boolean).join(" · ") || "-"}</p>
-                    </td>
-                    <td className="px-3 text-right tabular-nums">{line.quantity.toLocaleString("ko-KR")}개</td>
-                    <td className="px-3 text-right tabular-nums">{formatWon(line.unitPrice)}</td>
-                    <td className="px-5 text-right font-semibold tabular-nums">{formatWon(supplyOf(line, quote.vatIncluded))}</td>
-                  </tr>
-                );
-              })}
+              {quote.items.map((line) => (
+                <tr key={line.id} className="border-b border-line">
+                  <td className="px-5 py-3">
+                    <p className="font-semibold">{line.productName || "품목"}</p>
+                    <p className="text-xs text-muted">{line.deviceName || "-"}</p>
+                  </td>
+                  <td className="px-3 text-right tabular-nums">{line.quantity.toLocaleString("ko-KR")}개</td>
+                  <td className="px-3 text-right tabular-nums">{formatWon(line.unitPrice)}</td>
+                  <td className="px-5 text-right font-semibold tabular-nums">{formatWon(line.lineAmount)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
         <div className="flex flex-wrap items-end justify-between gap-4 px-5 py-4">
           <p className="rounded-full bg-primary-soft px-3 py-1 text-xs font-semibold text-primary">{quote.vatIncluded ? "VAT 포함" : "VAT 별도 청구"}</p>
           <dl className="w-full max-w-xs space-y-1 text-sm">
-            <Money label="공급가액" value={formatWon(supply)} />
-            <Money label="부가세 (10%)" value={formatWon(total - supply)} />
-            <Money label="계약금 50%" value={formatWon(deposit)} />
-            <Money label="잔금 50%" value={formatWon(total - deposit)} />
+            <Money label="공급가액" value={formatWon(quote.supplyAmount)} />
+            <Money label="부가세 (10%)" value={formatWon(quote.vatAmount)} />
+            <Money label="계약금 50%" value={formatWon(quote.depositAmount)} />
+            <Money label="잔금 50%" value={formatWon(quote.balanceAmount)} />
             <div className="flex items-baseline justify-between gap-4 pt-1">
               <dt className="text-muted">총액</dt>
-              <dd className="text-xl font-semibold text-primary tabular-nums">{formatWon(total)}</dd>
+              <dd className="text-xl font-semibold text-primary tabular-nums">{formatWon(quote.totalAmount)}</dd>
             </div>
           </dl>
         </div>
@@ -172,7 +202,7 @@ export function QuoteDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             {dueToday ? <span className="rounded-full bg-primary-soft px-3 py-1 text-xs font-semibold text-primary">오늘 납기</span> : null}
             {canChange ? <Button tone="ghost" onClick={() => { setDue(quote.requestedDueDate); setOpen((value) => !value); }}>{open ? "재산정 닫기" : "납기 재산정"}</Button> : null}
-            {canChange && user ? <Button tone="ghost" className="text-danger" onClick={() => act(() => setQuotationStatus(quote.id, "CANCELLED", user), "견적을 취소했습니다.")}>취소</Button> : null}
+            {canChange ? <Button tone="ghost" className="text-danger" onClick={unsupportedStatus}>취소</Button> : null}
           </div>
         </div>
         <dl className="mt-4 grid gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
@@ -181,7 +211,7 @@ export function QuoteDetailPage() {
           <Field label="유효기간" value={quote.validUntil} />
           <Field label="생산 시작" value={quote.plannedStartDate} />
           <Field label="생산 완료" value={quote.plannedEndDate} />
-          <Field label="작성" value={author?.name ?? "-"} />
+          <Field label="작성" value={quote.userName || "-"} />
         </dl>
         <p className="mt-4 text-sm text-muted">이 일정은 견적을 낸 날의 참고입니다. 자리를 잡아 두지 않으며, 수주 등록 때 다시 계산합니다.</p>
         {open && canChange ? (
@@ -220,7 +250,7 @@ export function QuoteDetailPage() {
                   <DueDateCalendar
                     value={due}
                     earliest={earliest}
-                    ready={quantityForPreview > 0}
+                    ready={quote.totalQuantity > 0}
                     emptyHint="수량을 확인하면 색이 표시됩니다."
                     onChange={(iso) => { setDue(iso); setDueOpen(false); }}
                   />
@@ -250,8 +280,8 @@ export function QuoteDetailPage() {
               <Button tone="ghost" onClick={() => { setOpen(false); setDueOpen(false); }}>닫기</Button>
               <Button
                 disabled={!duePlan || (due === quote.requestedDueDate && due === quote.estimatedDueDate && duePlan.plannedStartDate === quote.plannedStartDate && duePlan.plannedEndDate === quote.plannedEndDate)}
-                onClick={() => act(() => recalculateQuotation(quote.id, due), "납기를 다시 계산해 저장했습니다.")}
-              >이 날짜로 저장</Button>
+                onClick={() => void saveDue()}
+              >{savingDue ? "저장 중…" : "이 날짜로 저장"}</Button>
             </div>
           </div>
         ) : null}
@@ -267,11 +297,6 @@ function labelDate(iso: string): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}.${month}.${day} (${weekdays[date.getDay()]})`;
-}
-
-function supplyOf(line: { quantity: number; unitPrice: number }, vatIncluded: boolean) {
-  const amount = lineAmount(line, vatIncluded);
-  return vatIncluded ? Math.round(amount / 1.1) : line.quantity * line.unitPrice;
 }
 
 function Field({ label, value }: { label: string; value: string }) {

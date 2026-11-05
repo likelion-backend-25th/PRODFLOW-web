@@ -1,43 +1,67 @@
-import { useState } from "react";
-import { ArrowLeft, Banknote, Check, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, Plus, Wallet, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, Banknote, Check, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, Wallet, X } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Badge, Button } from "@/components/ui.tsx";
-import { localDate, todayISO } from "@/lib/dates.ts";
-import { orderStatusLabel, orderStatusTone } from "@/lib/labels.ts";
-import { productTitle } from "@/lib/orderText.ts";
-import { useDb } from "@/lib/db.ts";
-import { formatWon, lineAmount, orderTotal } from "@/lib/money.ts";
-import { saveProduct, setProductAvailability } from "@/lib/workflow.ts";
+import { localDate } from "@/lib/dates.ts";
+import { readApiErrorMessage } from "@/lib/apiClient.ts";
+import { formatWon } from "@/lib/money.ts";
+import { checkModelCode, createProduct, getProduct, listCurrentDrawings, listDevices, listProducts, searchProducts, updateProduct, updateProductStatus, uploadDrawing, type DeviceCode, type ProductItem } from "@/lib/productApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { ProductStatus } from "@/types/domain.ts";
 
+function toProductRow(product: ProductItem) {
+  return {
+    id: String(product.id),
+    modelCode: product.modelCode,
+    productName: product.productName,
+    modelName: product.deviceName,
+    description: product.productDescription,
+    unitPrice: product.currentPrice,
+    updatedAt: product.updatedAt,
+    createdAt: product.createdAt,
+    status: product.status,
+    designImageUrl: "",
+    drawingPdfName: "",
+    drawingPdfUrl: "",
+    createdByName: "-",
+  };
+}
+
 export function ProductListPage() {
-  const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
   const show = useToastStore((state) => state.show);
   const canWrite = canManageOrders(role);
   const [keyword, setKeyword] = useState("");
   const [tab, setTab] = useState<"available" | "stopped">("available");
-  const matched = db.products.filter((product) => `${product.modelCode} ${product.productName} ${product.modelName} ${product.description}`.includes(keyword.trim()));
-  const available = matched.filter((product) => product.status !== "DISCONTINUED");
-  const stopped = matched.filter((product) => product.status === "DISCONTINUED");
+  const [available, setAvailable] = useState<ReturnType<typeof toProductRow>[]>([]);
+  const [stopped, setStopped] = useState<ReturnType<typeof toProductRow>[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
   const rows = tab === "available" ? available : stopped;
   const [selectedId, setSelectedId] = useState("");
   const selected = rows.find((product) => product.id === selectedId) ?? rows[0];
-  const related = (productId: string) => db.orders.filter((order) => order.lines.some((line) => line.productId === productId) && order.status !== "CANCELLED");
-  function moveProduct(id: string) {
-    const product = db.products.find((item) => item.id === id);
-    if (!product) return;
-    const next = product.status === "DISCONTINUED" ? "AVAILABLE" : "DISCONTINUED";
-    try {
-      setProductAvailability(id, next);
+  useEffect(() => {
+    let ignore = false;
+    const load = (status: "AVAILABLE" | "DISCONTINUED") => keyword.trim() ? searchProducts(keyword.trim(), status) : listProducts(status);
+    Promise.all([load("AVAILABLE"), load("DISCONTINUED")]).then(([nextAvailable, nextStopped]) => {
+      if (ignore) return;
+      setAvailable(nextAvailable.map(toProductRow));
+      setStopped(nextStopped.map(toProductRow));
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [keyword, reloadKey, show]);
+  function moveProduct(id: string, status: "AVAILABLE" | "DISCONTINUED") {
+    const next = status === "DISCONTINUED" ? "AVAILABLE" : "DISCONTINUED";
+    void updateProductStatus(Number(id), next).then(() => {
       setSelectedId(id);
       setTab(next === "DISCONTINUED" ? "stopped" : "available");
+      setReloadKey((value) => value + 1);
       show(next === "DISCONTINUED" ? "생산 중단으로 바꿨습니다. 이미 발행한 견적과 수주는 그대로입니다." : "생산 가능으로 바꿨습니다.");
-    } catch (error: unknown) {
-      show(error instanceof Error ? error.message : "상태를 바꾸지 못했습니다.");
-    }
+    }).catch((error: unknown) => show(readApiErrorMessage(error)));
   }
   return (
     <div>
@@ -49,9 +73,9 @@ export function ProductListPage() {
         {canManageOrders(role) ? <Link to="/products/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 품목 등록</Link> : null}
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 등록 품목</p><p className="mt-2 text-2xl font-semibold">{db.products.length}종</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">이번 달 생산 품목</p><p className="mt-2 text-2xl font-semibold">{new Set(db.orders.flatMap((order) => order.lines.map((line) => line.productId))).size}종</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">검색 결과</p><p className="mt-2 text-2xl font-semibold">{matched.length}종</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 등록 품목</p><p className="mt-2 text-2xl font-semibold">{available.length + stopped.length}종</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">생산 가능</p><p className="mt-2 text-2xl font-semibold">{available.length}종</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">생산 중단</p><p className="mt-2 text-2xl font-semibold">{stopped.length}종</p></section>
       </div>
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <section className="overflow-hidden rounded-xl border border-line bg-white">
@@ -74,7 +98,7 @@ export function ProductListPage() {
                   <td className="max-w-48 truncate">{product.description}</td>
                   <td className="whitespace-nowrap">{formatWon(product.unitPrice)}</td>
                   <td className="whitespace-nowrap">{localDate(product.updatedAt)}</td>
-                  <td><ProductStatusMark status={product.status} canChange={canWrite} onChange={() => moveProduct(product.id)} /></td>
+                  <td><ProductStatusMark status={product.status} canChange={canWrite} onChange={() => moveProduct(product.id, product.status)} /></td>
                   <td className="pr-3">
                     <Link
                       to={`/products/${product.id}`}
@@ -98,7 +122,7 @@ export function ProductListPage() {
               <p className="mt-3 text-xs text-muted">{selected.modelCode}</p>
               <p className="text-lg font-semibold">{selected.productName}</p>
               <p className="text-sm text-muted">{selected.modelName}</p>
-              <div className="mt-3"><ProductStatusMark status={selected.status} canChange={canWrite} onChange={() => moveProduct(selected.id)} /></div>
+              <div className="mt-3"><ProductStatusMark status={selected.status} canChange={canWrite} onChange={() => moveProduct(selected.id, selected.status)} /></div>
               <p className="mt-3 text-sm">{selected.description}</p>
               <p className="mt-3 font-semibold">{formatWon(selected.unitPrice)}</p>
               {selected.drawingPdfName && selected.drawingPdfUrl ? <a className="mt-2 block text-sm text-primary" href={selected.drawingPdfUrl} download={selected.drawingPdfName}>파일 {selected.drawingPdfName}</a> : null}
@@ -108,11 +132,7 @@ export function ProductListPage() {
             </section>
             <section className="rounded-xl border border-line bg-white p-5">
               <h3 className="font-semibold">최근 수주</h3>
-              <ul className="mt-3 space-y-2 text-sm">
-                {related(selected.id).slice(0, 3).map((order) => (
-                  <li key={order.id}><Link className="text-primary" to={`/orders/${order.id}`}>{order.orderNo}</Link> <span className="text-muted">{order.dueDate}</span></li>
-                ))}
-              </ul>
+              <p className="mt-3 text-sm text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</p>
             </section>
           </aside>
         ) : null}
@@ -134,28 +154,49 @@ export function ProductFormPage() {
 }
 
 function ProductEditor({ productId }: { productId?: string }) {
-  const db = useDb();
   const navigate = useNavigate();
-  const actor = useAuthStore((state) => state.user);
   const show = useToastStore((state) => state.show);
-  const current = productId ? db.products.find((product) => product.id === productId) : undefined;
   const editing = Boolean(productId);
-  const [modelCode, setModelCode] = useState(current?.modelCode ?? "");
-  const [productName, setProductName] = useState(current?.productName ?? "");
-  const [modelName, setModelName] = useState(current?.modelName ?? "");
-  const [description, setDescription] = useState(current?.description ?? "");
-  const [priceText, setPriceText] = useState(current ? formatPriceInput(String(current.unitPrice)) : "");
+  const [ready, setReady] = useState(!editing);
+  const [modelCode, setModelCode] = useState("");
+  const [productName, setProductName] = useState("");
+  const [modelName, setModelName] = useState("");
+  const [description, setDescription] = useState("");
+  const [priceText, setPriceText] = useState("");
   const [codeCheck, setCodeCheck] = useState("");
-  const [drawingPdfName, setDrawingPdfName] = useState(current?.drawingPdfName ?? "");
-  const [drawingPdfUrl, setDrawingPdfUrl] = useState(current?.drawingPdfUrl ?? "");
+  const [drawingFile, setDrawingFile] = useState<File | null>(null);
+  const [drawingPdfName, setDrawingPdfName] = useState("");
   const [drawingError, setDrawingError] = useState("");
   const [deviceModal, setDeviceModal] = useState(false);
   const [deviceDraft, setDeviceDraft] = useState("");
   const [deviceError, setDeviceError] = useState("");
+  const [devices, setDevices] = useState<DeviceCode[]>([]);
   const [extraDevices, setExtraDevices] = useState<string[]>([]);
-  const codeTaken = (code: string) => db.products.some((product) => product.id !== current?.id && product.modelCode.replace(/\s+/g, "").toLowerCase() === code.replace(/\s+/g, "").toLowerCase());
-  const devices = [...new Set([...db.products.map((product) => product.modelName.trim()), current?.modelName.trim() ?? "", ...extraDevices].filter(Boolean))].sort((left, right) => left.localeCompare(right, "ko"));
-  if (editing && !current) return <p>품목을 찾을 수 없습니다.</p>;
+  useEffect(() => {
+    let ignore = false;
+    listDevices().then((response) => {
+      if (!ignore) setDevices(response);
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    if (!productId) return () => { ignore = true; };
+    const id = Number(productId);
+    Promise.all([getProduct(id), listCurrentDrawings(id)]).then(([product, drawings]) => {
+      if (ignore) return;
+      setModelCode(product.modelCode);
+      setProductName(product.productName);
+      setModelName(product.deviceName);
+      setDescription(product.productDescription ?? "");
+      setPriceText(formatPriceInput(String(product.currentPrice)));
+      setDrawingPdfName(drawings[0]?.fileName ?? "");
+      setReady(true);
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    return () => { ignore = true; };
+  }, [productId, show]);
+  const deviceNames = [...new Set([...devices.map((device) => device.name), modelName, ...extraDevices].filter(Boolean))].sort((left, right) => left.localeCompare(right, "ko"));
+  if (editing && !ready) return <p>품목을 불러오는 중입니다.</p>;
 
   function addDevice() {
     const next = deviceDraft.trim();
@@ -170,17 +211,20 @@ function ProductEditor({ productId }: { productId?: string }) {
     setDeviceModal(false);
   }
 
-  function checkCode() {
+  async function checkCode() {
     if (!modelCode.trim()) {
       setCodeCheck("모델코드를 입력하세요.");
       return false;
     }
-    if (codeTaken(modelCode)) {
-      setCodeCheck("같은 모델코드가 있습니다.");
+    try {
+      const result = await checkModelCode(modelCode.trim());
+      const available = editing || result.available;
+      setCodeCheck(available ? "사용할 수 있는 모델코드입니다." : "같은 모델코드가 있습니다.");
+      return available;
+    } catch (error: unknown) {
+      setCodeCheck(readApiErrorMessage(error));
       return false;
     }
-    setCodeCheck("사용할 수 있는 모델코드입니다.");
-    return true;
   }
 
   return (
@@ -196,11 +240,11 @@ function ProductEditor({ productId }: { productId?: string }) {
       </div>
       <form
         className="mt-6 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]"
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
           const unitPrice = Number(priceText.replace(/\D/g, ""));
-          if (!checkCode()) {
-            show(!modelCode.trim() ? "모델코드를 입력하세요." : "같은 모델코드가 있습니다.");
+          if (!(await checkCode())) {
+            show(codeCheck || "모델코드를 확인하세요.");
             return;
           }
           if (!productName.trim()) {
@@ -211,27 +255,36 @@ function ProductEditor({ productId }: { productId?: string }) {
             show("기종을 선택하세요.");
             return;
           }
-          if (priceText.trim() === "" || !Number.isInteger(unitPrice) || unitPrice < 0) {
-            show("기준 단가를 0원 이상 정수로 입력하세요.");
+          if (priceText.trim() === "" || !Number.isInteger(unitPrice) || unitPrice <= 0) {
+            show("기준 단가를 1원 이상 정수로 입력하세요.");
+            return;
+          }
+          const device = devices.find((item) => item.name === modelName);
+          if (editing && !device) {
+            show("수정할 때는 이미 등록된 기종만 고를 수 있습니다. 새 기종은 품목을 새로 등록할 때 만듭니다.");
             return;
           }
           try {
-            saveProduct({
-              id: current?.id,
-              modelCode: modelCode.trim(),
-              productName,
-              modelName,
-              description: description.trim(),
-              unitPrice,
-              designImageUrl: current?.designImageUrl ?? "",
-              drawingPdfName,
-              drawingPdfUrl,
-              actorName: actor?.name ?? "",
-            });
+            const saved = editing && productId
+              ? await updateProduct(Number(productId), {
+                productName: productName.trim(),
+                deviceCode: device?.id ?? 0,
+                productDescription: description.trim(),
+                currentPrice: unitPrice,
+              })
+              : await createProduct({
+                modelCode: modelCode.trim(),
+                productName: productName.trim(),
+                deviceCode: device && !extraDevices.includes(modelName) ? device.id : undefined,
+                deviceName: device && !extraDevices.includes(modelName) ? undefined : modelName.trim(),
+                productDescription: description.trim(),
+                currentPrice: unitPrice,
+              });
+            if (drawingFile) await uploadDrawing(saved.id, drawingFile);
             show("품목을 저장했습니다. 이미 들어간 수주 단가는 바뀌지 않습니다.");
             navigate("/products");
           } catch (error: unknown) {
-            show(error instanceof Error ? error.message : "저장하지 못했습니다.");
+            show(readApiErrorMessage(error));
           }
         }}
       >
@@ -248,15 +301,16 @@ function ProductEditor({ productId }: { productId?: string }) {
               모델코드 <span className="text-danger">*</span>
               <span className="mt-2 flex gap-2">
                 <input
-                  className="h-10 min-w-0 flex-1 rounded-lg border border-line px-3 font-normal"
+                  className="h-10 min-w-0 flex-1 rounded-lg border border-line px-3 font-normal disabled:bg-canvas"
                   value={modelCode}
                   placeholder="예: PM-0005"
+                  disabled={editing}
                   onChange={(event) => {
                     setModelCode(event.target.value);
                     setCodeCheck("");
                   }}
                 />
-                <Button type="button" tone="ghost" onClick={checkCode}>중복 확인</Button>
+                {editing ? null : <Button type="button" tone="ghost" onClick={() => void checkCode()}>중복 확인</Button>}
               </span>
             </label>
             <p className="mt-2 text-xs text-muted">같은 모델코드가 있는지 확인하세요.</p>
@@ -280,7 +334,7 @@ function ProductEditor({ productId }: { productId?: string }) {
                   onChange={(event) => setModelName(event.target.value)}
                 >
                   <option value="">기종을 선택하세요</option>
-                  {devices.map((device) => <option key={device} value={device}>{device}</option>)}
+                  {deviceNames.map((device) => <option key={device} value={device}>{device}</option>)}
                 </select>
                 <Button type="button" tone="ghost" onClick={() => { setDeviceDraft(""); setDeviceError(""); setDeviceModal(true); }}>기종 추가</Button>
               </span>
@@ -331,13 +385,9 @@ function ProductEditor({ productId }: { productId?: string }) {
                     setDrawingError("파일은 2MB 이하로 올려 주세요.");
                     return;
                   }
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    setDrawingPdfName(file.name);
-                    setDrawingPdfUrl(String(reader.result ?? ""));
-                    setDrawingError("");
-                  };
-                  reader.readAsDataURL(file);
+                  setDrawingFile(file);
+                  setDrawingPdfName(file.name);
+                  setDrawingError("");
                 }}
               />
             </label>
@@ -349,7 +399,7 @@ function ProductEditor({ productId }: { productId?: string }) {
                   className="shrink-0 text-muted"
                   onClick={() => {
                     setDrawingPdfName("");
-                    setDrawingPdfUrl("");
+                    setDrawingFile(null);
                     setDrawingError("");
                   }}
                 >
@@ -464,32 +514,31 @@ function ProductFileWindow({ name, url }: { name: string; url: string }) {
   );
 }
 
-function productionFinished(status: string): boolean {
-  // 출고대기는 포장이 끝난 뒤라 누적 생산량에 포함한다.
-  return status === "PACKING" || status === "READY_TO_SHIP" || status === "SHIPPING" || status === "COMPLETED";
-}
-
 export function ProductDetailPage() {
   const { productId = "" } = useParams();
-  const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
-  const product = db.products.find((item) => item.id === productId);
-  if (!product) return <p>품목을 찾을 수 없습니다.</p>;
-  const today = todayISO();
-  const history = db.orders
-    .filter((order) => order.status !== "CANCELLED" && order.lines.some((line) => line.productId === product.id))
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  const lineOf = (orderId: string) => history.find((order) => order.id === orderId)?.lines.find((line) => line.productId === product.id);
-  // 생산 완료 전 수량은 실적이 아니므로 포장중 이후만 누적한다.
-  const produced = history.reduce((sum, order) => sum + (productionFinished(order.status) ? (lineOf(order.id)?.quantity ?? 0) : 0), 0);
-  const traded = history.reduce((sum, order) => {
-    const line = lineOf(order.id);
-    return sum + (line ? lineAmount(line, order.vatIncluded) : 0);
-  }, 0);
-  const recent = history[0];
-  const recentLine = recent ? lineOf(recent.id) : undefined;
-  const recentClient = db.clients.find((client) => client.id === recent?.clientId);
-  const recentRows = history.slice(0, 5);
+  const [product, setProduct] = useState<ReturnType<typeof toProductRow> | null>(null);
+  const [missing, setMissing] = useState(false);
+  useEffect(() => {
+    const id = Number(productId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setMissing(true);
+      return;
+    }
+    let ignore = false;
+    Promise.all([getProduct(id), listCurrentDrawings(id)]).then(([item, drawings]) => {
+      if (ignore) return;
+      setProduct({ ...toProductRow(item), drawingPdfName: drawings[0]?.fileName ?? "" });
+    }).catch(() => {
+      if (!ignore) setMissing(true);
+    });
+    return () => { ignore = true; };
+  }, [productId]);
+  if (missing) return <p>품목을 찾을 수 없습니다.</p>;
+  if (!product) return <p>품목을 불러오는 중입니다.</p>;
+  const produced = 0;
+  const traded = 0;
+  const recentRows: never[] = [];
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -549,7 +598,7 @@ export function ProductDetailPage() {
           <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
             <div>
               <h2 className="font-semibold">관련 생산 및 수주 이력</h2>
-              <p className="mt-1 text-sm text-muted">이 품목에 포함된 최근 수주 {recentRows.length}건 · 수량과 품목 금액은 {product.productName} 기준</p>
+              <p className="mt-1 text-sm text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</p>
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -567,27 +616,7 @@ export function ProductDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {recentRows.length === 0 ? <tr><td className="px-5 py-6 text-muted" colSpan={8}>연결된 수주가 없습니다.</td></tr> : recentRows.map((order) => {
-                  const line = lineOf(order.id);
-                  const client = db.clients.find((item) => item.id === order.clientId);
-                  if (!line) return null;
-                  return (
-                    <tr key={order.id} className="border-t border-line">
-                      <td className="px-5 py-3 font-semibold"><Link className="text-primary" to={`/orders/${order.id}`}>{order.orderNo}</Link></td>
-                      <td>{client?.companyName ?? "거래처 없음"}</td>
-                      <td>{line.quantity.toLocaleString("ko-KR")}개</td>
-                      <td>{formatWon(line.unitPrice)}</td>
-                      <td>{formatWon(lineAmount(line, order.vatIncluded))}</td>
-                      <td className="whitespace-nowrap">{order.dueDate}</td>
-                      <td><Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge></td>
-                      <td className="pr-3">
-                        <Link to={`/orders/${order.id}`} aria-label={`${order.orderNo} 상세`} className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-primary-soft hover:text-primary">
-                          <ChevronRight size={18} />
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {recentRows.length === 0 ? <tr><td className="px-5 py-6 text-muted" colSpan={8}>수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</td></tr> : null}
               </tbody>
             </table>
           </div>
@@ -595,21 +624,8 @@ export function ProductDetailPage() {
         </div>
         <aside className="space-y-4">
           <section className="rounded-xl border border-line bg-white p-5">
-            <div className="flex items-center justify-between"><h2 className="font-semibold">최근 연결 수주</h2>{recent ? <Link className="inline-flex items-center text-sm text-primary" to={`/orders/${recent.id}`}>상세 <ChevronRight size={16} /></Link> : null}</div>
-            {recent && recentLine ? (
-              <div className="mt-4 space-y-3 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="font-semibold">{recent.orderNo}</p>
-                  <Badge className={orderStatusTone(recent.status)}>{orderStatusLabel[recent.status]}</Badge>
-                </div>
-                <p>{recentClient?.companyName ?? "거래처 없음"}</p>
-                <p className="text-muted">{productTitle(product)}</p>
-                <div className="flex justify-between border-t border-line pt-3"><span className="text-muted">이 품목 수량</span><span>{recentLine.quantity.toLocaleString("ko-KR")}개</span></div>
-                <div className="flex justify-between"><span className="text-muted">이 품목 금액 · 부가세 포함</span><span>{formatWon(lineAmount(recentLine, recent.vatIncluded))}</span></div>
-                <div className="flex justify-between"><span className="text-muted">전체 수주 금액 · 부가세 포함</span><span>{formatWon(orderTotal(recent.lines, recent.vatIncluded))}</span></div>
-                <div className="flex justify-between"><span className="text-muted">납기일</span><span>{recent.dueDate}{recent.dueDate === today ? " · 오늘" : ""}</span></div>
-              </div>
-            ) : <p className="mt-4 text-sm text-muted">연결된 수주가 없습니다.</p>}
+            <h2 className="font-semibold">최근 연결 수주</h2>
+            <p className="mt-4 text-sm text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</p>
           </section>
           <section className="rounded-xl bg-primary-soft p-5">
             <div className="flex gap-3">

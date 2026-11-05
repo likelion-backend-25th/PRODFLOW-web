@@ -1,14 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Badge, Button } from "@/components/ui.tsx";
 import { localDate } from "@/lib/dates.ts";
-import { useDb } from "@/lib/db.ts";
 import { quotationStatusLabel, quotationStatusTone } from "@/lib/labels.ts";
-import { formatWon, orderTotal } from "@/lib/money.ts";
+import { formatWon } from "@/lib/money.ts";
+import { readApiErrorMessage } from "@/lib/apiClient.ts";
+import { listQuotations, type QuotationListItem, type QuotationPage, type QuotationSortType } from "@/lib/quotationApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
-import type { Quotation, QuotationStatus } from "@/types/domain.ts";
+import type { QuotationStatus } from "@/types/domain.ts";
 
-const filters: QuotationStatus[] = ["SENT", "APPROVED", "REJECTED", "CANCELLED", "EXPIRED"];
+const filters: QuotationStatus[] = ["DRAFT", "SENT", "APPROVED", "REJECTED", "CANCELLED", "EXPIRED"];
 const dateFields = ["createdAt", "requestedDueDate", "estimatedDueDate", "validUntil"] as const;
 type DateField = (typeof dateFields)[number];
 
@@ -19,12 +20,16 @@ const dateFieldLabel: Record<DateField, string> = {
   validUntil: "유효기간",
 };
 
-function quoteDate(quote: Quotation, field: DateField): string {
-  return field === "createdAt" ? localDate(quote.createdAt) : quote[field];
-}
+const sortTypeOf: Record<DateField, QuotationSortType> = {
+  createdAt: "CREATED_AT",
+  requestedDueDate: "REQUESTED_DUE_DATE",
+  estimatedDueDate: "ESTIMATED_DUE_DATE",
+  validUntil: "VALID_UNTIL",
+};
+
+const emptyPage: QuotationPage = { content: [], page: 0, size: 12, totalElements: 0, totalPages: 0 };
 
 export function QuoteListPage() {
-  const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
   const [params] = useSearchParams();
   const openPending = params.get("pending") === "1";
@@ -35,18 +40,37 @@ export function QuoteListPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [page, setPage] = useState(0);
-  const rows = useMemo(() => db.quotations.filter((quote) => {
-    const client = db.clients.find((item) => item.id === quote.clientId);
-    const author = db.users.find((item) => item.id === quote.userId);
-    const text = `${quote.quotationNo} ${client?.companyName ?? ""} ${author?.name ?? ""}`.includes(keyword.trim());
-    const date = quoteDate(quote, dateField);
-    const inRange = (!from || date >= from) && (!to || date <= to);
-    const waitingOrder = pendingOnly && quote.status === "APPROVED" && !db.orders.some((order) => order.quotationId === quote.id && order.status !== "CANCELLED");
-    return text && inRange && (!status || quote.status === status) && (!pendingOnly || waitingOrder);
-  }).sort((left, right) => quoteDate(right, dateField).localeCompare(quoteDate(left, dateField)) || right.quotationNo.localeCompare(left.quotationNo)), [dateField, db, from, keyword, pendingOnly, status, to]);
-  const pageCount = Math.max(1, Math.ceil(rows.length / 12));
-  const currentPage = Math.min(page, pageCount - 1);
-  const slice = rows.slice(currentPage * 12, currentPage * 12 + 12);
+  const [result, setResult] = useState<QuotationPage>(emptyPage);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  useEffect(() => {
+    let ignore = false;
+    setLoading(true);
+    listQuotations({
+      keyword: keyword.trim(),
+      status: pendingOnly ? "APPROVED" : status,
+      sortType: sortTypeOf[dateField],
+      startDate: from,
+      endDate: to,
+      page,
+    }).then((response) => {
+      if (ignore) return;
+      setResult(response);
+      setLoadError("");
+      setLoading(false);
+    }).catch((error: unknown) => {
+      if (ignore) return;
+      setResult(emptyPage);
+      setLoadError(readApiErrorMessage(error));
+      setLoading(false);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [dateField, from, keyword, page, pendingOnly, status, to]);
+  const rows = result.content.filter((quote) => !pendingOnly || quote.customerOrderId == null);
+  const pageCount = Math.max(1, result.totalPages);
+  const currentPage = result.page;
 
   return (
     <div>
@@ -82,33 +106,28 @@ export function QuoteListPage() {
               </tr>
             </thead>
             <tbody>
-              {slice.map((quote) => {
-                const client = db.clients.find((item) => item.id === quote.clientId);
-                const author = db.users.find((item) => item.id === quote.userId);
-                const order = db.orders.find((item) => item.quotationId === quote.id && item.status !== "CANCELLED");
-                return (
-                  <tr key={quote.id} className="border-t border-line">
-                    <td className="px-4 py-3 font-semibold"><Link to={`/quotations/${quote.id}`} className="text-primary">{quote.quotationNo}</Link></td>
-                    <td className="px-4 py-3">{client?.companyName ?? "-"}</td>
-                    <td className="px-4 py-3">{quote.requestedDueDate}</td>
-                    <td className="px-4 py-3">{quote.estimatedDueDate}</td>
-                    <td className="px-4 py-3">{formatWon(orderTotal(quote.lines, quote.vatIncluded))}</td>
-                    <td className="px-4 py-3"><Badge className={quotationStatusTone(quote.status)}>{quotationStatusLabel[quote.status]}</Badge></td>
-                    <td className="px-4 py-3">
-                      {order ? <Link to={`/orders/${order.id}`} className="text-primary">{order.orderNo}</Link> : quote.status === "APPROVED" ? (canManageOrders(role) ? <Link to={`/orders/new?quotationId=${quote.id}`} className="font-semibold text-primary">수주 대기</Link> : "수주 대기") : "-"}
-                    </td>
-                    <td className="px-4 py-3">{quote.validUntil}</td>
-                    <td className="px-4 py-3">{author?.name ?? "-"}</td>
-                    <td className="px-4 py-3 text-xs text-muted">{localDate(quote.createdAt)}</td>
-                  </tr>
-                );
-              })}
-              {rows.length === 0 ? <tr><td className="px-4 py-8 text-center text-muted" colSpan={10}>견적이 없습니다.</td></tr> : null}
+              {rows.map((quote) => (
+                <tr key={quote.id} className="border-t border-line">
+                  <td className="px-4 py-3 font-semibold"><Link to={`/quotations/${quote.id}`} className="text-primary">{quote.quotationNo}</Link></td>
+                  <td className="px-4 py-3">{quote.clientCompany || "-"}</td>
+                  <td className="px-4 py-3">{quote.requestedDueDate}</td>
+                  <td className="px-4 py-3">{quote.estimatedDueDate}</td>
+                  <td className="px-4 py-3">{formatWon(quote.totalAmount)}</td>
+                  <td className="px-4 py-3"><Badge className={quotationStatusTone(quote.status)}>{quotationStatusLabel[quote.status]}</Badge></td>
+                  <td className="px-4 py-3"><OrderCell quote={quote} canRegister={canManageOrders(role)} /></td>
+                  <td className="px-4 py-3">{quote.validUntil}</td>
+                  <td className="px-4 py-3">{quote.userName || "-"}</td>
+                  <td className="px-4 py-3 text-xs text-muted">{localDate(quote.createdAt)}</td>
+                </tr>
+              ))}
+              {loading ? <tr><td className="px-4 py-8 text-center text-muted" colSpan={10}>견적을 불러오는 중입니다.</td></tr> : null}
+              {!loading && loadError ? <tr><td className="px-4 py-8 text-center text-danger" colSpan={10}>{loadError}</td></tr> : null}
+              {!loading && !loadError && rows.length === 0 ? <tr><td className="px-4 py-8 text-center text-muted" colSpan={10}>견적이 없습니다.</td></tr> : null}
             </tbody>
           </table>
         </div>
         <div className="flex items-center justify-between px-5 py-3 text-sm text-muted">
-          <span>총 {rows.length}건 중 {rows.length === 0 ? 0 : currentPage * 12 + 1}-{Math.min(rows.length, currentPage * 12 + 12)}건 표시</span>
+          <span>총 {result.totalElements}건 중 {result.totalElements === 0 ? 0 : currentPage * result.size + 1}-{Math.min(result.totalElements, currentPage * result.size + rows.length)}건 표시</span>
           <span className="flex gap-2">
             <Button tone="ghost" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>이전</Button>
             <Button tone="ghost" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>다음</Button>
@@ -117,4 +136,14 @@ export function QuoteListPage() {
       </section>
     </div>
   );
+}
+
+function OrderCell({ quote, canRegister }: { quote: QuotationListItem; canRegister: boolean }) {
+  if (quote.customerOrderId != null && quote.orderNo && quote.orderNo !== "-") {
+    return <Link to={`/orders/${quote.customerOrderId}`} className="text-primary">{quote.orderNo}</Link>;
+  }
+  if (quote.status === "APPROVED") {
+    return canRegister ? <Link to={`/orders/new?quotationId=${quote.id}`} className="font-semibold text-primary">수주 대기</Link> : "수주 대기";
+  }
+  return "-";
 }

@@ -7,6 +7,7 @@ import { CalendarPage } from "@/pages/CalendarPage.tsx";
 import { ClientDetailPage, ClientFormPage, ClientListPage } from "@/pages/clients/ClientPages.tsx";
 import { DashboardPage } from "@/pages/DashboardPage.tsx";
 import { LineDetailPage, LineFormPage, LineListPage } from "@/pages/lines/LinePages.tsx";
+import { ChangePasswordPage } from "@/pages/ChangePasswordPage.tsx";
 import { LoginPage } from "@/pages/LoginPage.tsx";
 import { OrderDetailPage } from "@/pages/orders/OrderDetailPage.tsx";
 import { OrderListPage } from "@/pages/orders/OrderListPage.tsx";
@@ -39,6 +40,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/change-password" element={<ChangePasswordPage />} />
         <Route element={<RootLayout />}>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/quotations" element={<QuoteListPage />} />
