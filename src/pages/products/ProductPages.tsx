@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Banknote, Check, ChevronDown, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, Plus, Wallet } from "lucide-react";
+import { useState } from "react";
+import { ArrowLeft, Banknote, Check, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, Plus, Wallet, X } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Badge, Button } from "@/components/ui.tsx";
 import { localDate, todayISO } from "@/lib/dates.ts";
@@ -150,31 +150,25 @@ function ProductEditor({ productId }: { productId?: string }) {
   const [drawingPdfName, setDrawingPdfName] = useState(current?.drawingPdfName ?? "");
   const [drawingPdfUrl, setDrawingPdfUrl] = useState(current?.drawingPdfUrl ?? "");
   const [drawingError, setDrawingError] = useState("");
-  const [deviceOpen, setDeviceOpen] = useState(false);
+  const [deviceModal, setDeviceModal] = useState(false);
   const [deviceDraft, setDeviceDraft] = useState("");
-  const deviceRef = useRef<HTMLDivElement>(null);
+  const [deviceError, setDeviceError] = useState("");
+  const [extraDevices, setExtraDevices] = useState<string[]>([]);
   const codeTaken = (code: string) => db.products.some((product) => product.id !== current?.id && product.modelCode.replace(/\s+/g, "").toLowerCase() === code.replace(/\s+/g, "").toLowerCase());
-  const devices = [...new Set([...db.products.map((product) => product.modelName.trim()), current?.modelName.trim() ?? ""].filter(Boolean))].sort((left, right) => left.localeCompare(right, "ko"));
-  useEffect(() => {
-    if (!deviceOpen) return;
-    function close(event: MouseEvent) {
-      if (deviceRef.current?.contains(event.target as Node)) return;
-      const typed = deviceDraft.trim();
-      if (typed) setModelName(typed);
-      setDeviceDraft("");
-      setDeviceOpen(false);
-    }
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [deviceOpen, deviceDraft]);
+  const devices = [...new Set([...db.products.map((product) => product.modelName.trim()), current?.modelName.trim() ?? "", ...extraDevices].filter(Boolean))].sort((left, right) => left.localeCompare(right, "ko"));
   if (editing && !current) return <p>품목을 찾을 수 없습니다.</p>;
 
-  function pickDevice(name: string) {
-    const next = name.trim();
-    if (!next) return;
+  function addDevice() {
+    const next = deviceDraft.trim();
+    if (!next) {
+      setDeviceError("기종명을 입력하세요.");
+      return;
+    }
+    setExtraDevices((items) => items.some((item) => item.toLowerCase() === next.toLowerCase()) ? items : [...items, next]);
     setModelName(next);
     setDeviceDraft("");
-    setDeviceOpen(false);
+    setDeviceError("");
+    setDeviceModal(false);
   }
 
   function checkCode() {
@@ -280,41 +274,19 @@ function ProductEditor({ productId }: { productId?: string }) {
             <p className="mt-2 text-xs text-muted">규격이 다르면 이름에 규격이나 모델을 함께 입력해 주세요.</p>
             <div className="mt-5 text-sm font-semibold">
               기종명 <span className="text-danger">*</span>
-              <div className="relative mt-2" ref={deviceRef}>
-                <button type="button" className="flex h-10 w-full items-center justify-between rounded-lg border border-line bg-white px-3 text-left font-normal" onClick={() => setDeviceOpen((open) => !open)}>
-                  <span className={modelName ? "text-ink" : "text-muted"}>{modelName || "기종을 선택하세요"}</span>
-                  <ChevronDown size={16} className="text-muted" />
-                </button>
-                {deviceOpen ? (
-                  <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-line bg-white shadow-lg">
-                    <div className="border-b border-line p-2">
-                      <input
-                        className="h-10 w-full rounded-lg border border-line px-3 text-sm font-normal"
-                        value={deviceDraft}
-                        placeholder="새 기종 입력"
-                        autoFocus
-                        onChange={(event) => setDeviceDraft(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter") return;
-                          event.preventDefault();
-                          pickDevice(deviceDraft);
-                        }}
-                      />
-                    </div>
-                    <ul className="max-h-52 overflow-y-auto py-1">
-                      {devices.map((device) => (
-                        <li key={device}>
-                          <button type="button" className={`w-full px-3 py-2 text-left text-sm font-normal hover:bg-primary-soft ${device === modelName ? "bg-primary-soft text-primary" : ""}`} onClick={() => pickDevice(device)}>
-                            {device}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
+              <span className="mt-2 flex gap-2">
+                <select
+                  className="h-10 min-w-0 flex-1 rounded-lg border border-line bg-white px-3 font-normal"
+                  value={modelName}
+                  onChange={(event) => setModelName(event.target.value)}
+                >
+                  <option value="">기종을 선택하세요</option>
+                  {devices.map((device) => <option key={device} value={device}>{device}</option>)}
+                </select>
+                <Button type="button" tone="ghost" onClick={() => { setDeviceDraft(""); setDeviceError(""); setDeviceModal(true); }}>기종 추가</Button>
+              </span>
             </div>
-            <p className="mt-2 text-xs text-muted">맨 위 칸에 새 기종을 입력하고 Enter를 누르거나, 아래 등록된 기종을 고르세요.</p>
+            <p className="mt-2 text-xs text-muted">등록된 기종을 고르거나, 기종 추가로 새 기종을 넣으세요.</p>
             <label className="mt-5 block text-sm font-semibold">
               품목 설명 <span className="font-normal text-muted">(선택)</span>
               <textarea
@@ -429,6 +401,38 @@ function ProductEditor({ productId }: { productId?: string }) {
           </section>
         </aside>
       </form>
+      {deviceModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" role="dialog" aria-modal="true" aria-labelledby="device-modal-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeviceModal(false); }}>
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-line px-5 py-4">
+              <h2 id="device-modal-title" className="font-semibold">기종 추가</h2>
+              <button type="button" className="rounded-lg p-1 text-muted hover:bg-canvas" aria-label="닫기" onClick={() => setDeviceModal(false)}><X size={18} /></button>
+            </div>
+            <div className="p-5">
+              <label className="block text-sm font-semibold">
+                기종명 <span className="text-danger">*</span>
+                <input
+                  className="mt-2 h-10 w-full rounded-lg border border-line px-3 font-normal"
+                  value={deviceDraft}
+                  placeholder="예: Galaxy S26"
+                  autoFocus
+                  onChange={(event) => { setDeviceDraft(event.target.value); setDeviceError(""); }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    addDevice();
+                  }}
+                />
+              </label>
+              {deviceError ? <p className="mt-2 text-xs text-danger">{deviceError}</p> : null}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-line px-5 py-4">
+              <Button tone="ghost" onClick={() => setDeviceModal(false)}>취소</Button>
+              <Button onClick={addDevice}>추가</Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
