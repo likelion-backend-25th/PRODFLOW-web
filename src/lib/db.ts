@@ -251,7 +251,7 @@ function seed(): Database {
       slots: [[-22, 350]],
       status: "COMPLETED",
       paid: "full",
-      workOrder: { id: "wo-old-1", assignee: floor4, lineId: "line-1", status: "COMPLETED", started: -22, completed: -22 },
+      workOrder: { id: "wo-old-1", assignee: floor4, lineId: "line-1", status: "PACK_DONE", started: -22, completed: -22 },
       produced: 350,
       packed: -21,
       shipped: { day: -20, carrier: "롯데택배", trackingNo: "310011122233" },
@@ -267,7 +267,7 @@ function seed(): Database {
       slots: [[-21, 480]],
       status: "COMPLETED",
       paid: "full",
-      workOrder: { id: "wo-old-2", assignee: floor1, lineId: "line-2", status: "COMPLETED", started: -21, completed: -21 },
+      workOrder: { id: "wo-old-2", assignee: floor1, lineId: "line-2", status: "PACK_DONE", started: -21, completed: -21 },
       produced: 480,
       packed: -20,
       shipped: { day: -19, carrier: "한진택배", trackingNo: "430011100221" },
@@ -283,7 +283,7 @@ function seed(): Database {
       slots: [[-20, 250]],
       status: "COMPLETED",
       paid: "full",
-      workOrder: { id: "wo-old-3", assignee: floor2, lineId: "line-1", status: "COMPLETED", started: -20, completed: -20 },
+      workOrder: { id: "wo-old-3", assignee: floor2, lineId: "line-1", status: "PACK_DONE", started: -20, completed: -20 },
       produced: 250,
       packed: -19,
       shipped: { day: -18, carrier: "CJ대한통운", trackingNo: "560044455566" },
@@ -299,7 +299,7 @@ function seed(): Database {
       slots: [[-19, 180]],
       status: "COMPLETED",
       paid: "deposit",
-      workOrder: { id: "wo-old-4", assignee: floor4, lineId: "line-2", status: "COMPLETED", started: -19, completed: -19 },
+      workOrder: { id: "wo-old-4", assignee: floor4, lineId: "line-2", status: "PACK_DONE", started: -19, completed: -19 },
       produced: 180,
       packed: -18,
       shipped: { day: -17, carrier: "로젠택배", trackingNo: "880077766655" },
@@ -315,7 +315,7 @@ function seed(): Database {
       slots: [[-16, 400]],
       status: "COMPLETED",
       paid: "full",
-      workOrder: { id: "wo-old-5", assignee: floor1, lineId: "line-1", status: "COMPLETED", started: -16, completed: -16 },
+      workOrder: { id: "wo-old-5", assignee: floor1, lineId: "line-1", status: "PACK_DONE", started: -16, completed: -16 },
       produced: 400,
       packed: -15,
       shipped: { day: -14, carrier: "한진택배", trackingNo: "430022233344" },
@@ -343,7 +343,7 @@ function seed(): Database {
       slots: [[-6, 700]],
       status: "COMPLETED",
       paid: "full",
-      workOrder: { id: "wo-done", assignee: floor1, lineId: "line-1", status: "COMPLETED", started: -6, completed: -6 },
+      workOrder: { id: "wo-done", assignee: floor1, lineId: "line-1", status: "PACK_DONE", started: -6, completed: -6 },
       produced: 700,
       packed: -6,
       shipped: { day: -5, carrier: "한진택배", trackingNo: "430098765432" },
@@ -359,7 +359,7 @@ function seed(): Database {
       slots: [[-5, 300]],
       status: "SHIPPING",
       paid: "deposit",
-      workOrder: { id: "wo-shipping", assignee: floor2, lineId: "line-2", status: "COMPLETED", started: -5, completed: -5 },
+      workOrder: { id: "wo-shipping", assignee: floor2, lineId: "line-2", status: "PACK_DONE", started: -5, completed: -5 },
       produced: 300,
       packed: -5,
       shipped: { day: -1, carrier: "CJ대한통운", trackingNo: "560012345678" },
@@ -374,7 +374,7 @@ function seed(): Database {
       slots: [[-3, 600]],
       status: "READY_TO_SHIP",
       paid: "deposit",
-      workOrder: { id: "wo-packed", assignee: floor1, lineId: "line-1", status: "COMPLETED", started: -3, completed: -3 },
+      workOrder: { id: "wo-packed", assignee: floor1, lineId: "line-1", status: "PACK_DONE", started: -3, completed: -3 },
       produced: 600,
       packed: -2,
       memo: "맥세이프 링 위치 샘플 확인 완료.",
@@ -388,7 +388,7 @@ function seed(): Database {
       slots: [[-1, 400]],
       status: "PACKING",
       paid: "deposit",
-      workOrder: { id: "wo-packing", assignee: floor1, lineId: "line-2", status: "COMPLETED", started: -1, completed: -1 },
+      workOrder: { id: "wo-packing", assignee: floor1, lineId: "line-2", status: "PACK", started: -1, completed: -1 },
       produced: 400,
       memo: "투명 케이스. 포장 후 출고 대기.",
     },
@@ -401,7 +401,7 @@ function seed(): Database {
       slots: [[-1, 500], [0, 500]],
       status: "IN_PRODUCTION",
       paid: "deposit",
-      workOrder: { id: "wo-running", assignee: floor2, lineId: "line-1", status: "IN_PRODUCTION", started: -1 },
+      workOrder: { id: "wo-running", assignee: floor2, lineId: "line-1", status: "PRODUCE", started: -1 },
       produced: 0,
       memo: "카드 수납 2장 사양. 1라인 생산 중.",
     },
@@ -414,7 +414,7 @@ function seed(): Database {
       slots: [[0, 500]],
       status: "CONFIRMED",
       paid: "deposit",
-      workOrder: { id: "wo-ready", assignee: floor1, lineId: null, status: "READY" },
+      workOrder: { id: "wo-ready", assignee: floor1, lineId: null, status: "PREPARE" },
       produced: 0,
       memo: "계약금 확인. 라인 배정 전.",
     },
@@ -454,7 +454,7 @@ function seed(): Database {
       slots: [[2, 600]],
       status: "CONFIRMED",
       paid: "deposit",
-      workOrder: { id: "wo-confirmed-2", assignee: floor4, lineId: null, status: "READY" },
+      workOrder: { id: "wo-confirmed-2", assignee: floor4, lineId: null, status: "PREPARE" },
       produced: 0,
       memo: "갤럭시 실리콘. 라인 배정 전.",
     },
@@ -536,11 +536,11 @@ function seed(): Database {
         });
         if (startedAt) {
           if (pieceIndex === 0) move("ORDER", spec.id, "IN_PRODUCTION", startedAt, plan.assignee);
-          move("WORK_ORDER", id, "IN_PRODUCTION", startedAt, plan.assignee, "READY");
+          move("WORK_ORDER", id, "PRODUCE", startedAt, plan.assignee, "PREPARE");
         }
         if (completedAt) {
           if (pieceIndex === 0) move("ORDER", spec.id, "PACKING", completedAt, plan.assignee);
-          move("WORK_ORDER", id, "COMPLETED", completedAt, plan.assignee, "IN_PRODUCTION");
+          move("WORK_ORDER", id, plan.status, completedAt, plan.assignee, "PRODUCE");
         }
       });
       if (spec.packed !== undefined && !spec.shipped) move("ORDER", spec.id, "READY_TO_SHIP", stamp(day(spec.packed), "18:00"), plan.assignee);
@@ -600,9 +600,9 @@ function seed(): Database {
     orders: orders.reverse(),
     workOrders: workOrders.reverse(),
     lines: [
-      { id: "line-1", name: "1라인", dailyCapacity: 500, status: "RUNNING" },
+      { id: "line-1", name: "1라인", dailyCapacity: 500, status: "OPERATING" },
       { id: "line-2", name: "2라인", dailyCapacity: 500, status: "AVAILABLE" },
-      { id: "line-3", name: "3라인", dailyCapacity: 300, status: "MAINTENANCE" },
+      { id: "line-3", name: "3라인", dailyCapacity: 300, status: "INSPECTION" },
     ],
     lineCapacityLogs: [
       {
@@ -919,8 +919,75 @@ function sampleQuotations(clients: Client[], products: Product[], author: { id: 
   }];
 }
 
-function repair(db: Database): boolean {
+function migrateStatusCodes(db: Database): boolean {
   let changed = false;
+  const drop = new Set<string>();
+  db.workOrders.forEach((workOrder) => {
+    const current = workOrder.status as string;
+    if (current === "COMPLETED") {
+      const order = db.orders.find((item) => item.id === workOrder.orderId);
+      workOrder.status = order?.status === "PACKING" ? "PACK" : "PACK_DONE";
+      changed = true;
+      return;
+    }
+    if (current === "READY") {
+      workOrder.status = "PREPARE";
+      changed = true;
+    } else if (current === "IN_PRODUCTION") {
+      workOrder.status = "PRODUCE";
+      changed = true;
+    } else if (current === "PAUSED") {
+      workOrder.status = "SUSPEND";
+      changed = true;
+    } else if (current === "CANCELLED") {
+      drop.add(workOrder.id);
+      changed = true;
+    }
+  });
+  if (drop.size > 0) db.workOrders = db.workOrders.filter((item) => !drop.has(item.id));
+  db.lines.forEach((line) => {
+    const current = line.status as string;
+    if (current === "RUNNING") {
+      line.status = "OPERATING";
+      changed = true;
+    } else if (current === "MAINTENANCE") {
+      line.status = "INSPECTION";
+      changed = true;
+    }
+  });
+  const renamed: Record<string, string> = {
+    READY: "PREPARE",
+    PAUSED: "SUSPEND",
+    RUNNING: "OPERATING",
+    MAINTENANCE: "INSPECTION",
+  };
+  db.histories.forEach((item) => {
+    if (item.entity !== "WORK_ORDER") return;
+    if (item.entity === "WORK_ORDER" && (item.fromStatus === "IN_PRODUCTION" || item.toStatus === "IN_PRODUCTION" || item.toStatus === "COMPLETED")) {
+      if (item.fromStatus === "IN_PRODUCTION") item.fromStatus = "PRODUCE";
+      if (item.toStatus === "IN_PRODUCTION") item.toStatus = "PRODUCE";
+      if (item.toStatus === "COMPLETED") {
+        const workOrder = db.workOrders.find((row) => row.id === item.entityId);
+        item.toStatus = workOrder?.status === "PACK" ? "PACK" : "PACK_DONE";
+      }
+      changed = true;
+    }
+    const from = renamed[item.fromStatus];
+    const to = renamed[item.toStatus];
+    if (from) {
+      item.fromStatus = from;
+      changed = true;
+    }
+    if (to) {
+      item.toStatus = to;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+function repair(db: Database): boolean {
+  let changed = migrateStatusCodes(db);
   db.products.forEach((product) => {
     if (product.status === "AVAILABLE" || product.status === "DISCONTINUED") return;
     product.status = "AVAILABLE";
@@ -958,7 +1025,7 @@ function repair(db: Database): boolean {
     const fallback = db.lines.find((line) => line.status === "AVAILABLE")?.id ?? db.lines[0]?.id ?? null;
     db.workOrders.forEach((workOrder) => {
       if (!workOrder.lineId || kept.has(workOrder.lineId)) return;
-      workOrder.lineId = workOrder.status === "READY" || workOrder.status === "CANCELLED" ? null : fallback;
+      workOrder.lineId = workOrder.status === "PREPARE" || workOrder.status === "HALT" ? null : fallback;
     });
     db.lineCapacityLogs = db.lineCapacityLogs.filter((log) => kept.has(log.lineId));
     changed = true;
@@ -1090,7 +1157,7 @@ function repair(db: Database): boolean {
   [...db.orders]
     .sort((left, right) => left.plannedStartDate.localeCompare(right.plannedStartDate) || left.createdAt.localeCompare(right.createdAt))
     .forEach((order) => {
-      const wos = db.workOrders.filter((item) => item.orderId === order.id && item.status !== "CANCELLED");
+      const wos = db.workOrders.filter((item) => item.orderId === order.id);
       if (wos.length === 0 || wos.every((item) => item.allocations.length > 0)) return;
       if (wos.length === 1) {
         wos[0].allocations = order.allocations.map((slot) => ({ ...slot }));
@@ -1099,7 +1166,7 @@ function repair(db: Database): boolean {
       }
       try {
         const occupying = db.workOrders.filter(
-          (item) => item.status !== "CANCELLED" && item.lineId && item.orderId !== order.id,
+          (item) => item.lineId && item.orderId !== order.id,
         );
         const chunks = splitQuantityByLines(
           order.allocations,
@@ -1118,7 +1185,7 @@ function repair(db: Database): boolean {
           workOrder.allocations = chunk.allocations.map((slot) => ({ ...slot }));
           workOrder.plannedStartDate = chunk.plannedStartDate;
           workOrder.plannedEndDate = chunk.plannedEndDate;
-          if (workOrder.status === "READY") workOrder.quantity = chunk.quantity;
+          if (workOrder.status === "PREPARE") workOrder.quantity = chunk.quantity;
           changed = true;
         });
       } catch {
@@ -1127,7 +1194,7 @@ function repair(db: Database): boolean {
     });
   db.orders.forEach((order) => {
     const wos = db.workOrders
-      .filter((item) => item.orderId === order.id && item.status !== "CANCELLED")
+      .filter((item) => item.orderId === order.id)
       .sort((left, right) => left.plannedStartDate.localeCompare(right.plannedStartDate) || left.issuedAt.localeCompare(right.issuedAt) || left.id.localeCompare(right.id));
     if (wos.length === 0 || wos.every((item) => item.items?.length)) return;
     const packs = allocateProductItems(order.lines, wos.map((item) => item.quantity));
@@ -1139,12 +1206,12 @@ function repair(db: Database): boolean {
   const splitWorkOrders: WorkOrder[] = [];
   for (const workOrder of [...db.workOrders]) {
     const items = workOrder.items ?? [];
-    if (workOrder.status === "CANCELLED" || items.length <= 1) continue;
+    if (items.length <= 1) continue;
     const pieces = divideAllocationsByProduct(workOrder.allocations ?? [], items);
     const [first, ...rest] = pieces;
     if (!first) continue;
     const status = workOrder.status;
-    const running = status === "IN_PRODUCTION" || status === "PAUSED";
+    const running = status === "PRODUCE" || status === "SUSPEND";
     workOrder.quantity = first.quantity;
     workOrder.items = [{ productId: first.productId, quantity: first.quantity }];
     workOrder.allocations = first.allocations;
@@ -1154,7 +1221,7 @@ function repair(db: Database): boolean {
       splitWorkOrders.push({
         id: crypto.randomUUID(),
         orderId: workOrder.orderId,
-        status: running ? "READY" : status,
+        status: running ? "PREPARE" : status,
         assigneeId: workOrder.assigneeId,
         lineId: workOrder.lineId,
         quantity: piece.quantity,
@@ -1164,7 +1231,7 @@ function repair(db: Database): boolean {
         plannedStartDate: piece.allocations[0]?.date ?? workOrder.plannedStartDate,
         plannedEndDate: piece.allocations.at(-1)?.date ?? workOrder.plannedEndDate,
         startedAt: running ? null : workOrder.startedAt,
-        completedAt: status === "COMPLETED" ? workOrder.completedAt : null,
+        completedAt: status === "PACK" || status === "PACK_DONE" ? workOrder.completedAt : null,
       });
     });
     changed = true;

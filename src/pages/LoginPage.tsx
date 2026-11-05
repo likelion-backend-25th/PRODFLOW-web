@@ -3,20 +3,13 @@ import { Navigate } from "react-router";
 import { Button, TextField } from "@/components/ui.tsx";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 
-const samples = [
-  ["admin", "admin1234", "최고 관리자"],
-  ["order", "order1234", "수주 관리자"],
-  ["floor1", "floor1234", "현장 관리자 1"],
-  ["floor2", "floor1234", "현장 관리자 2"],
-  ["viewer", "viewer1234", "조회 담당"],
-];
-
 export function LoginPage() {
   const user = useAuthStore((state) => state.user);
   const login = useAuthStore((state) => state.login);
-  const [loginId, setLoginId] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
   if (user) return <Navigate to="/" replace />;
 
   return (
@@ -39,24 +32,19 @@ export function LoginPage() {
             className="space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
-              const message = login(loginId, password);
-              setError(message ?? "");
+              if (pending) return;
+              setPending(true);
+              void login(email, password).then((message) => {
+                setError(message ?? "");
+                setPending(false);
+              });
             }}
           >
-            <TextField label="아이디" value={loginId} onChange={(event) => setLoginId(event.target.value)} />
+            <TextField label="이메일" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
             <TextField label="비밀번호" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
             {error ? <p className="text-danger">{error}</p> : null}
-            <Button type="submit" className="w-full">로그인</Button>
+            <Button type="submit" className="w-full" disabled={pending}>{pending ? "확인 중" : "로그인"}</Button>
           </form>
-          <ul className="mt-8 space-y-1 text-sm">
-            {samples.map(([id, pw, role]) => (
-              <li key={id}>
-                <button type="button" className="text-primary" onClick={() => { setLoginId(id); setPassword(pw); }}>
-                  {role} · {id} / {pw}
-                </button>
-              </li>
-            ))}
-          </ul>
         </div>
       </section>
     </div>

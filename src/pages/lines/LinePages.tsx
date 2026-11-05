@@ -1,30 +1,63 @@
-import { UserRound } from "lucide-react";
+import { Pencil, UserRound } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Badge, Button, PageHeader, TextField, tableClass } from "@/components/ui.tsx";
+import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { cn } from "@/lib/cn.ts";
-import { useDb } from "@/lib/db.ts";
-import { localDate, localDateTime, todayISO } from "@/lib/dates.ts";
-import { lineStatusLabel, lineTone, roleLabel } from "@/lib/labels.ts";
-import { orderItemsText, workItemsText } from "@/lib/orderText.ts";
-import { saveLine, saveLineCapacity, setLineStatus } from "@/lib/workflow.ts";
-import { canManageOrders, canProduce, useAuthStore } from "@/stores/useAuthStore.ts";
+import { localDateTime, todayISO } from "@/lib/dates.ts";
+import {
+  changeLineStatus,
+  createLine,
+  fetchLine,
+  fetchLines,
+  updateLine,
+  type LineDetail,
+  type LineListItem,
+  type LineWorkOrder,
+} from "@/lib/linesApi.ts";
+import { lineStatusLabel, lineTone, workOrderStatusLabel, workOrderTone, workProductionDone } from "@/lib/labels.ts";
+import { fetchWorkOrders } from "@/lib/workOrdersApi.ts";
+import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
-import type { LineStatus, WorkOrder, WorkOrderStatus } from "@/types/domain.ts";
+import type { LineStatus, WorkOrderStatus } from "@/types/domain.ts";
 
 function lineDot(status: LineStatus): string {
   if (status === "AVAILABLE") return "bg-slate-400";
-  if (status === "MAINTENANCE") return "bg-warning";
+  if (status === "INSPECTION") return "bg-warning";
   if (status === "BROKEN") return "bg-danger";
   return "bg-primary";
 }
 
+function canOperateLine(role: string | undefined): boolean {
+  return role === "SUPER_ADMIN" || role === "ORDER_MANAGER" || role === "PRODUCTION_MANAGER";
+}
+
 export function LineListPage() {
-  const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
-  const running = db.lines.filter((line) => line.status === "RUNNING").length;
-  const available = db.lines.filter((line) => line.status === "AVAILABLE").length;
-  const stopped = db.lines.filter((line) => line.status === "MAINTENANCE" || line.status === "BROKEN").length;
+  const show = useToastStore((state) => state.show);
+  const [data, setData] = useState<{ total: number; running: number; available: number; stopped: number; lines: LineListItem[] } | null>(null);
+
+  useEffect(() => {
+    let ignore = false;
+    void fetchLines().then((response) => {
+      if (ignore) return;
+      setData({
+        total: response.totalCount,
+        running: response.runningCount,
+        available: response.availableCount,
+        stopped: response.inspectionOrBrokenCount,
+        lines: response.lines,
+      });
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [show]);
+
+  if (!data) return <p className="text-muted">생산라인을 불러오는 중입니다.</p>;
+
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -35,35 +68,30 @@ export function LineListPage() {
         {canManageOrders(role) ? <Link to="/lines/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 라인 등록</Link> : null}
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-4">
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 라인</p><p className="mt-2 text-2xl font-semibold">{db.lines.length}개</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">가동 중</p><p className="mt-2 text-2xl font-semibold">{running}개</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">가동 가능</p><p className="mt-2 text-2xl font-semibold">{available}개</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">점검·고장</p><p className="mt-2 text-2xl font-semibold">{stopped}개</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 라인</p><p className="mt-2 text-2xl font-semibold">{data.total}개</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">가동 중</p><p className="mt-2 text-2xl font-semibold">{data.running}개</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">가동 가능</p><p className="mt-2 text-2xl font-semibold">{data.available}개</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">점검·고장</p><p className="mt-2 text-2xl font-semibold">{data.stopped}개</p></section>
       </div>
       <div className="mt-4 grid gap-4 md:grid-cols-3">
-        {db.lines.map((line) => {
-          const current = db.workOrders.find((item) => item.lineId === line.id && (item.status === "IN_PRODUCTION" || item.status === "PAUSED"));
-          const order = db.orders.find((item) => item.id === current?.orderId);
-          const assignee = db.users.find((item) => item.id === current?.assigneeId);
-          return (
-            <section key={line.id} className="rounded-xl border border-line bg-white p-5">
-              <div className="flex items-center justify-between">
-                <h2 className="font-semibold">{line.name}</h2>
-                <Badge className={lineTone(line.status)}>{lineStatusLabel[line.status]}</Badge>
-              </div>
-              <dl className="mt-4 space-y-1 text-sm">
-                <div className="flex justify-between"><dt className="text-muted">가능 케이스</dt><dd className="text-right">{order ? orderItemsText(db.products, order.lines) : "없음"}</dd></div>
-                <div className="flex justify-between"><dt className="text-muted">진행 수주</dt><dd>{order?.orderNo ?? "없음"}</dd></div>
-                <div className="flex justify-between"><dt className="text-muted">담당 직원</dt><dd>{assignee?.name ?? "미지정"}</dd></div>
-                <div className="flex justify-between"><dt className="text-muted">하루 생산량</dt><dd>{line.dailyCapacity.toLocaleString("ko-KR")}개</dd></div>
-              </dl>
-              <p className="mt-4 text-sm font-semibold text-primary">
-                {current ? `${current.status === "PAUSED" ? "일시정지 · " : ""}${current.quantity.toLocaleString("ko-KR")}개 · 완료 예정 ${current.plannedEndDate}` : "진행 중인 작업 없음"}
-              </p>
-              <Link to={`/lines/${line.id}`} className="mt-4 inline-flex h-10 items-center rounded-lg border border-line px-3 text-sm">라인 상세 →</Link>
-            </section>
-          );
-        })}
+        {data.lines.map((line) => (
+          <section key={line.lineId} className="rounded-xl border border-line bg-white p-5">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold">{line.lineName}</h2>
+              <Badge className={lineTone(line.status)}>{lineStatusLabel[line.status]}</Badge>
+            </div>
+            <dl className="mt-4 space-y-1 text-sm">
+              <div className="flex justify-between gap-3"><dt className="text-muted">주문 품목</dt><dd className="text-right">{line.productName ?? "없음"}</dd></div>
+              <div className="flex justify-between"><dt className="text-muted">진행 수주</dt><dd>{line.orderNo ?? "없음"}</dd></div>
+              <div className="flex justify-between"><dt className="text-muted">담당 직원</dt><dd>{line.managerName ?? "미지정"}</dd></div>
+              <div className="flex justify-between"><dt className="text-muted">하루 생산량</dt><dd>{line.productionCapacity.toLocaleString("ko-KR")}개</dd></div>
+            </dl>
+            <p className="mt-4 text-sm font-semibold text-primary">{line.workNo ?? "진행 중인 작업 없음"}</p>
+            <div className="mt-4">
+              <Link to={`/lines/${line.lineId}`} className="inline-flex h-10 items-center rounded-lg border border-line px-3 text-sm">라인 상세</Link>
+            </div>
+          </section>
+        ))}
       </div>
     </div>
   );
@@ -71,59 +99,86 @@ export function LineListPage() {
 
 export function LineFormPage() {
   const { lineId } = useParams();
-  const db = useDb();
   const navigate = useNavigate();
+  const role = useAuthStore((state) => state.user?.role);
   const show = useToastStore((state) => state.show);
-  const actorId = useAuthStore((state) => state.user?.id);
-  const current = db.lines.find((line) => line.id === lineId);
-  const [name, setName] = useState(current?.name ?? "");
-  const [dailyCapacity, setDailyCapacity] = useState(current?.dailyCapacity ?? 500);
+  const canRename = role === "SUPER_ADMIN";
+  const [name, setName] = useState("");
+  const [dailyCapacity, setDailyCapacity] = useState(1000);
+  const [savedCapacity, setSavedCapacity] = useState(1000);
   const [reason, setReason] = useState("");
-  const capacityChanged = current != null && current.dailyCapacity !== dailyCapacity;
+  const [ready, setReady] = useState(lineId == null);
+  const capacityChanged = lineId != null && savedCapacity !== dailyCapacity;
+
+  useEffect(() => {
+    if (!lineId) return;
+    const id = Number(lineId);
+    if (!Number.isInteger(id)) return;
+    let ignore = false;
+    void fetchLine(id).then((line) => {
+      if (ignore) return;
+      setName(line.lineName);
+      setDailyCapacity(line.productionCapacity);
+      setSavedCapacity(line.productionCapacity);
+      setReady(true);
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [lineId, show]);
+
+  if (!ready) return <p className="text-muted">라인 정보를 불러오는 중입니다.</p>;
+
   return (
     <div>
-      <PageHeader title={current ? "라인 정보 수정" : "라인 등록"} />
+      <PageHeader title={lineId ? "라인 정보 수정" : "라인 등록"} />
       <form className="grid max-w-md gap-3" onSubmit={(event) => {
         event.preventDefault();
-        try {
-          saveLine({ id: current?.id, name, dailyCapacity, reason, actorId });
-          show("라인 정보를 저장했습니다.");
-          navigate(current ? `/lines/${current.id}` : "/lines");
-        } catch (error: unknown) {
-          show(error instanceof Error ? error.message : "저장하지 못했습니다.");
+        const id = lineId == null ? null : Number(lineId);
+        if (name.trim().length === 0) {
+          show("라인 이름을 입력하세요.");
+          return;
         }
+        if (dailyCapacity < 1) {
+          show("하루 생산량은 1 이상이어야 합니다.");
+          return;
+        }
+        if (capacityChanged && reason.trim().length < 2) {
+          show("변경 사유는 2자 이상 입력하세요.");
+          return;
+        }
+        const task = id == null
+          ? createLine(name.trim(), dailyCapacity)
+          : updateLine(id, { lineName: name.trim(), productionCapacity: dailyCapacity, reason: reason.trim() });
+        void task.then((saved) => {
+          show("라인 정보를 저장했습니다.");
+          navigate(`/lines/${saved.id}`);
+        }).catch((error: unknown) => {
+          show(readApiErrorMessage(error));
+        });
       }}>
-        <TextField label="라인 이름" value={name} onChange={(event) => setName(event.target.value)} />
-        <TextField label="하루 생산량" type="number" value={dailyCapacity} onChange={(event) => setDailyCapacity(Number(event.target.value))} />
-        {capacityChanged ? <TextField label="변경 사유" value={reason} onChange={(event) => setReason(event.target.value)} /> : null}
-        <Button type="submit">저장</Button>
+        <TextField label="라인 이름" value={name} disabled={lineId != null && !canRename} onChange={(event) => setName(event.target.value)} />
+        {lineId != null && !canRename ? <p className="-mt-1 text-xs text-muted">라인 이름은 최고 관리자만 바꿉니다.</p> : null}
+        <TextField label="하루 생산량" type="number" min={1} value={dailyCapacity} onChange={(event) => setDailyCapacity(Number(event.target.value))} />
+        {capacityChanged ? <TextField label="변경 사유" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="예: 설비 증설" /> : null}
+        <div className="flex gap-2">
+          <Button type="submit">저장</Button>
+          <Button type="button" tone="ghost" onClick={() => navigate(lineId ? `/lines/${lineId}` : "/lines")}>취소</Button>
+        </div>
       </form>
     </div>
   );
 }
 
-function workOrderNo(item: WorkOrder, orderNo: string | undefined): string {
-  const issued = localDate(item.issuedAt).replaceAll("-", "");
-  const tail = orderNo?.split("-").at(-1) ?? "000";
-  return `WO-${issued.slice(0, 6)}-${tail}-${item.id.slice(0, 4)}`;
-}
-
 function workStatusView(status: WorkOrderStatus): { label: string; className: string } {
-  if (status === "IN_PRODUCTION") return { label: "진행중", className: "bg-primary-soft text-primary" };
-  if (status === "READY") return { label: "대기", className: "bg-warning-soft text-warning" };
-  if (status === "PAUSED") return { label: "일시정지", className: "bg-warning-soft text-warning" };
-  if (status === "COMPLETED") return { label: "완료", className: "bg-emerald-50 text-success" };
-  return { label: "취소", className: "bg-red-50 text-danger" };
-}
-
-function clockLabel(stamp: string): string {
-  const date = new Date(stamp);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  return { label: workOrderStatusLabel[status], className: workOrderTone(status) };
 }
 
 function jobRank(status: WorkOrderStatus): number {
-  if (status === "IN_PRODUCTION") return 0;
-  if (status === "PAUSED") return 1;
+  if (status === "PRODUCE") return 0;
+  if (status === "SUSPEND") return 1;
   return 2;
 }
 
@@ -138,55 +193,70 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
 
 export function LineDetailPage() {
   const { lineId = "" } = useParams();
-  const db = useDb();
   const user = useAuthStore((state) => state.user);
   const role = user?.role;
   const show = useToastStore((state) => state.show);
-  const line = db.lines.find((item) => item.id === lineId);
-  const [editingCapacity, setEditingCapacity] = useState(false);
-  const [capacityInput, setCapacityInput] = useState("");
+  const [lines, setLines] = useState<LineListItem[]>([]);
+  const [line, setLine] = useState<LineDetail | null>(null);
+  const [missing, setMissing] = useState(false);
+  const [workOrderIds, setWorkOrderIds] = useState<Record<string, number>>({});
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    if (!line) return;
-    setEditingCapacity(false);
-    setCapacityInput(String(line.dailyCapacity));
-  }, [line?.id, line?.dailyCapacity]);
+    const id = Number(lineId);
+    if (!Number.isInteger(id)) {
+      setMissing(true);
+      return;
+    }
+    let ignore = false;
+    setMissing(false);
+    void fetchLines().then((response) => {
+      if (!ignore) setLines(response.lines);
+    }).catch(() => {
+      if (!ignore) setLines([]);
+    });
+    void fetchLine(id).then((detail) => {
+      if (ignore) return;
+      setLine(detail);
+    }).catch((error: unknown) => {
+      if (ignore) return;
+      setMissing(true);
+      show(readApiErrorMessage(error));
+    });
+    void fetchWorkOrders({ lineId: id, page: 0, size: 100 }).then((page) => {
+      if (ignore) return;
+      const ids: Record<string, number> = {};
+      page.content.forEach((row) => {
+        ids[row.workNo] = row.id;
+      });
+      setWorkOrderIds(ids);
+    }).catch(() => {
+      if (!ignore) setWorkOrderIds({});
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [lineId, reloadKey, show]);
 
-  if (!line) return <p>라인을 찾을 수 없습니다.</p>;
+  if (missing) return <p>라인을 찾을 수 없습니다.</p>;
+  if (!line) return <p className="text-muted">라인 정보를 불러오는 중입니다.</p>;
 
-  const logs = db.lineCapacityLogs
-    .filter((log) => log.lineId === line.id)
-    .sort((left, right) => right.changedAt.localeCompare(left.changedAt));
   const today = todayISO();
-  const jobs = db.workOrders
-    .filter((item) => item.lineId === line.id && (item.status === "READY" || item.status === "IN_PRODUCTION" || item.status === "PAUSED"))
-    .slice()
-    .sort((left, right) => jobRank(left.status) - jobRank(right.status) || left.plannedStartDate.localeCompare(right.plannedStartDate));
-  const running = jobs.filter((item) => item.status === "IN_PRODUCTION" || item.status === "PAUSED");
-  const waiting = jobs.filter((item) => item.status === "READY");
-  const current = running[0] ?? jobs[0];
-  const order = db.orders.find((item) => item.id === current?.orderId);
-  const client = db.clients.find((item) => item.id === order?.clientId);
-  const assignee = db.users.find((item) => item.id === current?.assigneeId);
-  const attendance = assignee
-    ? db.attendance.find((item) => item.userId === assignee.id && !item.clockOutAt)
-      ?? db.attendance.find((item) => item.userId === assignee.id && localDate(item.clockInAt) === today)
-    : undefined;
+  const jobs = line.workOrders.slice().sort((left, right) => jobRank(left.status) - jobRank(right.status) || left.plannedStartDate.localeCompare(right.plannedStartDate));
+  const running = jobs.filter((item) => item.status === "PRODUCE" || item.status === "SUSPEND");
+  const waiting = jobs.filter((item) => item.status === "PREPARE");
   const runningQty = running.reduce((sum, item) => sum + item.quantity, 0);
   const waitingQty = waiting.reduce((sum, item) => sum + item.quantity, 0);
   const jobTotal = jobs.reduce((sum, item) => sum + item.quantity, 0);
-  const currentItems = current ? workItemsText(db.products, current.items || []) : "없음";
-  const lineItems = order ? orderItemsText(db.products, order.lines) : currentItems;
-  const duty = attendance
-    ? `${clockLabel(attendance.clockInAt)}${attendance.clockOutAt ? `-${clockLabel(attendance.clockOutAt)}` : " ~"}`
-    : "-";
 
-  function changeStatus(status: LineStatus) {
+  async function changeStatus(status: LineStatus) {
+    if (status === line?.status) return;
     try {
-      setLineStatus(line!.id, status);
-      show("라인 상태를 변경했습니다. 점검·고장 라인은 공장 생산량에서 빠집니다.");
+      await changeLineStatus(line!.lineId, status);
+      show("라인 상태를 변경했습니다.");
+      setReloadKey((value) => value + 1);
     } catch (error: unknown) {
-      show(error instanceof Error ? error.message : "변경하지 못했습니다.");
+      show(readApiErrorMessage(error));
     }
   }
 
@@ -195,12 +265,12 @@ export function LineDetailPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <nav className="flex flex-wrap gap-1.5" aria-label="생산라인">
-            {db.lines.map((item) => {
-              const selected = item.id === line.id;
+            {lines.map((item) => {
+              const selected = item.lineId === line.lineId;
               return (
                 <Link
-                  key={item.id}
-                  to={`/lines/${item.id}`}
+                  key={item.lineId}
+                  to={`/lines/${item.lineId}`}
                   aria-current={selected ? "page" : undefined}
                   className={cn(
                     "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-sm font-semibold",
@@ -208,70 +278,35 @@ export function LineDetailPage() {
                   )}
                 >
                   <span className={cn("size-1.5 shrink-0 rounded-full", lineDot(item.status))} />
-                  {item.name}
+                  {item.lineName}
                 </Link>
               );
             })}
           </nav>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-semibold">{line.name}</h1>
+            <h1 className="text-2xl font-semibold">{line.lineName}</h1>
             <Badge className={lineTone(line.status)}>{lineStatusLabel[line.status]}</Badge>
           </div>
           <p className="mt-1 text-sm text-muted">
-            {today} 기준 · 이 라인에 배정된 대기·진행 지시를 확인하고 가동 상태를 바꿉니다.
+            {today} 기준 · 이 라인에 배정된 준비·생산·일시정지 지시를 확인하고 가동 상태를 바꿉니다.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {canManageOrders(role) ? (
+            <Link to={`/lines/${line.lineId}/edit`} className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-3 text-sm font-semibold">
+              <Pencil size={16} />정보 수정
+            </Link>
+          ) : null}
+          <Link to="/lines" className="inline-flex h-10 items-center rounded-lg border border-line bg-white px-3 text-sm font-semibold">목록으로 가기</Link>
           <Link to="/work-orders" className="inline-flex h-10 items-center rounded-lg border border-line bg-white px-3 text-sm font-semibold">작업지시 보기</Link>
         </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
         <section className="rounded-xl border border-line bg-white px-5 py-4">
-          <div className="flex items-start justify-between gap-3">
-            <p className="text-sm text-muted">일 최대 생산량</p>
-            {canManageOrders(role) && !editingCapacity ? (
-              <button type="button" className="text-sm font-semibold text-primary" onClick={() => { setCapacityInput(String(line.dailyCapacity)); setEditingCapacity(true); }}>수정</button>
-            ) : null}
-          </div>
-          {editingCapacity && canManageOrders(role) && user ? (
-            <form
-              className="mt-3 flex flex-wrap items-end gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                try {
-                  saveLineCapacity(line.id, Number(capacityInput), user);
-                  setEditingCapacity(false);
-                  show("일 최대 생산량을 저장하고 공장 일정을 다시 잡았습니다.");
-                } catch (error: unknown) {
-                  show(error instanceof Error ? error.message : "저장하지 못했습니다.");
-                }
-              }}
-            >
-              <label className="text-sm">
-                <span className="sr-only">일 최대 생산량</span>
-                <span className="flex items-center gap-1">
-                  <input
-                    className="h-10 w-28 rounded-lg border border-line px-3 text-lg font-semibold"
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={capacityInput}
-                    onChange={(event) => setCapacityInput(event.target.value)}
-                    autoFocus
-                  />
-                  <span className="text-muted">개</span>
-                </span>
-              </label>
-              <Button type="submit">저장</Button>
-              <Button type="button" tone="ghost" onClick={() => { setEditingCapacity(false); setCapacityInput(String(line.dailyCapacity)); }}>취소</Button>
-            </form>
-          ) : (
-            <>
-              <p className="mt-2 text-3xl font-semibold">{line.dailyCapacity.toLocaleString("ko-KR")}개</p>
-              <p className="mt-1 text-sm text-muted">{line.name} 하루 기준 용량입니다.</p>
-            </>
-          )}
+          <p className="text-sm text-muted">일 최대 생산량</p>
+          <p className="mt-2 text-3xl font-semibold">{line.productionCapacity.toLocaleString("ko-KR")}개</p>
+          <p className="mt-1 text-sm text-muted">{line.lineName} 하루 기준 용량입니다.</p>
         </section>
         <section className="rounded-xl border border-line bg-white px-5 py-4">
           <p className="text-sm text-muted">이 라인 지시</p>
@@ -286,39 +321,37 @@ export function LineDetailPage() {
         <section className="rounded-xl border border-line bg-white px-5 py-4">
           <h2 className="text-sm font-semibold">라인 현황</h2>
           <dl className="mt-2 grid gap-x-8 sm:grid-cols-2">
-            <InfoRow label="라인명">{line.name}</InfoRow>
+            <InfoRow label="라인명">{line.lineName}</InfoRow>
             <InfoRow label="가동 상태"><Badge className={lineTone(line.status)}>{lineStatusLabel[line.status]}</Badge></InfoRow>
-            <InfoRow label="현재 수주">{order ? <Link className="text-primary" to={`/orders/${order.id}`}>{order.orderNo}{client ? ` · ${client.companyName}` : ""}</Link> : "없음"}</InfoRow>
-            <InfoRow label="일 최대 생산량">{line.dailyCapacity.toLocaleString("ko-KR")}개</InfoRow>
-            <InfoRow label="가능 품목">{lineItems}</InfoRow>
+            <InfoRow label="현재 수주">{line.orderNo ? `${line.orderNo}` : "없음"}</InfoRow>
+            <InfoRow label="일 최대 생산량">{line.productionCapacity.toLocaleString("ko-KR")}개</InfoRow>
+            <InfoRow label="주문 품목">{line.productName ?? "없음"}</InfoRow>
             <InfoRow label="현재 작업">
-              {current ? (
-                <Link className="text-primary" to={`/work-orders/${current.id}`}>
-                  {workOrderNo(current, order?.orderNo)} · {current.quantity.toLocaleString("ko-KR")}개
-                </Link>
+              {line.workNo ? (
+                workOrderIds[line.workNo] != null ? (
+                  <Link className="text-primary" to={`/work-orders/${workOrderIds[line.workNo]}`}>{line.workNo}</Link>
+                ) : line.workNo
               ) : "없음"}
             </InfoRow>
-            <InfoRow label="시작일">{current?.plannedStartDate ?? "-"}</InfoRow>
-            <InfoRow label="완료 예정">{current?.plannedEndDate ?? "-"}</InfoRow>
+            <InfoRow label="시작일">{line.plannedStartDate ?? "-"}</InfoRow>
+            <InfoRow label="완료 예정">{line.plannedEndDate ?? "-"}</InfoRow>
           </dl>
         </section>
 
         <section className="rounded-xl border border-line bg-white px-5 py-4">
           <h2 className="text-sm font-semibold">담당 직원</h2>
-          {assignee ? (
+          {line.managerName ? (
             <div className="mt-4 flex gap-3">
               <div className="grid size-12 shrink-0 place-items-center rounded-full bg-canvas text-muted">
                 <UserRound size={22} />
               </div>
               <div className="min-w-0">
-                <p className="font-semibold">{assignee.name}</p>
-                <p className="mt-0.5 text-sm text-muted">{roleLabel[assignee.role]}</p>
-                <p className="mt-3 text-sm"><span className="text-muted">근무 </span>{assignee.clockedIn ? "근무중" : "퇴근"}</p>
-                <p className="mt-1 text-sm"><span className="text-muted">출근 </span>{duty}</p>
+                <p className="font-semibold">{line.managerName}</p>
+                <p className="mt-0.5 text-sm text-muted">현재 생산 담당</p>
               </div>
             </div>
           ) : (
-            <p className="mt-6 text-sm text-muted">이 라인 작업에 배정된 담당자가 없습니다.</p>
+            <p className="mt-6 text-sm text-muted">생산 중인 작업의 담당자가 없습니다.</p>
           )}
         </section>
       </div>
@@ -327,7 +360,7 @@ export function LineDetailPage() {
         <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3">
           <div>
             <h2 className="text-sm font-semibold">이 라인 작업지시</h2>
-            <p className="mt-0.5 text-xs text-muted">이 라인에 배정된 대기·진행·일시정지 지시입니다. 중간 실적은 없습니다.</p>
+            <p className="mt-0.5 text-xs text-muted">준비, 생산, 일시정지 지시입니다.</p>
           </div>
           <p className="text-sm text-muted">합계 {jobTotal.toLocaleString("ko-KR")}개</p>
         </div>
@@ -345,24 +378,9 @@ export function LineDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {jobs.map((item) => {
-                const view = workStatusView(item.status);
-                const jobOrder = db.orders.find((entry) => entry.id === item.orderId);
-                const overdue = item.plannedEndDate < today;
-                return (
-                  <tr key={item.id} className="border-t border-line">
-                    <td className="px-5 py-2.5 font-semibold">
-                      <Link className="text-primary" to={`/work-orders/${item.id}`}>{workOrderNo(item, jobOrder?.orderNo)}</Link>
-                    </td>
-                    <td className="py-2.5">{jobOrder ? <Link className="text-primary" to={`/orders/${jobOrder.id}`}>{jobOrder.orderNo}</Link> : "-"}</td>
-                    <td className="py-2.5">{workItemsText(db.products, item.items || [])}</td>
-                    <td className="py-2.5">{item.quantity.toLocaleString("ko-KR")}개</td>
-                    <td className="py-2.5">{item.plannedStartDate}</td>
-                    <td className={cn("py-2.5", overdue && "font-semibold text-danger")}>{item.plannedEndDate}</td>
-                    <td className="py-2.5 pr-5"><Badge className={view.className}>{view.label}</Badge></td>
-                  </tr>
-                );
-              })}
+              {jobs.map((item) => (
+                <JobRow key={item.workNo} item={item} today={today} workOrderId={workOrderIds[item.workNo]} />
+              ))}
               {jobs.length === 0 ? (
                 <tr><td colSpan={7} className="px-5 py-8 text-center text-muted">이 라인에 배정된 작업지시가 없습니다.</td></tr>
               ) : null}
@@ -376,21 +394,21 @@ export function LineDetailPage() {
           <div>
             <h2 className="text-sm font-semibold">운영</h2>
             <p className="mt-1 text-sm text-muted">
-              {line.status === "RUNNING"
+              {line.status === "OPERATING"
                 ? `생산 중 · 진행 ${running.length}건`
                 : line.status === "AVAILABLE"
                   ? waiting.length > 0 ? `가동 가능 · 대기 ${waiting.length}건` : "가동 가능 · 배정된 작업 없음"
                   : `${lineStatusLabel[line.status]} · 공장 일일 용량에서 제외`}
             </p>
           </div>
-          {canProduce(role) ? (
+          {canOperateLine(role) ? (
             <div className="flex flex-wrap gap-1.5">
-              {(["AVAILABLE", "MAINTENANCE", "BROKEN"] as LineStatus[]).map((status) => (
+              {(["AVAILABLE", "INSPECTION", "BROKEN"] as LineStatus[]).map((status) => (
                 <button
                   key={status}
                   type="button"
                   className={cn("h-9 rounded-lg border px-3 text-sm font-semibold", line.status === status ? "border-primary bg-primary-soft text-primary" : "border-line bg-white text-muted")}
-                  onClick={() => changeStatus(status)}
+                  onClick={() => void changeStatus(status)}
                 >
                   {lineStatusLabel[status]}
                 </button>
@@ -401,7 +419,7 @@ export function LineDetailPage() {
       </section>
       <section className="rounded-xl border border-line bg-white px-5 py-4">
         <h2 className="text-sm font-semibold">하루 생산량 변경 이력</h2>
-        {logs.length === 0 ? <p className="mt-3 text-sm text-muted">변경 이력이 없습니다.</p> : (
+        {line.capacityLogs.length === 0 ? <p className="mt-3 text-sm text-muted">변경 이력이 없습니다.</p> : (
           <div className="mt-3 overflow-x-auto">
             <table className={tableClass}>
               <thead>
@@ -414,13 +432,13 @@ export function LineDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {logs.map((log) => (
-                  <tr key={log.id}>
+                {line.capacityLogs.map((log) => (
+                  <tr key={`${log.changedAt}-${log.afterCapacity}`}>
                     <td>{localDateTime(log.changedAt)}</td>
                     <td>{log.beforeCapacity.toLocaleString("ko-KR")}개</td>
                     <td>{log.afterCapacity.toLocaleString("ko-KR")}개</td>
                     <td>{log.reason}</td>
-                    <td>{db.users.find((person) => person.id === log.userId)?.name ?? "알 수 없음"}</td>
+                    <td>{log.managerName}</td>
                   </tr>
                 ))}
               </tbody>
@@ -429,5 +447,23 @@ export function LineDetailPage() {
         )}
       </section>
     </div>
+  );
+}
+
+function JobRow({ item, today, workOrderId }: { item: LineWorkOrder; today: string; workOrderId: number | undefined }) {
+  const view = workStatusView(item.status);
+  const overdue = item.plannedEndDate < today && !workProductionDone(item.status);
+  return (
+    <tr className="border-t border-line">
+      <td className="px-5 py-2.5 font-semibold">
+        {workOrderId != null ? <Link className="text-primary" to={`/work-orders/${workOrderId}`}>{item.workNo}</Link> : item.workNo}
+      </td>
+      <td className="py-2.5">{item.orderNo}</td>
+      <td className="py-2.5">{item.productName}</td>
+      <td className="py-2.5">{item.quantity.toLocaleString("ko-KR")}개</td>
+      <td className="py-2.5">{item.plannedStartDate}</td>
+      <td className={cn("py-2.5", overdue && "font-semibold text-danger")}>{item.plannedEndDate}</td>
+      <td className="py-2.5 pr-5"><Badge className={view.className}>{view.label}</Badge></td>
+    </tr>
   );
 }

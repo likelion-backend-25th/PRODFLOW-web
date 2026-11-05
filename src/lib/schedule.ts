@@ -18,7 +18,7 @@ export function isWorkingDay(iso: string, holidays: string[]): boolean {
 
 export function factoryCapacity(lines: Line[]): number {
   return lines
-    .filter((line) => line.status === "AVAILABLE" || line.status === "RUNNING")
+    .filter((line) => line.status === "AVAILABLE" || line.status === "OPERATING")
     .reduce((sum, line) => sum + line.dailyCapacity, 0);
 }
 
@@ -245,7 +245,7 @@ export function allocateProductItems(
 }
 
 export function usableLines(lines: Line[]): Line[] {
-  return lines.filter((line) => line.status === "AVAILABLE" || line.status === "RUNNING");
+  return lines.filter((line) => line.status === "AVAILABLE" || line.status === "OPERATING");
 }
 
 function lineOf(lines: Line[], lineId: string | null): Line | undefined {
@@ -253,7 +253,7 @@ function lineOf(lines: Line[], lineId: string | null): Line | undefined {
 }
 
 export function quantityOnDate(workOrder: WorkOrder, iso: string, lines: Line[], holidays: string[]): number {
-  if (workOrder.status === "CANCELLED" || workOrder.quantity <= 0) return 0;
+  if (workOrder.quantity <= 0) return 0;
   if (workOrder.allocations?.length) {
     return workOrder.allocations.find((slot) => slot.date === iso)?.quantity ?? 0;
   }
@@ -278,7 +278,7 @@ export function lineOccupiedOn(
   holidays: string[],
 ): number {
   return workOrders
-    .filter((item) => item.lineId === lineId && item.status !== "CANCELLED")
+    .filter((item) => item.lineId === lineId)
     .reduce((sum, item) => sum + quantityOnDate(item, iso, lines, holidays), 0);
 }
 
@@ -354,7 +354,7 @@ export function splitQuantityByLines(
         {
           id: `split-${line.id}-${slot.date}`,
           orderId: "",
-          status: "READY",
+          status: "PREPARE",
           assigneeId: null,
           lineId: line.id,
           quantity: take,
@@ -482,7 +482,7 @@ export function splitProductsAcrossLines(
           {
             id: `split-${line.id}-${product.productId}-${slot.date}`,
             orderId: "",
-            status: "READY",
+            status: "PREPARE",
             assigneeId: null,
             lineId: line.id,
             quantity: take,

@@ -66,12 +66,25 @@ export function registrationTone(status: ConfirmationStatus): string {
 }
 
 export const workOrderStatusLabel: Record<WorkOrderStatus, string> = {
-  READY: "준비",
-  IN_PRODUCTION: "생산중",
-  PAUSED: "일시정지",
-  COMPLETED: "생산완료",
-  CANCELLED: "취소",
+  PREPARE: "준비",
+  PRODUCE: "생산",
+  SUSPEND: "일시정지",
+  HALT: "생산 중지",
+  PACK: "포장",
+  PACK_DONE: "포장완료",
 };
+
+export function workOrderTone(status: WorkOrderStatus): string {
+  if (status === "PRODUCE") return "bg-primary-soft text-primary";
+  if (status === "PACK") return "bg-primary-soft text-primary";
+  if (status === "PACK_DONE") return "bg-emerald-50 text-success";
+  if (status === "HALT") return "bg-red-50 text-danger";
+  return "bg-warning-soft text-warning";
+}
+
+export function workProductionDone(status: WorkOrderStatus): boolean {
+  return status === "PACK" || status === "PACK_DONE";
+}
 
 export const paymentStatusLabel: Record<PaymentStatus, string> = {
   UNPAID: "미입금",
@@ -81,8 +94,8 @@ export const paymentStatusLabel: Record<PaymentStatus, string> = {
 
 export const lineStatusLabel: Record<LineStatus, string> = {
   AVAILABLE: "가동 가능",
-  RUNNING: "가동 중",
-  MAINTENANCE: "점검 중",
+  OPERATING: "가동 중",
+  INSPECTION: "점검",
   BROKEN: "고장",
 };
 
@@ -112,7 +125,7 @@ export function paymentTone(status: PaymentStatus): string {
 
 export function lineTone(status: LineStatus): string {
   if (status === "AVAILABLE") return "bg-slate-100 text-muted";
-  if (status === "MAINTENANCE") return "bg-warning-soft text-warning";
+  if (status === "INSPECTION") return "bg-warning-soft text-warning";
   if (status === "BROKEN") return "bg-red-50 text-danger";
   return "bg-primary-soft text-primary";
 }

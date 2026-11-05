@@ -12,11 +12,11 @@ export type OrderStatus =
   | "COMPLETED"
   | "CANCELLED";
 
-export type WorkOrderStatus = "READY" | "IN_PRODUCTION" | "PAUSED" | "COMPLETED" | "CANCELLED";
+export type WorkOrderStatus = "PREPARE" | "PRODUCE" | "SUSPEND" | "HALT" | "PACK" | "PACK_DONE";
 
 export type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID";
 
-export type LineStatus = "AVAILABLE" | "RUNNING" | "MAINTENANCE" | "BROKEN";
+export type LineStatus = "AVAILABLE" | "OPERATING" | "INSPECTION" | "BROKEN";
 
 export type AccountStatus = "ACTIVE" | "INACTIVE" | "DELETED";
 

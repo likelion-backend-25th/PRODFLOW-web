@@ -21,7 +21,8 @@ export function RootLayout() {
   const today = todayISO();
   const alerts = db.orders.filter((order) => delayOf(order, activeWorkOrder(db.workOrders, order.id), today)).length;
   const account = db.users.find((item) => item.id === user?.id);
-  const revoked = Boolean(user) && account?.status !== "ACTIVE";
+  // 로그인 API 계정은 로컬 시드에 없다. 시드에 있는 계정이 비활성일 때만 세션을 끊는다.
+  const revoked = account != null && account.status !== "ACTIVE";
 
   useEffect(() => {
     const expired = expireUnpaidOrders();

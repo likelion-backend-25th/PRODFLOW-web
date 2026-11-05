@@ -7,7 +7,17 @@ import { useAuthStore } from "@/stores/useAuthStore.ts";
 export function ProfilePage() {
   const session = useAuthStore((state) => state.user);
   const db = useDb();
-  const user = db.users.find((item) => item.id === session?.id);
+  const stored = db.users.find((item) => item.id === session?.id);
+  const user = stored ?? (session
+    ? {
+        name: session.name,
+        loginId: session.loginId,
+        email: session.loginId,
+        role: session.role,
+        status: "ACTIVE" as const,
+        lastLoginAt: null,
+      }
+    : undefined);
   if (!user) return <p className="text-muted">계정 정보를 찾을 수 없습니다.</p>;
 
   const rows = [
