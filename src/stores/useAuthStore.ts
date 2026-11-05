@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { readDb, updateDb } from "@/lib/db.ts";
+import { apiClient, readApiErrorMessage } from "@/lib/apiClient.ts";
+import { readDb } from "@/lib/db.ts";
 import type { Role } from "@/types/domain.ts";
 
 export interface SessionUser {
@@ -7,14 +8,30 @@ export interface SessionUser {
   name: string;
   role: Role;
   loginId: string;
+  email: string;
+  mustChangePassword: boolean;
 }
 
 interface AuthState {
   user: SessionUser | null;
   token: string | null;
-  login: (loginId: string, password: string) => string | null;
+  login: (email: string, password: string) => Promise<string | null>;
   logout: () => void;
   refresh: () => void;
+  clearPasswordChange: () => void;
+}
+
+interface LoginResponse {
+  accessToken: string;
+  userId: number;
+  name: string;
+  email: string;
+  role: Role | "INQUIRY_MANAGER";
+  mustChangePassword: boolean;
+}
+
+function toRole(role: LoginResponse["role"]): Role {
+  return role === "INQUIRY_MANAGER" ? "VIEWER" : role;
 }
 
 const SESSION_KEY = "prodflow-session";
@@ -27,25 +44,40 @@ function loadSession(): Pick<AuthState, "user" | "token"> {
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   ...loadSession(),
-  login: (loginId, password) => {
-    const account = readDb().users.find((user) => user.loginId === loginId);
-    if (!account || account.password !== password) return "아이디 또는 비밀번호가 올바르지 않습니다.";
-    if (account.status !== "ACTIVE") return "사용할 수 없는 계정입니다.";
-    updateDb((db) => {
-      const user = db.users.find((item) => item.id === account.id);
-      if (user) user.lastLoginAt = new Date().toISOString();
-    });
-    const next = {
-      user: { id: account.id, name: account.name, role: account.role, loginId: account.loginId },
-      token: `demo.${account.id}`,
-    };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-    set(next);
-    return null;
+  login: async (email, password) => {
+    try {
+      const response = await apiClient.post<LoginResponse>("/auth/login", { email, password });
+      const body = response.data;
+      const next = {
+        user: {
+          id: String(body.userId),
+          name: body.name,
+          role: toRole(body.role),
+          loginId: body.email,
+          email: body.email,
+          mustChangePassword: body.mustChangePassword,
+        },
+        token: body.accessToken,
+      };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(next));
+      set(next);
+      return null;
+    } catch (error: unknown) {
+      return readApiErrorMessage(error);
+    }
   },
   logout: () => {
+    const token = get().token;
+    void apiClient.post("/auth/logout", null, { headers: token ? { Authorization: `Bearer ${token}` } : {} }).catch(() => undefined);
     localStorage.removeItem(SESSION_KEY);
     set({ user: null, token: null });
+  },
+  clearPasswordChange: () => {
+    const { user, token } = get();
+    if (!user) return;
+    const next = { user: { ...user, mustChangePassword: false }, token };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(next));
+    set(next);
   },
   refresh: () => {
     const { user, token } = get();

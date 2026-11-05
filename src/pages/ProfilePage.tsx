@@ -1,21 +1,39 @@
-import { BadgeCheck, Clock3, Mail, Shield, UserRound } from "lucide-react";
-import { useDb } from "@/lib/db.ts";
-import { localDateTime } from "@/lib/dates.ts";
+import { BadgeCheck, Mail, Shield, UserRound } from "lucide-react";
+import { useEffect, useState } from "react";
+import { apiClient, readApiErrorMessage } from "@/lib/apiClient.ts";
 import { accountStatusLabel, roleLabel } from "@/lib/labels.ts";
-import { useAuthStore } from "@/stores/useAuthStore.ts";
+import type { AccountStatus, Role } from "@/types/domain.ts";
+
+interface MeResponse {
+  name: string;
+  email: string;
+  role: Role | "INQUIRY_MANAGER";
+  status: AccountStatus;
+}
 
 export function ProfilePage() {
-  const session = useAuthStore((state) => state.user);
-  const db = useDb();
-  const user = db.users.find((item) => item.id === session?.id);
-  if (!user) return <p className="text-muted">계정 정보를 찾을 수 없습니다.</p>;
+  const [user, setUser] = useState<MeResponse | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let ignore = false;
+    apiClient.get<MeResponse>("/users/me").then((response) => {
+      if (!ignore) setUser(response.data);
+    }).catch((reason: unknown) => {
+      if (!ignore) setError(readApiErrorMessage(reason));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, []);
+  if (error) return <p className="text-danger">{error}</p>;
+  if (!user) return <p className="text-muted">계정 정보를 불러오는 중입니다.</p>;
+  const role = user.role === "INQUIRY_MANAGER" ? "VIEWER" : user.role;
 
   const rows = [
-    { icon: UserRound, label: "로그인 ID", value: user.loginId },
+    { icon: UserRound, label: "이름", value: user.name },
     { icon: Mail, label: "이메일", value: user.email },
-    { icon: Shield, label: "역할", value: roleLabel[user.role], badge: true },
+    { icon: Shield, label: "역할", value: roleLabel[role], badge: true },
     { icon: BadgeCheck, label: "계정 상태", value: accountStatusLabel[user.status], status: true },
-    { icon: Clock3, label: "마지막 로그인 일시", value: user.lastLoginAt ? localDateTime(user.lastLoginAt).replaceAll("-", ".") : "-" },
   ];
 
   return (
@@ -28,7 +46,7 @@ export function ProfilePage() {
             <UserRound size={28} />
           </span>
           <h2 className="mt-4 text-xl font-bold">{user.name}</h2>
-          <p className="mt-3 inline-flex rounded-md bg-primary-soft px-2 py-1 text-xs font-semibold text-primary">{roleLabel[user.role]}</p>
+          <p className="mt-3 inline-flex rounded-md bg-primary-soft px-2 py-1 text-xs font-semibold text-primary">{roleLabel[role]}</p>
           <p className="mx-auto mt-4 max-w-[180px] text-sm leading-6 text-muted">ProdFlow와 함께 더 효율적인 생산 관리를 만들어갑니다.</p>
         </section>
         <section className="rounded-2xl border border-line bg-white">

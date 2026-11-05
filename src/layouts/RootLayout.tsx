@@ -21,7 +21,7 @@ export function RootLayout() {
   const today = todayISO();
   const alerts = db.orders.filter((order) => delayOf(order, activeWorkOrder(db.workOrders, order.id), today)).length;
   const account = db.users.find((item) => item.id === user?.id);
-  const revoked = Boolean(user) && account?.status !== "ACTIVE";
+  const revoked = Boolean(account) && account?.status !== "ACTIVE";
 
   useEffect(() => {
     const expired = expireUnpaidOrders();
@@ -38,6 +38,7 @@ export function RootLayout() {
   }, [revoked, account, user, logout, refresh, show]);
 
   if (!user || revoked) return <Navigate to="/login" replace />;
+  if (user.mustChangePassword) return <Navigate to="/change-password" replace />;
   const trail = crumbs(pathname);
 
   return (

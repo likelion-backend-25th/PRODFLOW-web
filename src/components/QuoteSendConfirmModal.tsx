@@ -9,6 +9,7 @@ export function QuoteSendConfirmModal({
   email,
   pdfUrl = null,
   pdfStatus = "empty",
+  pdfMessage = "",
   onClose,
   onSend,
 }: {
@@ -16,6 +17,7 @@ export function QuoteSendConfirmModal({
   email: string;
   pdfUrl?: string | null;
   pdfStatus?: QuotePdfPreviewStatus;
+  pdfMessage?: string;
   onClose: () => void;
   onSend: () => void;
 }) {
@@ -106,7 +108,7 @@ export function QuoteSendConfirmModal({
               <p className="grid h-full min-h-48 place-items-center px-6 text-sm text-muted">견적서를 불러오는 중입니다.</p>
             ) : null}
             {preview === "error" ? (
-              <p className="grid h-full min-h-48 place-items-center px-6 text-sm text-danger">견적서 미리보기를 불러오지 못했습니다.</p>
+              <p className="grid h-full min-h-48 place-items-center px-6 text-center text-sm text-danger">{pdfMessage || "견적서 미리보기를 불러오지 못했습니다."}</p>
             ) : null}
             {preview === "empty" ? (
               <p className="grid h-full min-h-48 place-items-center px-6 text-center text-sm text-muted">견적서 PDF 미리보기가 표시될 영역입니다.</p>

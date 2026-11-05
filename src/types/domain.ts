@@ -88,7 +88,7 @@ export interface WorkOrderItem {
 
 export type NotifyChannel = "SMS" | "EMAIL";
 
-export type QuotationStatus = "SENT" | "APPROVED" | "REJECTED" | "CANCELLED" | "EXPIRED";
+export type QuotationStatus = "DRAFT" | "SENT" | "APPROVED" | "REJECTED" | "CANCELLED" | "EXPIRED";
 
 export interface Quotation {
   id: string;

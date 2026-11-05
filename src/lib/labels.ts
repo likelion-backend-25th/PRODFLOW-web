@@ -10,6 +10,7 @@ import type {
 } from "@/types/domain.ts";
 
 export const quotationStatusLabel: Record<QuotationStatus, string> = {
+  DRAFT: "초안",
   SENT: "발송완료",
   APPROVED: "승인",
   REJECTED: "거절",
@@ -18,6 +19,7 @@ export const quotationStatusLabel: Record<QuotationStatus, string> = {
 };
 
 export function quotationStatusTone(status: QuotationStatus): string {
+  if (status === "DRAFT") return "bg-amber-50 text-amber-700";
   if (status === "SENT") return "bg-blue-50 text-blue-700";
   if (status === "APPROVED") return "bg-emerald-50 text-emerald-700";
   if (status === "REJECTED" || status === "CANCELLED") return "bg-red-50 text-red-700";

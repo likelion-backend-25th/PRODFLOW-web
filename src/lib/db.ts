@@ -120,6 +120,8 @@ const HOLIDAYS: Holiday[] = [
   { id: "holiday-14", date: "2026-12-25", name: "성탄절" },
 ];
 
+export const screenHolidayDates = HOLIDAYS.map((holiday) => holiday.date);
+
 function seed(): Database {
   const holidays = HOLIDAYS.map((holiday) => holiday.date);
   let base = todayISO();

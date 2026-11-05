@@ -1,20 +1,31 @@
-import { Calendar, Check, Plus, Search, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
-import { AddressPicker } from "@/components/AddressPicker.tsx";
+import { Calendar, Check, ChevronDown, MapPin, Plus, Search, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { ProductModal } from "@/components/ProductModal.tsx";
-import { QuoteSendConfirmModal } from "@/components/QuoteSendConfirmModal.tsx";
+import { QuoteSendConfirmModal, type QuotePdfPreviewStatus } from "@/components/QuoteSendConfirmModal.tsx";
 import { Button } from "@/components/ui.tsx";
 import { cn } from "@/lib/cn.ts";
+import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { addDays, parseISO, todayISO } from "@/lib/dates.ts";
-import { useDb } from "@/lib/db.ts";
+import { screenHolidayDates } from "@/lib/db.ts";
+import { getClient, listClients, type ClientListItem } from "@/lib/clientApi.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount } from "@/lib/money.ts";
-import { createQuotation, previewCapacity, previewDuePlan, previewSchedule, quoteNotBefore } from "@/lib/workflow.ts";
+import { searchProducts } from "@/lib/productApi.ts";
+import { createQuotationPdf, listDailyPlanned, listLineCapacities, previewQuotationSchedule, readPdfFailure, regenerateQuotationPdf, updateQuotationPdf, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
+import { capacityUntil } from "@/lib/schedule.ts";
+import type { Line, LineStatus } from "@/types/domain.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
 const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+
+function lineStatusOf(status: string): LineStatus {
+  if (status === "OPERATING") return "RUNNING";
+  if (status === "AVAILABLE") return "AVAILABLE";
+  if (status === "BROKEN") return "BROKEN";
+  return "MAINTENANCE";
+}
 
 function labelDate(iso: string): string {
   const date = parseISO(iso);
@@ -25,13 +36,22 @@ function labelDate(iso: string): string {
 
 interface LineDraft {
   productId: string;
+  productName: string;
+  modelName: string;
+  description: string;
   quantity: number;
   unitPrice: number;
 }
 
+interface ProductChoice {
+  id: string;
+  productName: string;
+  modelName: string;
+  description: string;
+  unitPrice: number;
+}
+
 export function QuoteFormPage() {
-  const db = useDb();
-  const navigate = useNavigate();
   const actor = useAuthStore((state) => state.user);
   const show = useToastStore((state) => state.show);
   const [clientId, setClientId] = useState("");
@@ -39,7 +59,10 @@ export function QuoteFormPage() {
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
+  const [zipcode, setZipcode] = useState("");
   const [companyAddress, setCompanyAddress] = useState("");
+  const [detailAddress, setDetailAddress] = useState("");
+  const [newAddressOpen, setNewAddressOpen] = useState(false);
   const [clientOpen, setClientOpen] = useState(false);
   const [clientActive, setClientActive] = useState(0);
   const [productQuery, setProductQuery] = useState("");
@@ -51,6 +74,14 @@ export function QuoteFormPage() {
   const [validityDays, setValidityDays] = useState<7 | 14>(14);
   const [dueOpen, setDueOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [draftId, setDraftId] = useState<number | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [pdfStatus, setPdfStatus] = useState<QuotePdfPreviewStatus>("empty");
+  const [pdfMessage, setPdfMessage] = useState("");
+  const [schedule, setSchedule] = useState<QuotationSchedulePreview | null>(null);
+  const [scheduleError, setScheduleError] = useState("");
+  const [capacity, setCapacity] = useState<{ total: number; available: number } | null>(null);
   const dueRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
 
@@ -63,27 +94,10 @@ export function QuoteFormPage() {
   const vat = priced.reduce((sum, item) => sum + item.vat, 0);
   const total = priced.reduce((sum, item) => sum + item.total, 0);
   const quantity = lines.reduce((sum, line) => sum + (line.quantity || 0), 0);
-  const preview = useMemo(() => {
-    if (quantity <= 0) return null;
-    try {
-      return previewSchedule(quantity, undefined, quoteNotBefore());
-    } catch (reason: unknown) {
-      return reason instanceof Error ? reason.message : null;
-    }
-  }, [quantity, db]);
-  const schedule = preview && typeof preview !== "string" ? preview : null;
   const earliest = schedule?.earliestDueDate ?? null;
-  const chosen = useMemo(() => {
-    if (quantity <= 0 || !requestedDueDate || !earliest || requestedDueDate < earliest) return null;
-    try {
-      return previewDuePlan(quantity, requestedDueDate, quoteNotBefore());
-    } catch (reason: unknown) {
-      return reason instanceof Error ? reason.message : null;
-    }
-  }, [db, earliest, quantity, requestedDueDate]);
-  const duePlan = chosen && typeof chosen !== "string" ? chosen : null;
-  const capacity = requestedDueDate ? previewCapacity(requestedDueDate, undefined, quoteNotBefore()) : null;
+  const duePlan = schedule?.feasible && schedule.plannedStartDate && schedule.plannedEndDate ? schedule : null;
   const dueTooSoon = Boolean(requestedDueDate && earliest && requestedDueDate < earliest);
+  const feasible = Boolean(schedule?.feasible);
   const validUntil = addDays(todayISO(), validityDays);
   useEffect(() => {
     if (!dueOpen) return;
@@ -93,75 +107,207 @@ export function QuoteFormPage() {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [dueOpen]);
-  const feasible = Boolean(
-    quantity > 0
-    && requestedDueDate
-    && capacity
-    && capacity.available >= quantity
-    && earliest
-    && requestedDueDate >= earliest,
-  );
+  useEffect(() => {
+    const selected = lines.filter((line) => line.productId);
+    const items = selected.flatMap((line) => {
+      const productId = Number(line.productId);
+      if (!Number.isInteger(productId) || productId <= 0 || line.quantity < 100) return [];
+      return [{ productId, quantity: line.quantity }];
+    });
+    if (selected.length === 0) {
+      setSchedule(null);
+      setScheduleError("");
+      return;
+    }
+    if (items.length !== selected.length) {
+      setSchedule(null);
+      setScheduleError("품목은 서버에 등록된 품목 번호이고, 수량은 100개 이상이어야 합니다.");
+      return;
+    }
+    let ignore = false;
+    const timer = window.setTimeout(() => {
+      previewQuotationSchedule({ items, requestedDueDate: requestedDueDate || undefined }).then((result) => {
+        if (ignore) return;
+        setSchedule(result);
+        setScheduleError("");
+      }).catch((reason: unknown) => {
+        if (ignore) return;
+        setSchedule(null);
+        setScheduleError(readApiErrorMessage(reason));
+      });
+    }, 250);
+    return () => {
+      ignore = true;
+      window.clearTimeout(timer);
+    };
+  }, [lines, requestedDueDate]);
+  useEffect(() => {
+    if (!requestedDueDate || requestedDueDate < todayISO()) {
+      setCapacity(null);
+      return;
+    }
+    let ignore = false;
+    const from = todayISO();
+    Promise.all([listLineCapacities(), listDailyPlanned(from, requestedDueDate)]).then(([lineRows, days]) => {
+      if (ignore) return;
+      const factoryLines: Line[] = lineRows.map((line, index) => ({
+        id: String(index),
+        name: "",
+        dailyCapacity: line.dailyCapacity,
+        status: lineStatusOf(line.status),
+      }));
+      const occupying = days.map((day) => ({
+        id: day.date,
+        status: "CONFIRMED" as const,
+        allocations: [{ date: day.date.slice(0, 10), quantity: day.plannedQuantity }],
+      }));
+      const next = capacityUntil(requestedDueDate, from, factoryLines, screenHolidayDates, occupying);
+      setCapacity({ total: next.total, available: next.available });
+    }).catch(() => {
+      if (!ignore) setCapacity(null);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [requestedDueDate]);
 
-  const selectedClient = db.clients.find((item) => item.id === clientId);
-  const clientQuery = companyName.trim().toLowerCase();
-  const clientMatches = clientQuery
-    ? db.clients.filter((item) => `${item.companyName} ${item.representative} ${item.phone} ${item.contactName}`.toLowerCase().includes(clientQuery)).slice(0, 8)
-    : [];
+  const [clientMatches, setClientMatches] = useState<ClientListItem[]>([]);
+  const [selectedClient, setSelectedClient] = useState<ClientListItem | null>(null);
+  const [productMatches, setProductMatches] = useState<ProductChoice[]>([]);
+  useEffect(() => {
+    const query = companyName.trim();
+    if (!query) {
+      setClientMatches([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      listClients({ keyword: query, page: 0, size: 8 }).then((response) => setClientMatches(response.content)).catch(() => setClientMatches([]));
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [companyName]);
+  useEffect(() => {
+    const query = productQuery.trim();
+    if (!query) {
+      setProductMatches([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      searchProducts(query, "AVAILABLE").then((items) => setProductMatches(items.slice(0, 6).map((item) => ({
+        id: String(item.id),
+        productName: item.productName,
+        modelName: item.deviceName,
+        description: item.productDescription,
+        unitPrice: item.currentPrice,
+      })))).catch(() => setProductMatches([]));
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [productQuery]);
 
-  const productMatches = productQuery.trim()
-    // 생산 중단 품목은 새 견적 후보에서 뺀다. 이미 저장된 견적 줄은 그대로다.
-    ? db.products.filter((item) => item.status !== "DISCONTINUED" && `${item.productName} ${item.modelName} ${item.description}`.toLowerCase().includes(productQuery.trim().toLowerCase())).slice(0, 6)
-    : [];
-
-  function placeProduct(productId: string, unitPrice: number) {
-    if (lines.some((line) => line.productId === productId)) {
+  function placeProduct(product: ProductChoice) {
+    if (lines.some((line) => line.productId === product.id)) {
       show("이미 추가된 품목입니다. 해당 줄의 수량을 수정하세요.");
       return;
     }
-    setLines([...lines, { productId, quantity: 100, unitPrice }]);
+    setLines([...lines, { productId: product.id, productName: product.productName, modelName: product.modelName, description: product.description, quantity: 100, unitPrice: product.unitPrice }]);
     setProductQuery("");
   }
 
-  function pickClient(id: string) {
-    const picked = db.clients.find((item) => item.id === id);
-    if (!picked) return;
-    setClientId(picked.id);
-    setCompanyName(picked.companyName);
-    setContactName(picked.contactName);
-    setContactPhone(picked.contactMobile || picked.phone);
-    setContactEmail(picked.taxEmail);
-    setCompanyAddress(picked.roadAddress);
+  function pickClient(picked: ClientListItem) {
+    setClientId(String(picked.id));
+    setSelectedClient(picked);
+    setCompanyName(picked.company);
+    setContactName(picked.employee);
+    setContactPhone(picked.phone);
+    setContactEmail(picked.email);
+    setZipcode("");
+    setCompanyAddress("");
+    setDetailAddress("");
+    setNewAddressOpen(false);
     setClientOpen(false);
+    void getClient(picked.id).then((detail) => {
+      setCompanyAddress(detail.address);
+    }).catch((error: unknown) => show(readApiErrorMessage(error)));
+  }
+
+  function searchAddress() {
+    if (!window.daum?.Postcode) {
+      show("우편번호 서비스를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
+    new window.daum.Postcode({
+      oncomplete: (data) => {
+        setZipcode(data.zonecode);
+        setCompanyAddress(data.roadAddress || data.address);
+      },
+    }).open();
   }
 
   function draftLines() {
     return lines.filter((line) => line.productId).map((line) => ({ productId: line.productId, quantity: line.quantity, unitPrice: line.unitPrice }));
   }
 
-  function submitQuote() {
-    if (!actor) return;
+  function serverClientId() {
+    return /^[1-9]\d*$/.test(clientId) ? Number(clientId) : null;
+  }
+
+  function createInput() {
+    const client = serverClientId();
+    return {
+      clientId: client ?? undefined,
+      requestedDueDate,
+      validUntil,
+      vatIncluded,
+      items: draftLines().flatMap((line) => {
+        const productId = Number(line.productId);
+        if (!Number.isInteger(productId) || productId <= 0) return [];
+        return [{ productId, quantity: line.quantity, unitPrice: line.unitPrice }];
+      }),
+      newClient: client == null ? {
+        company: companyName.trim(),
+        employee: contactName.trim(),
+        email: contactEmail.trim(),
+        phone: contactPhone.trim(),
+        zipcode: zipcode.trim(),
+        roadAddress: companyAddress.trim(),
+        detailAddress: detailAddress.trim(),
+      } : undefined,
+    };
+  }
+
+  async function openPreview() {
     setError("");
+    setConfirmOpen(true);
+    setPreparing(true);
+    setPdfUrl(null);
+    setPdfMessage("");
+    setPdfStatus("loading");
     try {
-      const quote = createQuotation({
-        clientId: clientId || undefined,
-        client: {
-          companyName,
-          contactName,
-          phone: contactPhone,
-          taxEmail: contactEmail,
-          address: companyAddress,
-        },
-        lines: draftLines(),
-        requestedDueDate,
-        validUntil,
-        vatIncluded,
-        actor,
-      });
-      show(`${quote.quotationNo} 견적을 발송했습니다.`);
-      navigate(`/quotations/${quote.id}`);
+      const input = createInput();
+      const saved = draftId == null ? await createQuotationPdf(input) : await updateQuotationPdf(draftId, input);
+      setDraftId(saved.quotationId);
+      setPdfUrl(saved.previewUrl);
+      setPdfStatus(saved.previewUrl ? "ready" : "empty");
     } catch (reason: unknown) {
-      setConfirmOpen(false);
-      setError(reason instanceof Error ? reason.message : "발송하지 못했습니다.");
+      const failure = readPdfFailure(reason);
+      if (failure?.quotationId != null) {
+        setDraftId(failure.quotationId);
+        try {
+          const saved = await regenerateQuotationPdf(failure.quotationId);
+          setPdfUrl(saved.previewUrl);
+          setPdfStatus(saved.previewUrl ? "ready" : "empty");
+          setPreparing(false);
+          return;
+        } catch (retry: unknown) {
+          setPdfStatus("error");
+          setPdfMessage(readApiErrorMessage(retry));
+          setPreparing(false);
+          return;
+        }
+      }
+      setPdfStatus("error");
+      setPdfMessage(readApiErrorMessage(reason));
+    } finally {
+      setPreparing(false);
     }
   }
 
@@ -184,8 +330,9 @@ export function QuoteFormPage() {
       setError("이메일을 확인하세요.");
       return;
     }
-    if (!companyAddress.trim()) {
-      setError("회사 주소를 선택하세요.");
+    if (serverClientId() == null && (!zipcode.trim() || !companyAddress.trim() || !detailAddress.trim())) {
+      setNewAddressOpen(true);
+      setError("우편번호, 도로명 주소, 상세 주소를 입력하세요.");
       return;
     }
     const nextLines = draftLines();
@@ -205,7 +352,11 @@ export function QuoteFormPage() {
       setError("희망 납기일을 선택하세요.");
       return;
     }
-    setConfirmOpen(true);
+    if (nextLines.some((line) => !Number.isInteger(Number(line.productId)) || Number(line.productId) <= 0)) {
+      setError("품목은 서버에 등록된 품목 번호여야 합니다.");
+      return;
+    }
+    void openPreview();
   }
 
   return (
@@ -239,7 +390,14 @@ export function QuoteFormPage() {
                       setCompanyName(next);
                       setClientOpen(true);
                       setClientActive(0);
-                      if (selectedClient && next !== selectedClient.companyName) setClientId("");
+                      if (selectedClient && next !== selectedClient.company) {
+                        setClientId("");
+                        setSelectedClient(null);
+                        setZipcode("");
+                        setCompanyAddress("");
+                        setDetailAddress("");
+                        setNewAddressOpen(false);
+                      }
                     }}
                     onKeyDown={(event) => {
                       if (clientMatches.length === 0) return;
@@ -254,7 +412,7 @@ export function QuoteFormPage() {
                       } else if (event.key === "Enter" && clientOpen) {
                         event.preventDefault();
                         const item = clientMatches[clientActive] ?? clientMatches[0];
-                        if (item) pickClient(item.id);
+                        if (item) pickClient(item);
                       }
                     }}
                   />
@@ -268,12 +426,12 @@ export function QuoteFormPage() {
                       const active = index === (clientActive < clientMatches.length ? clientActive : 0);
                       return (
                       <li key={item.id}>
-                        <button type="button" className={cn("flex w-full items-center justify-between px-3 py-2 text-left", active && "bg-canvas")} onMouseDown={(event) => event.preventDefault()} onMouseMove={() => { if (!active) setClientActive(index); }} onClick={() => pickClient(item.id)}>
+                        <button type="button" className={cn("flex w-full items-center justify-between px-3 py-2 text-left", active && "bg-canvas")} onMouseDown={(event) => event.preventDefault()} onMouseMove={() => { if (!active) setClientActive(index); }} onClick={() => pickClient(item)}>
                           <span>
-                            <span className="block text-sm font-semibold">{item.companyName}</span>
-                            <span className="block text-xs text-muted">{item.contactName || item.representative} · {item.contactMobile || item.phone} · {item.roadAddress}</span>
+                            <span className="block text-sm font-semibold">{item.company}</span>
+                            <span className="block text-xs text-muted">{item.employee} · {item.phone}</span>
                           </span>
-                          {item.id === clientId ? <Check size={16} className="text-primary" /> : null}
+                          {String(item.id) === clientId ? <Check size={16} className="text-primary" /> : null}
                         </button>
                       </li>
                       );
@@ -288,8 +446,8 @@ export function QuoteFormPage() {
             {selectedClient ? (
               <div className="mt-2 flex items-center justify-between rounded-lg bg-primary-soft px-3 py-2">
                 <span>
-                  <span className="block text-sm font-semibold">{selectedClient.companyName}</span>
-                  <span className="block text-xs text-muted">{selectedClient.contactName || selectedClient.representative} · {selectedClient.contactMobile || selectedClient.phone} · {selectedClient.roadAddress}</span>
+                  <span className="block text-sm font-semibold">{selectedClient.company}</span>
+                  <span className="block text-xs text-muted">{selectedClient.employee} · {selectedClient.phone}</span>
                 </span>
                 <Check size={16} className="text-primary" />
               </div>
@@ -310,8 +468,34 @@ export function QuoteFormPage() {
                 <span className="mb-1 block font-medium">이메일 *</span>
                 <input type="email" className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" placeholder="email@example.com" value={contactEmail} onChange={(event) => setContactEmail(event.target.value)} />
               </label>
-              <AddressPicker compact label="회사 주소 *" value={companyAddress} onChange={setCompanyAddress} />
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium">회사 주소 *</span>
+                <span className="relative block">
+                  <input readOnly value={[zipcode, companyAddress, detailAddress].map((part) => part.trim()).filter(Boolean).join(" ")} placeholder="주소" className="h-10 w-full rounded-lg border border-line bg-white px-3 pr-9 text-sm" />
+                  <MapPin size={15} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
+                </span>
+              </label>
             </div>
+            {selectedClient ? null : (
+              <div className="mt-2">
+                <button type="button" className="flex items-center gap-1 text-xs font-medium text-primary" aria-expanded={newAddressOpen} onClick={() => setNewAddressOpen((open) => !open)}>
+                  신규 거래처 주소 입력
+                  <ChevronDown size={14} className={cn("transition", newAddressOpen && "rotate-180")} />
+                </button>
+                {newAddressOpen ? (
+                  <div className="mt-2 space-y-2">
+                    <div className="flex gap-2">
+                      <input readOnly value={zipcode} placeholder="우편번호" className="h-10 w-28 rounded-lg border border-line bg-white px-3 text-sm" />
+                      <button type="button" className="h-10 shrink-0 rounded-lg border border-line bg-white px-4 text-sm font-medium" onClick={searchAddress}>
+                        우편번호 찾기
+                      </button>
+                    </div>
+                    <input readOnly value={companyAddress} placeholder="도로명 주소를 입력하세요" className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" />
+                    <input className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" placeholder="건물명, 층, 호수 등 상세 주소를 입력하세요" value={detailAddress} onChange={(event) => setDetailAddress(event.target.value)} />
+                  </div>
+                ) : null}
+              </div>
+            )}
             <p className="mt-3 text-xs text-muted">
               {selectedClient
                 ? <span className="text-success">등록된 거래처의 담당자, 연락처, 주소로 불러왔습니다.</span>
@@ -344,7 +528,7 @@ export function QuoteFormPage() {
                     } else if (event.key === "Enter") {
                       event.preventDefault();
                       const item = productMatches[productActive] ?? productMatches[0];
-                      if (item) placeProduct(item.id, item.unitPrice);
+                      if (item) placeProduct(item);
                     }
                   }}
                 />
@@ -356,7 +540,7 @@ export function QuoteFormPage() {
                     const added = lines.some((line) => line.productId === item.id);
                     const active = index === (productActive < productMatches.length ? productActive : 0);
                     return (
-                      <button key={item.id} type="button" className={cn("flex w-full items-center justify-between px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:text-muted", active && "bg-canvas")} disabled={added} onMouseMove={() => { if (!active) setProductActive(index); }} onClick={() => placeProduct(item.id, item.unitPrice)}>
+                      <button key={item.id} type="button" className={cn("flex w-full items-center justify-between px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:text-muted", active && "bg-canvas")} disabled={added} onMouseMove={() => { if (!active) setProductActive(index); }} onClick={() => placeProduct(item)}>
                         <span><span className="font-semibold">{item.productName} {item.modelName}</span><span className="ml-2 text-xs text-muted">{added ? "이미 추가됨" : item.description}</span></span>
                         <span className="text-xs text-muted">{formatWon(item.unitPrice)}</span>
                       </button>
@@ -381,15 +565,14 @@ export function QuoteFormPage() {
                 </thead>
                 <tbody>
                   {lines.map((line, index) => {
-                    const product = db.products.find((item) => item.id === line.productId);
                     return (
                       <tr key={line.productId || index} className="border-t border-line align-middle">
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-2">
-                            {product?.designImageUrl ? <img src={product.designImageUrl} alt="" className="h-9 w-9 shrink-0 rounded-md border border-line object-cover" /> : <span className="h-9 w-9 shrink-0 rounded-md bg-canvas" />}
+                            <span className="h-9 w-9 shrink-0 rounded-md bg-canvas" />
                             <span className="min-w-0">
-                              <span className="block font-semibold">{product ? `${product.productName} ${product.modelName}` : "품목"}</span>
-                              <span className="block truncate text-xs text-muted">{product?.description || "설명 없음"}</span>
+                              <span className="block font-semibold">{`${line.productName} ${line.modelName}`.trim() || "품목"}</span>
+                              <span className="block truncate text-xs text-muted">{line.description || "설명 없음"}</span>
                             </span>
                           </div>
                         </td>
@@ -444,8 +627,8 @@ export function QuoteFormPage() {
                 </button>
               </div>
             ) : (
-              <p className={`mt-3 text-sm ${typeof preview === "string" ? "font-semibold text-warning" : "text-muted"}`}>
-                {typeof preview === "string" ? preview : "품목 수량을 입력하면 가장 빠른 납기를 계산합니다."}
+              <p className={`mt-3 text-sm ${scheduleError ? "font-semibold text-warning" : "text-muted"}`}>
+                {scheduleError || "품목 수량을 입력하면 가장 빠른 납기를 계산합니다."}
               </p>
             )}
             <div className="mt-4 grid items-start gap-4 sm:grid-cols-2" ref={dueRef}>
@@ -455,7 +638,7 @@ export function QuoteFormPage() {
                   type="button"
                   className={cn(
                     "mt-1 flex h-11 w-full items-center gap-2 rounded-lg border bg-white px-3 text-left text-sm",
-                    dueTooSoon || typeof chosen === "string" ? "border-warning" : "border-line",
+                    dueTooSoon || scheduleError ? "border-warning" : "border-line",
                   )}
                   onClick={() => setDueOpen((open) => !open)}
                 >
@@ -473,8 +656,8 @@ export function QuoteFormPage() {
                     />
                   </div>
                 ) : null}
-                <p className={`mt-1 text-xs ${dueTooSoon || typeof chosen === "string" ? "font-semibold text-warning" : "text-muted"}`}>
-                  {!quantity ? "수량을 먼저 입력하세요." : dueTooSoon && earliest ? `이 날은 불가합니다. 가장 빠른 날은 ${labelDate(earliest)}입니다.` : typeof chosen === "string" ? "이 납기에는 생산을 마칠 수 없습니다." : requestedDueDate ? "가능한 납기입니다." : "달력의 하늘색 날짜를 고르세요."}
+                <p className={`mt-1 text-xs ${dueTooSoon || scheduleError ? "font-semibold text-warning" : "text-muted"}`}>
+                  {!quantity ? "수량을 먼저 입력하세요." : scheduleError ? scheduleError : dueTooSoon && earliest ? `이 날은 불가합니다. 가장 빠른 날은 ${labelDate(earliest)}입니다.` : requestedDueDate && feasible ? "가능한 납기입니다." : "달력의 하늘색 날짜를 고르세요."}
                 </p>
               </div>
               <div>
@@ -502,11 +685,11 @@ export function QuoteFormPage() {
               <div className="mt-4 grid gap-2 sm:grid-cols-3">
                 <div className="rounded-lg bg-canvas px-3 py-2">
                   <p className="text-xs text-muted">생산 시작</p>
-                  <p className="mt-1 text-sm font-semibold">{labelDate(duePlan.plannedStartDate)}</p>
+                  <p className="mt-1 text-sm font-semibold">{duePlan.plannedStartDate ? labelDate(duePlan.plannedStartDate) : "-"}</p>
                 </div>
                 <div className="rounded-lg bg-canvas px-3 py-2">
                   <p className="text-xs text-muted">생산 완료</p>
-                  <p className="mt-1 text-sm font-semibold">{labelDate(duePlan.plannedEndDate)}</p>
+                  <p className="mt-1 text-sm font-semibold">{duePlan.plannedEndDate ? labelDate(duePlan.plannedEndDate) : "-"}</p>
                 </div>
                 <div className="rounded-lg bg-canvas px-3 py-2">
                   <p className="text-xs text-muted">희망 납기</p>
@@ -521,16 +704,16 @@ export function QuoteFormPage() {
             <p className="mt-1 text-sm text-muted">희망 납기까지 공장의 남은 생산량과 이번 견적 수량을 비교합니다. 포장 1일과 배송 2일을 두어, 생산 완료 후 3일(주말·휴일 제외)이 납기입니다.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg bg-canvas px-3 py-2">
-                <p className="text-xs text-muted">총생산량</p>
+                <p className="text-xs text-muted">희망 납기일</p>
+                <p className="mt-1 font-semibold">{requestedDueDate ? labelDate(requestedDueDate) : "-"}</p>
+              </div>
+              <div className="rounded-lg bg-canvas px-3 py-2">
+                <p className="text-xs text-muted">총 생산량</p>
                 <p className="mt-1 font-semibold">{capacity ? `${capacity.total.toLocaleString("ko-KR")}개` : "-"}</p>
               </div>
               <div className="rounded-lg bg-canvas px-3 py-2">
-                <p className="text-xs text-muted">가용용량</p>
+                <p className="text-xs text-muted">가용 생산량</p>
                 <p className="mt-1 font-semibold">{capacity ? `${capacity.available.toLocaleString("ko-KR")}개` : "-"}</p>
-              </div>
-              <div className="rounded-lg bg-canvas px-3 py-2">
-                <p className="text-xs text-muted">수요 잔여량</p>
-                <p className="mt-1 font-semibold">{quantity.toLocaleString("ko-KR")}개</p>
               </div>
             </div>
             <div className="mt-3 text-sm">
@@ -539,12 +722,12 @@ export function QuoteFormPage() {
               ) : feasible ? (
                 <p className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex rounded-full bg-primary-soft px-2 py-0.5 text-xs font-semibold text-primary">배정 가능</span>
-                  견적 수량 {quantity.toLocaleString("ko-KR")}개는 {capacity?.lastProductionDate ?? "-"}까지의 가용용량 안에 들어갑니다.
+                  견적 수량 {quantity.toLocaleString("ko-KR")}개는 {earliest ? `${labelDate(earliest)} 이후` : "계산된 납기"}에 생산할 수 있습니다.
                 </p>
               ) : (
                 <p className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex rounded-full bg-warning-soft px-2 py-0.5 text-xs font-semibold text-warning">배정 불가</span>
-                  {earliest ? `이 납기로는 수량을 다 만들 수 없습니다. 가장 빠른 납기는 ${earliest}입니다.` : typeof preview === "string" ? preview : ""}
+                  {earliest ? `이 납기로는 수량을 다 만들 수 없습니다. 가장 빠른 납기는 ${labelDate(earliest)}입니다.` : scheduleError}
                   {earliest ? <button type="button" className="text-xs font-semibold text-primary" onClick={() => setRequestedDueDate(earliest)}>{earliest}로 변경</button> : null}
                 </p>
               )}
@@ -561,7 +744,7 @@ export function QuoteFormPage() {
             <div className="flex justify-between"><dt className="text-muted">잔금 50%</dt><dd>{formatWon(total - depositTarget(total))}</dd></div>
           </dl>
           {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
-          <Button className="mt-4 w-full" onClick={send}>발송 전 확인</Button>
+          <Button className="mt-4 w-full" disabled={preparing} onClick={send}>{preparing ? "견적서 준비 중…" : "발송 전 확인"}</Button>
         </aside>
       </div>
       {modalName !== null && actor ? (
@@ -570,9 +753,9 @@ export function QuoteFormPage() {
           actorName={actor.name}
           note="등록하면 생산품목 관리에도 바로 추가되고, 이 견적의 품목 줄에 선택됩니다."
           onClose={() => setModalName(null)}
-          onSaved={(productId, unitPrice) => {
+          onSaved={(productId, unitPrice, productName, modelName) => {
             setModalName(null);
-            placeProduct(productId, unitPrice);
+            placeProduct({ id: productId, productName, modelName, description: "", unitPrice });
             show("신규 품목을 등록하고 견적에 추가했습니다.");
           }}
         />
@@ -581,8 +764,11 @@ export function QuoteFormPage() {
         <QuoteSendConfirmModal
           companyName={companyName.trim()}
           email={contactEmail.trim()}
-          onClose={() => setConfirmOpen(false)}
-          onSend={submitQuote}
+          pdfUrl={pdfUrl}
+          pdfStatus={pdfStatus}
+          pdfMessage={pdfMessage}
+          onClose={() => { if (!preparing) setConfirmOpen(false); }}
+          onSend={() => undefined}
         />
       ) : null}
     </div>
