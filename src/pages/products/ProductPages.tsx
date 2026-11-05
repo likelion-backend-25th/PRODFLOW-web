@@ -44,7 +44,7 @@ export function ProductListPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">생산품목 관리</h1>
-          <p className="mt-1 text-muted">생산 가능한 제품 명칭과 설명을 등록하고, 수주 등록 시 자동 입력 및 자동 완성을 관리하세요.</p>
+          <p className="mt-1 text-muted">생산 가능한 제품 명칭과 설명을 등록하고, 견적 작성 시 자동 입력 및 자동 완성을 관리하세요.</p>
         </div>
         {canManageOrders(role) ? <Link to="/products/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 품목 등록</Link> : null}
       </div>
@@ -104,7 +104,6 @@ export function ProductListPage() {
               {selected.drawingPdfName && selected.drawingPdfUrl ? <a className="mt-2 block text-sm text-primary" href={selected.drawingPdfUrl} download={selected.drawingPdfName}>파일 {selected.drawingPdfName}</a> : null}
               <div className="mt-4 flex gap-2">
                 {canManageOrders(role) ? <Link to={`/products/${selected.id}/edit`} className="inline-flex h-10 items-center rounded-lg border border-line px-3">정보 수정</Link> : null}
-                {canManageOrders(role) ? <Link to="/orders/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-3 font-semibold text-white">+ 수주 등록</Link> : null}
               </div>
             </section>
             <section className="rounded-xl border border-line bg-white p-5">
@@ -189,7 +188,7 @@ function ProductEditor({ productId }: { productId?: string }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{editing ? "생산품목 수정" : "생산품목 등록"}</h1>
-          <p className="mt-1 text-muted">{editing ? "등록된 품목의 이름, 기종, 기준 단가와 파일을 수정합니다." : "생산 가능한 품목의 기본 정보와 수주 등록 시 사용할 기준 단가를 설정합니다."}</p>
+          <p className="mt-1 text-muted">{editing ? "등록된 품목의 이름, 기종, 기준 단가와 파일을 수정합니다." : "생산 가능한 품목의 기본 정보와 견적 작성 시 사용할 기준 단가를 설정합니다."}</p>
         </div>
         <Link to="/products" className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-4">
           <ArrowLeft size={16} /> 생산품목 목록으로
@@ -296,11 +295,11 @@ function ProductEditor({ productId }: { productId?: string }) {
                 onChange={(event) => setDescription(event.target.value)}
               />
             </label>
-            <p className="mt-4 border-t border-line pt-4 text-xs text-muted">수주 등록 시 선택한 품목의 설명이 자동으로 입력됩니다.</p>
+            <p className="mt-4 border-t border-line pt-4 text-xs text-muted">견적 작성 시 선택한 품목의 설명이 자동으로 입력됩니다.</p>
           </section>
           <section className="rounded-xl border border-line bg-white p-5">
             <h2 className="font-semibold">단가</h2>
-            <p className="mt-1 text-sm text-muted">새 수주에 사용할 기본값을 설정합니다.</p>
+            <p className="mt-1 text-sm text-muted">새 견적에 사용할 기본값을 설정합니다.</p>
             <label className="mt-5 block text-sm font-semibold">
               기준 단가 (원) <span className="text-danger">*</span>
               <input
@@ -311,7 +310,7 @@ function ProductEditor({ productId }: { productId?: string }) {
                 onChange={(event) => setPriceText(formatPriceInput(event.target.value))}
               />
             </label>
-            <p className="mt-2 text-xs text-muted">부가세 별도 금액으로 입력하세요. 부가세 포함 여부는 수주 등록 시 설정합니다.</p>
+            <p className="mt-2 text-xs text-muted">부가세 별도 금액으로 입력하세요. 부가세 포함 여부는 견적 작성 시 정하고, 수주 등록 때 그대로 가져옵니다.</p>
             <p className="mt-4 rounded-lg border border-line px-4 py-3 text-sm text-muted">기준 단가를 수정해도 이미 저장된 수주의 가격 정보는 소급해서 변경되지 않습니다.</p>
           </section>
           <section className="rounded-xl border border-line bg-white p-5">
@@ -386,8 +385,8 @@ function ProductEditor({ productId }: { productId?: string }) {
             <div className="flex gap-3">
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white text-primary"><Info size={16} /></span>
               <div>
-                <h2 className="font-semibold">수주 가격은 별도로 보존됩니다</h2>
-                <p className="mt-2 text-sm text-muted">기준 단가는 새 수주의 기본값입니다. 수주별로 조정한 단가와 금액은 저장 당시의 값으로 유지됩니다.</p>
+                <h2 className="font-semibold">견적·수주 가격은 별도로 보존됩니다</h2>
+                <p className="mt-2 text-sm text-muted">기준 단가는 새 견적의 처음 값입니다. 견적과 수주에 저장한 단가는 이후 기준 단가를 고쳐도 바뀌지 않습니다.</p>
               </div>
             </div>
           </section>
@@ -397,7 +396,7 @@ function ProductEditor({ productId }: { productId?: string }) {
               <li className="flex items-center gap-2"><Check size={16} className="text-primary" />품목명 검색 및 선택</li>
               <li className="flex items-center gap-2"><Check size={16} className="text-primary" />기준 단가를 불러온 후 수량 입력</li>
             </ul>
-            <p className="mt-4 border-t border-line pt-4 text-xs text-muted">미등록 품목은 수주 등록 시 함께 추가할 수도 있습니다.</p>
+            <p className="mt-4 border-t border-line pt-4 text-xs text-muted">없는 품목은 견적 작성 중 모달에서 등록합니다. 수주 등록에서는 품목을 새로 만들지 않습니다.</p>
           </section>
         </aside>
       </form>
@@ -501,7 +500,6 @@ export function ProductDetailPage() {
         <div className="flex flex-wrap gap-2">
           <Link to="/products" className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-4"><ArrowLeft size={16} />목록으로</Link>
           {canManageOrders(role) ? <Link to={`/products/${product.id}/edit`} className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-4"><Pencil size={16} />정보 수정</Link> : null}
-          {canManageOrders(role) ? <Link to="/orders/new" className="inline-flex h-10 items-center gap-1 rounded-lg bg-primary px-4 font-semibold text-white"><Plus size={16} />수주 등록</Link> : null}
         </div>
       </div>
       <div className="mt-5 grid gap-3 md:grid-cols-3">
@@ -518,7 +516,7 @@ export function ProductDetailPage() {
         <section className="rounded-xl border border-line bg-white p-5">
           <div className="flex items-start justify-between gap-3"><p className="text-sm text-muted">기준 단가 · 부가세 별도</p><span className="grid h-9 w-9 place-items-center rounded-lg bg-primary-soft text-primary"><Banknote size={16} /></span></div>
           <p className="mt-3 text-2xl font-semibold">{formatWon(product.unitPrice)}</p>
-          <p className="mt-1 text-xs text-muted">수주 등록 시 기본으로 적용</p>
+          <p className="mt-1 text-xs text-muted">견적 작성 시 처음 단가로 적용</p>
         </section>
       </div>
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
