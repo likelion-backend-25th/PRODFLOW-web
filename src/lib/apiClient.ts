@@ -2,8 +2,12 @@ import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 
 const SESSION_KEY = "prodflow-session";
 
+// 로컬은 Vite 프록시가 /api 를 VITE_API_BASE_URL(localhost:8080)로 넘긴다. 배포 빌드만 그 주소로 직접 호출한다.
+const apiOrigin = import.meta.env.DEV ? "" : (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/$/, "");
+const API_BASE_URL = `${apiOrigin}/api/v1`;
+
 export const apiClient = axios.create({
-  baseURL: "/api/v1",
+  baseURL: API_BASE_URL,
   withCredentials: true,
 });
 
@@ -43,7 +47,7 @@ apiClient.interceptors.response.use(
 let refreshing: Promise<string> | null = null;
 
 export function refreshAccessToken(): Promise<string> {
-  refreshing ??= axios.post<{ accessToken: string; mustChangePassword?: boolean }>("/api/v1/auth/refresh", null, { withCredentials: true })
+  refreshing ??= axios.post<{ accessToken: string; mustChangePassword?: boolean }>(`${API_BASE_URL}/auth/refresh`, null, { withCredentials: true })
     .then((response) => {
       const token = response.data.accessToken;
       const raw = localStorage.getItem(SESSION_KEY);
