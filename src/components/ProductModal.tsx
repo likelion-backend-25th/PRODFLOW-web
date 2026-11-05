@@ -2,7 +2,7 @@ import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button, TextField } from "@/components/ui.tsx";
 import { readApiErrorMessage } from "@/lib/apiClient.ts";
-import { createProduct, uploadDrawing } from "@/lib/productApi.ts";
+import { checkModelCode, createProduct, uploadDrawing } from "@/lib/productApi.ts";
 
 export function ProductModal({
   initialName,
@@ -40,13 +40,20 @@ export function ProductModal({
     if (!modelCode.trim() || !productName.trim() || !modelName.trim()) return setError("모델코드, 제품명, 기종명을 입력하세요.");
     if (unitPrice === "" || !Number.isInteger(price) || price <= 0) return setError("기준 단가를 1원 이상 정수로 입력하세요.");
     setPending(true);
-    void createProduct({
-      modelCode: modelCode.trim(),
-      productName: productName.trim(),
-      deviceName: modelName.trim(),
-      productDescription: description.trim(),
-      currentPrice: price,
-    }).then(async (product) => {
+    setError("");
+    void checkModelCode(modelCode.trim()).then(async (checked) => {
+      if (!checked.available) {
+        setError("같은 모델코드가 있습니다.");
+        setPending(false);
+        return;
+      }
+      const product = await createProduct({
+        modelCode: modelCode.trim(),
+        productName: productName.trim(),
+        deviceName: modelName.trim(),
+        productDescription: description.trim(),
+        currentPrice: price,
+      });
       if (drawing) await uploadDrawing(product.id, drawing);
       onSaved(String(product.id), price, product.productName, product.deviceName);
     }).catch((reason: unknown) => {

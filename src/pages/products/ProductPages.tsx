@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Banknote, Check, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, Wallet, X } from "lucide-react";
+import { ArrowLeft, Banknote, Check, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, X } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Badge, Button } from "@/components/ui.tsx";
 import { localDate } from "@/lib/dates.ts";
-import { readApiErrorMessage } from "@/lib/apiClient.ts";
+import { apiStatus, readApiErrorMessage } from "@/lib/apiClient.ts";
 import { formatWon } from "@/lib/money.ts";
-import { checkModelCode, createProduct, getProduct, listCurrentDrawings, listDevices, listProducts, searchProducts, updateProduct, updateProductStatus, uploadDrawing, type DeviceCode, type ProductItem } from "@/lib/productApi.ts";
+import { checkModelCode, createProduct, getProduct, listCurrentDrawings, listDevices, listProductOrders, listProducts, searchProducts, updateProduct, updateProductStatus, uploadDrawing, type DeviceCode, type ProductItem, type ProductOrderHistory } from "@/lib/productApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { ProductStatus } from "@/types/domain.ts";
@@ -21,11 +21,39 @@ function toProductRow(product: ProductItem) {
     updatedAt: product.updatedAt,
     createdAt: product.createdAt,
     status: product.status,
-    designImageUrl: "",
-    drawingPdfName: "",
-    drawingPdfUrl: "",
-    createdByName: "-",
   };
+}
+
+function useProductOrders(productId: string) {
+  const [rows, setRows] = useState<ProductOrderHistory[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const id = Number(productId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setRows([]);
+      setError("");
+      setLoading(false);
+      return;
+    }
+    let ignore = false;
+    setLoading(true);
+    listProductOrders(id).then((items) => {
+      if (ignore) return;
+      setRows(items);
+      setError("");
+    }).catch((reason: unknown) => {
+      if (ignore) return;
+      setRows([]);
+      setError(readApiErrorMessage(reason));
+    }).finally(() => {
+      if (!ignore) setLoading(false);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [productId]);
+  return { rows, loading, error };
 }
 
 export function ProductListPage() {
@@ -36,19 +64,29 @@ export function ProductListPage() {
   const [tab, setTab] = useState<"available" | "stopped">("available");
   const [available, setAvailable] = useState<ReturnType<typeof toProductRow>[]>([]);
   const [stopped, setStopped] = useState<ReturnType<typeof toProductRow>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const rows = tab === "available" ? available : stopped;
   const [selectedId, setSelectedId] = useState("");
   const selected = rows.find((product) => product.id === selectedId) ?? rows[0];
+  const recentOrders = useProductOrders(selected?.id ?? "");
   useEffect(() => {
     let ignore = false;
+    setLoading(true);
     const load = (status: "AVAILABLE" | "DISCONTINUED") => keyword.trim() ? searchProducts(keyword.trim(), status) : listProducts(status);
     Promise.all([load("AVAILABLE"), load("DISCONTINUED")]).then(([nextAvailable, nextStopped]) => {
       if (ignore) return;
       setAvailable(nextAvailable.map(toProductRow));
       setStopped(nextStopped.map(toProductRow));
+      setLoadError("");
     }).catch((error: unknown) => {
-      if (!ignore) show(readApiErrorMessage(error));
+      if (ignore) return;
+      const message = readApiErrorMessage(error);
+      setLoadError(message);
+      show(message);
+    }).finally(() => {
+      if (!ignore) setLoading(false);
     });
     return () => {
       ignore = true;
@@ -89,8 +127,10 @@ export function ProductListPage() {
           <table className="w-full text-left text-sm">
             <thead className="bg-primary-soft/40 text-muted"><tr><th className="px-5 py-3 font-medium">모델코드</th><th className="py-3 font-medium">품목명</th><th className="py-3 font-medium">기종명</th><th className="py-3 font-medium">설명</th><th className="py-3 font-medium">단가</th><th className="py-3 font-medium">최근 수정</th><th className="py-3 font-medium">상태</th><th className="w-12 py-3 pr-3 font-medium"><span className="sr-only">상세</span></th></tr></thead>
             <tbody>
-              {rows.length === 0 ? <tr><td className="px-5 py-6 text-muted" colSpan={8}>{tab === "available" ? "등록된 생산품목이 없습니다." : "생산 중단 품목이 없습니다."}</td></tr> : null}
-              {rows.map((product) => (
+              {loading ? <tr><td className="px-5 py-6 text-muted" colSpan={8}>품목을 불러오는 중입니다.</td></tr> : null}
+              {!loading && loadError ? <tr><td className="px-5 py-6 text-danger" colSpan={8}>{loadError}</td></tr> : null}
+              {!loading && !loadError && rows.length === 0 ? <tr><td className="px-5 py-6 text-muted" colSpan={8}>{tab === "available" ? "등록된 생산품목이 없습니다." : "생산 중단 품목이 없습니다."}</td></tr> : null}
+              {!loading && !loadError ? rows.map((product) => (
                 <tr key={product.id} className={`cursor-pointer border-t border-line ${selected?.id === product.id ? "bg-primary-soft" : ""}`} onClick={() => setSelectedId(product.id)}>
                   <td className="px-5 py-3">{product.modelCode}</td>
                   <td className="font-semibold">{product.productName}</td>
@@ -110,7 +150,7 @@ export function ProductListPage() {
                     </Link>
                   </td>
                 </tr>
-              ))}
+              )) : null}
             </tbody>
           </table>
         </section>
@@ -118,21 +158,19 @@ export function ProductListPage() {
           <aside className="space-y-3">
             <section className="rounded-xl border border-line bg-white p-5">
               <h2 className="font-semibold">품목 상세</h2>
-              {selected.designImageUrl ? <img src={selected.designImageUrl} alt="" className="mt-3 h-16 w-16 rounded-lg object-cover" /> : null}
               <p className="mt-3 text-xs text-muted">{selected.modelCode}</p>
               <p className="text-lg font-semibold">{selected.productName}</p>
               <p className="text-sm text-muted">{selected.modelName}</p>
               <div className="mt-3"><ProductStatusMark status={selected.status} canChange={canWrite} onChange={() => moveProduct(selected.id, selected.status)} /></div>
               <p className="mt-3 text-sm">{selected.description}</p>
               <p className="mt-3 font-semibold">{formatWon(selected.unitPrice)}</p>
-              {selected.drawingPdfName && selected.drawingPdfUrl ? <a className="mt-2 block text-sm text-primary" href={selected.drawingPdfUrl} download={selected.drawingPdfName}>파일 {selected.drawingPdfName}</a> : null}
               <div className="mt-4 flex gap-2">
                 {canManageOrders(role) ? <Link to={`/products/${selected.id}/edit`} className="inline-flex h-10 items-center rounded-lg border border-line px-3">정보 수정</Link> : null}
               </div>
             </section>
             <section className="rounded-xl border border-line bg-white p-5">
               <h3 className="font-semibold">최근 수주</h3>
-              <p className="mt-3 text-sm text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</p>
+              <RecentOrderList history={recentOrders} />
             </section>
           </aside>
         ) : null}
@@ -211,19 +249,26 @@ function ProductEditor({ productId }: { productId?: string }) {
     setDeviceModal(false);
   }
 
-  async function checkCode() {
+  async function checkCode(): Promise<string | null> {
+    if (editing) return null;
     if (!modelCode.trim()) {
-      setCodeCheck("모델코드를 입력하세요.");
-      return false;
+      const message = "모델코드를 입력하세요.";
+      setCodeCheck(message);
+      return message;
     }
     try {
       const result = await checkModelCode(modelCode.trim());
-      const available = editing || result.available;
-      setCodeCheck(available ? "사용할 수 있는 모델코드입니다." : "같은 모델코드가 있습니다.");
-      return available;
+      if (result.available) {
+        setCodeCheck("사용할 수 있는 모델코드입니다.");
+        return null;
+      }
+      const message = "같은 모델코드가 있습니다.";
+      setCodeCheck(message);
+      return message;
     } catch (error: unknown) {
-      setCodeCheck(readApiErrorMessage(error));
-      return false;
+      const message = readApiErrorMessage(error);
+      setCodeCheck(message);
+      return message;
     }
   }
 
@@ -243,8 +288,9 @@ function ProductEditor({ productId }: { productId?: string }) {
         onSubmit={async (event) => {
           event.preventDefault();
           const unitPrice = Number(priceText.replace(/\D/g, ""));
-          if (!(await checkCode())) {
-            show(codeCheck || "모델코드를 확인하세요.");
+          const codeError = await checkCode();
+          if (codeError) {
+            show(codeError);
             return;
           }
           if (!productName.trim()) {
@@ -259,12 +305,13 @@ function ProductEditor({ productId }: { productId?: string }) {
             show("기준 단가를 1원 이상 정수로 입력하세요.");
             return;
           }
-          const device = devices.find((item) => item.name === modelName);
+          const device = devices.find((item) => item.name.trim().toLowerCase() === modelName.trim().toLowerCase());
           if (editing && !device) {
             show("수정할 때는 이미 등록된 기종만 고를 수 있습니다. 새 기종은 품목을 새로 등록할 때 만듭니다.");
             return;
           }
           try {
+            // 기종은 기존 코드와 새 이름 중 하나만 보낸다. 둘을 같이 보내면 서버가 거절한다.
             const saved = editing && productId
               ? await updateProduct(Number(productId), {
                 productName: productName.trim(),
@@ -275,8 +322,7 @@ function ProductEditor({ productId }: { productId?: string }) {
               : await createProduct({
                 modelCode: modelCode.trim(),
                 productName: productName.trim(),
-                deviceCode: device && !extraDevices.includes(modelName) ? device.id : undefined,
-                deviceName: device && !extraDevices.includes(modelName) ? undefined : modelName.trim(),
+                ...(device ? { deviceCode: device.id } : { deviceName: modelName.trim() }),
                 productDescription: description.trim(),
                 currentPrice: unitPrice,
               });
@@ -336,10 +382,10 @@ function ProductEditor({ productId }: { productId?: string }) {
                   <option value="">기종을 선택하세요</option>
                   {deviceNames.map((device) => <option key={device} value={device}>{device}</option>)}
                 </select>
-                <Button type="button" tone="ghost" onClick={() => { setDeviceDraft(""); setDeviceError(""); setDeviceModal(true); }}>기종 추가</Button>
+                {editing ? null : <Button type="button" tone="ghost" onClick={() => { setDeviceDraft(""); setDeviceError(""); setDeviceModal(true); }}>기종 추가</Button>}
               </span>
             </div>
-            <p className="mt-2 text-xs text-muted">등록된 기종을 고르거나, 기종 추가로 새 기종을 넣으세요.</p>
+            <p className="mt-2 text-xs text-muted">{editing ? "수정할 때는 이미 등록된 기종만 고를 수 있습니다." : "등록된 기종을 고르거나, 기종 추가로 새 기종을 넣으세요."}</p>
             <label className="mt-5 block text-sm font-semibold">
               품목 설명 <span className="font-normal text-muted">(선택)</span>
               <textarea
@@ -498,8 +544,7 @@ function ProductStatusMark({ status, canChange, onChange }: { status: ProductSta
   );
 }
 
-function ProductFileWindow({ name, url }: { name: string; url: string }) {
-  const ready = Boolean(name && url);
+function ProductFileWindow({ names }: { names: string[] }) {
   return (
     <section className="flex h-full w-full flex-col rounded-xl border border-line bg-white p-4">
       <div className="flex items-start justify-between gap-3">
@@ -509,16 +554,37 @@ function ProductFileWindow({ name, url }: { name: string; url: string }) {
         </div>
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary"><FileText size={16} /></span>
       </div>
-      <p className="mt-4 truncate text-sm">{ready ? name : "올린 파일이 없습니다."}</p>
+      {names.length === 0 ? <p className="mt-4 text-sm text-muted">올린 파일이 없습니다.</p> : names.map((name, index) => <p key={`${name}-${index}`} className="mt-4 truncate text-sm">{name}</p>)}
     </section>
+  );
+}
+
+function RecentOrderList({ history }: { history: ReturnType<typeof useProductOrders> }) {
+  if (history.loading) return <p className="mt-3 text-sm text-muted">수주 이력을 불러오는 중입니다.</p>;
+  if (history.error) return <p className="mt-3 text-sm text-danger">{history.error}</p>;
+  if (history.rows.length === 0) return <p className="mt-3 text-sm text-muted">관련 수주가 없습니다.</p>;
+  return (
+    <ul className="mt-3 space-y-1">
+      {history.rows.map((row) => (
+        <li key={row.orderId}>
+          <Link to={`/orders/${row.orderId}`} className="block rounded-lg px-2 py-2 hover:bg-canvas">
+            <p className="font-semibold">{row.orderNo}</p>
+            <p className="text-sm text-muted">{row.clientName} · {row.quantity.toLocaleString("ko-KR")}개 · {row.statusName}</p>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 
 export function ProductDetailPage() {
   const { productId = "" } = useParams();
   const role = useAuthStore((state) => state.user?.role);
+  const recentOrders = useProductOrders(productId);
   const [product, setProduct] = useState<ReturnType<typeof toProductRow> | null>(null);
+  const [drawingNames, setDrawingNames] = useState<string[]>([]);
   const [missing, setMissing] = useState(false);
+  const [loadError, setLoadError] = useState("");
   useEffect(() => {
     const id = Number(productId);
     if (!Number.isInteger(id) || id <= 0) {
@@ -528,17 +594,19 @@ export function ProductDetailPage() {
     let ignore = false;
     Promise.all([getProduct(id), listCurrentDrawings(id)]).then(([item, drawings]) => {
       if (ignore) return;
-      setProduct({ ...toProductRow(item), drawingPdfName: drawings[0]?.fileName ?? "" });
-    }).catch(() => {
-      if (!ignore) setMissing(true);
+      setProduct(toProductRow(item));
+      setDrawingNames(drawings.map((drawing) => drawing.fileName).filter((name) => name.length > 0));
+      setLoadError("");
+    }).catch((error: unknown) => {
+      if (ignore) return;
+      if (apiStatus(error) === 404) setMissing(true);
+      else setLoadError(readApiErrorMessage(error));
     });
     return () => { ignore = true; };
   }, [productId]);
+  if (loadError) return <p>{loadError}</p>;
   if (missing) return <p>품목을 찾을 수 없습니다.</p>;
   if (!product) return <p>품목을 불러오는 중입니다.</p>;
-  const produced = 0;
-  const traded = 0;
-  const recentRows: never[] = [];
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -552,16 +620,6 @@ export function ProductDetailPage() {
         </div>
       </div>
       <div className="mt-5 grid gap-3 md:grid-cols-3">
-        <section className="rounded-xl border border-line bg-white p-5">
-          <div className="flex items-start justify-between gap-3"><p className="text-sm text-muted">누적 생산량</p><span className="grid h-9 w-9 place-items-center rounded-lg bg-primary-soft text-primary"><Package size={16} /></span></div>
-          <p className="mt-3 text-2xl font-semibold">{produced.toLocaleString("ko-KR")}개</p>
-          <p className="mt-1 text-xs text-muted">완료된 생산 기준</p>
-        </section>
-        <section className="rounded-xl border border-line bg-white p-5">
-          <div className="flex items-start justify-between gap-3"><p className="text-sm text-muted">누적 거래액 · 부가세 포함</p><span className="grid h-9 w-9 place-items-center rounded-lg bg-primary-soft text-primary"><Wallet size={16} /></span></div>
-          <p className="mt-3 text-2xl font-semibold">{formatWon(traded)}</p>
-          <p className="mt-1 text-xs text-muted">연결 수주 누적 거래액</p>
-        </section>
         <section className="rounded-xl border border-line bg-white p-5">
           <div className="flex items-start justify-between gap-3"><p className="text-sm text-muted">기준 단가 · 부가세 별도</p><span className="grid h-9 w-9 place-items-center rounded-lg bg-primary-soft text-primary"><Banknote size={16} /></span></div>
           <p className="mt-3 text-2xl font-semibold">{formatWon(product.unitPrice)}</p>
@@ -585,12 +643,11 @@ export function ProductDetailPage() {
               <p className="mt-1">{product.description || "설명이 없습니다."}</p>
             </div>
             <div className="w-full max-w-xs shrink-0">
-              <ProductFileWindow name={product.drawingPdfName ?? ""} url={product.drawingPdfUrl ?? ""} />
+              <ProductFileWindow names={drawingNames} />
             </div>
           </div>
-          <div className="mt-5 grid gap-4 border-t border-line pt-4 sm:grid-cols-3">
+          <div className="mt-5 grid gap-4 border-t border-line pt-4 sm:grid-cols-2">
             <div><p className="text-xs text-muted">기종명</p><p className="mt-1 font-semibold">{product.modelName || "-"}</p></div>
-            <div><p className="text-xs text-muted">등록자</p><p className="mt-1 font-semibold">{product.createdByName}</p></div>
             <div><p className="text-xs text-muted">기준 단가 · 부가세 별도</p><p className="mt-1 font-semibold">{formatWon(product.unitPrice)}</p></div>
           </div>
         </section>
@@ -598,7 +655,7 @@ export function ProductDetailPage() {
           <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
             <div>
               <h2 className="font-semibold">관련 생산 및 수주 이력</h2>
-              <p className="mt-1 text-sm text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</p>
+              <p className="mt-1 text-sm text-muted">최근 수주 3건입니다. 저장된 단가와 금액은 수주 당시 값입니다.</p>
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -609,14 +666,32 @@ export function ProductDetailPage() {
                   <th className="py-3 font-medium">거래처</th>
                   <th className="py-3 font-medium">수량</th>
                   <th className="py-3 font-medium">저장 단가</th>
-                  <th className="py-3 font-medium">품목 금액 · 부가세 포함</th>
+                  <th className="py-3 font-medium">품목 금액</th>
                   <th className="py-3 font-medium">납기일</th>
                   <th className="py-3 font-medium">작업 상태</th>
                   <th className="w-12 py-3 pr-3 font-medium"><span className="sr-only">수주 상세</span></th>
                 </tr>
               </thead>
               <tbody>
-                {recentRows.length === 0 ? <tr><td className="px-5 py-6 text-muted" colSpan={8}>수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</td></tr> : null}
+                {recentOrders.loading ? <tr><td className="px-5 py-6 text-muted" colSpan={8}>수주 이력을 불러오는 중입니다.</td></tr> : null}
+                {!recentOrders.loading && recentOrders.error ? <tr><td className="px-5 py-6 text-danger" colSpan={8}>{recentOrders.error}</td></tr> : null}
+                {!recentOrders.loading && !recentOrders.error && recentOrders.rows.length === 0 ? <tr><td className="px-5 py-6 text-muted" colSpan={8}>관련 수주가 없습니다.</td></tr> : null}
+                {recentOrders.rows.map((row) => (
+                  <tr key={row.orderId} className="border-t border-line">
+                    <td className="px-5 py-3">{row.orderNo}</td>
+                    <td>{row.clientName}</td>
+                    <td>{row.quantity.toLocaleString("ko-KR")}</td>
+                    <td className="whitespace-nowrap">{formatWon(row.unitPrice)}</td>
+                    <td className="whitespace-nowrap">{formatWon(row.lineAmount)}</td>
+                    <td className="whitespace-nowrap">{row.estimatedDueDate ? localDate(row.estimatedDueDate) : "-"}</td>
+                    <td>{row.statusName}</td>
+                    <td className="pr-3">
+                      <Link to={`/orders/${row.orderId}`} aria-label={`${row.orderNo} 수주 상세`} className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-canvas hover:text-primary">
+                        <ChevronRight size={18} />
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -625,7 +700,7 @@ export function ProductDetailPage() {
         <aside className="space-y-4">
           <section className="rounded-xl border border-line bg-white p-5">
             <h2 className="font-semibold">최근 연결 수주</h2>
-            <p className="mt-4 text-sm text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</p>
+            <RecentOrderList history={recentOrders} />
           </section>
           <section className="rounded-xl bg-primary-soft p-5">
             <div className="flex gap-3">

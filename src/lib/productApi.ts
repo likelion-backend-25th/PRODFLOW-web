@@ -70,6 +70,24 @@ export function listDevices(): Promise<DeviceCode[]> {
   return apiClient.get<DeviceCode[]>("/common-codes", { params: { groupCode: "DEVICE" } }).then((response) => response.data);
 }
 
+export interface ProductOrderHistory {
+  orderId: number;
+  orderNo: string;
+  clientName: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  lineAmount: number;
+  totalAmount: number;
+  estimatedDueDate: string;
+  statusCode: string;
+  statusName: string;
+}
+
+export function listProductOrders(productId: number, size = 3): Promise<ProductOrderHistory[]> {
+  return apiClient.get<ProductOrderHistory[]>(`/products/${productId}/orders`, { params: { size } }).then((response) => response.data);
+}
+
 export function listCurrentDrawings(productId: number): Promise<ProductDrawing[]> {
   return apiClient.get<ProductDrawing[]>(`/products/${productId}/drawings/current`).then((response) => response.data);
 }
