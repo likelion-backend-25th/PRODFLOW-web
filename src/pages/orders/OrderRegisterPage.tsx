@@ -1,15 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { Button, Card } from "@/components/ui.tsx";
 import { cn } from "@/lib/cn.ts";
+import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { addDays, todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount, orderTotal } from "@/lib/money.ts";
+import { getQuotation, type QuotationDetail } from "@/lib/quotationApi.ts";
 import { clientFullAddress, createOrder, previewDuePlan, previewSchedule } from "@/lib/workflow.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
-import type { NotifyChannel } from "@/types/domain.ts";
+import type { NotifyChannel, Quotation } from "@/types/domain.ts";
 
 export function OrderRegisterPage() {
   const db = useDb();
@@ -17,9 +19,66 @@ export function OrderRegisterPage() {
   const actor = useAuthStore((state) => state.user);
   const show = useToastStore((state) => state.show);
   const [params] = useSearchParams();
-  const quote = db.quotations.find((item) => item.id === params.get("quotationId"));
-  const client = db.clients.find((item) => item.id === quote?.clientId);
-  const companyAddress = client ? clientFullAddress(client) : "";
+  const quotationKey = params.get("quotationId") ?? "";
+  const localQuote = db.quotations.find((item) => item.id === quotationKey);
+  const [remote, setRemote] = useState<QuotationDetail | null>(null);
+  const [remoteError, setRemoteError] = useState("");
+  useEffect(() => {
+    if (!quotationKey || localQuote) return;
+    const id = Number(quotationKey);
+    if (!Number.isInteger(id) || id <= 0) return;
+    let ignore = false;
+    getQuotation(id).then((detail) => {
+      if (!ignore) setRemote(detail);
+    }).catch((error: unknown) => {
+      if (!ignore) setRemoteError(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [localQuote, quotationKey]);
+  const quote: Quotation | null = localQuote ?? (remote?.status === "APPROVED" ? {
+    id: String(remote.id),
+    quotationNo: remote.quotationNo,
+    clientId: String(remote.clientId),
+    userId: String(remote.userId),
+    lines: remote.items.map((item) => ({
+      id: String(item.id),
+      productId: String(item.productId),
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+    })),
+    requestedDueDate: remote.requestedDueDate.slice(0, 10),
+    estimatedDueDate: remote.estimatedDueDate.slice(0, 10),
+    plannedStartDate: remote.plannedStartDate?.slice(0, 10) ?? "",
+    plannedEndDate: remote.plannedEndDate?.slice(0, 10) ?? "",
+    validUntil: remote.validUntil.slice(0, 10),
+    status: remote.status,
+    vatIncluded: remote.vatIncluded,
+    createdAt: remote.createdAt,
+    updatedAt: remote.updatedAt,
+  } : null);
+  const localClient = db.clients.find((item) => item.id === quote?.clientId);
+  const client = localClient ?? (remote && quote ? {
+    companyName: remote.clientCompany,
+    contactName: remote.clientName,
+    contactMobile: remote.clientPhone,
+    zipcode: "",
+    roadAddress: remote.clientAddress,
+    detailAddress: "",
+  } : undefined);
+  const companyAddress = localClient ? clientFullAddress(localClient) : (remote?.clientAddress ?? "");
+  useEffect(() => {
+    if (!remote || localClient) return;
+    setReceiverName((current) => current || remote.clientName || "");
+    setReceiverPhone((current) => current || remote.clientPhone || "");
+  }, [localClient, remote]);
+  const productName = (lineId: string, productId: string) => {
+    const stored = db.products.find((item) => item.id === productId);
+    if (stored) return { productName: stored.productName, modelName: stored.modelName };
+    const item = remote?.items.find((row) => String(row.id) === lineId);
+    return { productName: item?.productName ?? "품목", modelName: item?.deviceName ?? "" };
+  };
   const [useCompanyAddress, setUseCompanyAddress] = useState(false);
   const [postalCode, setPostalCode] = useState("");
   const [roadAddress, setRoadAddress] = useState("");
@@ -59,6 +118,7 @@ export function OrderRegisterPage() {
     }
   }, [chosenDue, current, db, depositDueDate, quantity, quote]);
 
+  if (!quote && quotationKey && !localQuote && !remote && !remoteError) return <p>수주 등록 화면을 불러오는 중입니다.</p>;
   if (!quote || quote.status !== "APPROVED") {
     return (
       <Card>
@@ -162,7 +222,7 @@ export function OrderRegisterPage() {
               </thead>
               <tbody>
                 {quote.lines.map((line) => {
-                  const product = db.products.find((item) => item.id === line.productId);
+                  const product = productName(line.id, line.productId);
                   const nextQuantity = quantities[line.id] ?? line.quantity;
                   return (
                     <tr key={line.id} className="border-t border-line align-middle">
