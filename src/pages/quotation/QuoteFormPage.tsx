@@ -1,6 +1,6 @@
 import { Calendar, Check, ChevronDown, MapPin, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { ProductModal } from "@/components/ProductModal.tsx";
 import { QuoteSendConfirmModal, type QuotePdfPreviewStatus } from "@/components/QuoteSendConfirmModal.tsx";
@@ -12,7 +12,7 @@ import { screenHolidayDates } from "@/lib/db.ts";
 import { getClient, listClients, type ClientListItem } from "@/lib/clientApi.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount } from "@/lib/money.ts";
 import { searchProducts } from "@/lib/productApi.ts";
-import { createQuotationPdf, listDailyPlanned, listLineCapacities, previewQuotationSchedule, readPdfFailure, regenerateQuotationPdf, updateQuotationPdf, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
+import { createQuotationPdf, getQuotation, listDailyPlanned, listLineCapacities, previewQuotationSchedule, readPdfFailure, regenerateQuotationPdf, updateQuotationPdf, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
 import { capacityUntil } from "@/lib/schedule.ts";
 import type { Line, LineStatus } from "@/types/domain.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
@@ -75,6 +75,7 @@ export function QuoteFormPage() {
   const [dueOpen, setDueOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [draftId, setDraftId] = useState<number | null>(null);
+  const [draftNo, setDraftNo] = useState("");
   const [preparing, setPreparing] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfStatus, setPdfStatus] = useState<QuotePdfPreviewStatus>("empty");
@@ -173,6 +174,57 @@ export function QuoteFormPage() {
 
   const [clientMatches, setClientMatches] = useState<ClientListItem[]>([]);
   const [selectedClient, setSelectedClient] = useState<ClientListItem | null>(null);
+  const [searchParams] = useSearchParams();
+  const draftParam = Number(searchParams.get("draft"));
+  useEffect(() => {
+    if (!Number.isInteger(draftParam) || draftParam <= 0) return;
+    let ignore = false;
+    getQuotation(draftParam).then((detail) => {
+      if (ignore) return;
+      if (detail.status !== "DRAFT") {
+        show("초안만 이어서 작성할 수 있습니다.");
+        return;
+      }
+      const dueDate = detail.requestedDueDate.slice(0, 10);
+      const until = detail.validUntil.slice(0, 10);
+      setDraftId(detail.id);
+      setDraftNo(detail.quotationNo);
+      setClientId(String(detail.clientId));
+      setCompanyName(detail.clientCompany);
+      setContactName(detail.clientName);
+      setContactPhone(detail.clientPhone);
+      setContactEmail(detail.clientEmail);
+      setZipcode("");
+      setCompanyAddress(detail.clientAddress ?? "");
+      setDetailAddress("");
+      setSelectedClient({
+        id: detail.clientId,
+        company: detail.clientCompany,
+        employee: detail.clientName,
+        phone: detail.clientPhone,
+        email: detail.clientEmail,
+        totalOrder: 0,
+        totalAmount: 0,
+        recentOrderedAt: null,
+      });
+      setLines(detail.items.map((item) => ({
+        productId: String(item.productId),
+        productName: item.productName,
+        modelName: item.deviceName,
+        description: "",
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      })));
+      setVatIncluded(detail.vatIncluded);
+      setRequestedDueDate(dueDate);
+      setValidityDays(until === addDays(todayISO(), 7) ? 7 : 14);
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [draftParam, show]);
   const [productMatches, setProductMatches] = useState<ProductChoice[]>([]);
   useEffect(() => {
     const query = companyName.trim();
@@ -363,8 +415,8 @@ export function QuoteFormPage() {
     <div>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">견적 작성</h1>
-          <p className="mt-1 text-sm text-muted">거래처를 검색하거나 새로 입력하고, 품목과 희망 납기를 넣습니다. 배송지는 넣지 않습니다.</p>
+          <h1 className="text-2xl font-semibold">{draftNo ? `${draftNo} 이어서 작성` : "견적 작성"}</h1>
+          <p className="mt-1 text-sm text-muted">{draftNo ? "저장하면 이 초안의 견적번호와 ID를 유지한 채 내용과 PDF를 다시 만듭니다." : "거래처를 검색하거나 새로 입력하고, 품목과 희망 납기를 넣습니다. 배송지는 넣지 않습니다."}</p>
         </div>
         <Link to="/quotations" className="inline-flex h-10 items-center rounded-lg border border-line bg-white px-4 text-sm font-semibold">견적 목록</Link>
       </div>
@@ -744,7 +796,7 @@ export function QuoteFormPage() {
             <div className="flex justify-between"><dt className="text-muted">잔금 50%</dt><dd>{formatWon(total - depositTarget(total))}</dd></div>
           </dl>
           {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
-          <Button className="mt-4 w-full" disabled={preparing} onClick={send}>{preparing ? "견적서 준비 중…" : "발송 전 확인"}</Button>
+          <Button className="mt-4 w-full" disabled={preparing} onClick={send}>{preparing ? "견적서 준비 중…" : "저장 및 견적 확인"}</Button>
         </aside>
       </div>
       {modalName !== null && actor ? (

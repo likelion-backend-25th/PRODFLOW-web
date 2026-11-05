@@ -60,8 +60,8 @@ export interface QuotationDetail {
   balanceAmount: number;
   requestedDueDate: string;
   estimatedDueDate: string;
-  plannedStartDate: string;
-  plannedEndDate: string;
+  plannedStartDate: string | null;
+  plannedEndDate: string | null;
   validUntil: string;
   userId: number;
   userName: string;
@@ -138,6 +138,10 @@ export function listQuotations(query: {
 
 export function getQuotation(quotationId: number): Promise<QuotationDetail> {
   return apiClient.get<QuotationDetail>(`/quotations/${quotationId}`).then((response) => response.data);
+}
+
+export function deleteQuotation(quotationId: number): Promise<void> {
+  return apiClient.delete(`/quotations/${quotationId}`).then(() => undefined);
 }
 
 export function previewQuotationSchedule(input: {
