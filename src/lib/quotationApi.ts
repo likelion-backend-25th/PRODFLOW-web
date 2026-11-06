@@ -112,11 +112,21 @@ export interface QuotationPdfPreview {
   clientEmail: string;
   previewUrl: string;
   expiresAt: string;
+  confirmationToken: string;
+}
+
+export interface QuotationSendResult {
+  quotationId: number;
+  status: QuotationStatus;
+  emailStatus: string;
+  duplicateRequest: boolean;
+  message: string;
 }
 
 export function listQuotations(query: {
   keyword?: string;
   status?: QuotationStatus | "";
+  orderPending?: boolean;
   sortType: QuotationSortType;
   startDate?: string;
   endDate?: string;
@@ -127,6 +137,7 @@ export function listQuotations(query: {
     params: {
       keyword: query.keyword || undefined,
       status: query.status || undefined,
+      orderPending: query.orderPending || undefined,
       sortType: query.sortType,
       startDate: query.startDate || undefined,
       endDate: query.endDate || undefined,
@@ -144,8 +155,28 @@ export function deleteQuotation(quotationId: number): Promise<void> {
   return apiClient.delete(`/quotations/${quotationId}`).then(() => undefined);
 }
 
-export function sendQuotation(quotationId: number): Promise<void> {
-  return apiClient.post(`/quotations/${quotationId}/send`).then(() => undefined);
+export function approveQuotation(quotationId: number): Promise<QuotationDetail> {
+  return apiClient.patch<QuotationDetail>(`/quotations/${quotationId}/approve`).then((response) => response.data);
+}
+
+export function rejectQuotation(quotationId: number): Promise<QuotationDetail> {
+  return apiClient.patch<QuotationDetail>(`/quotations/${quotationId}/reject`).then((response) => response.data);
+}
+
+export function cancelQuotation(quotationId: number): Promise<QuotationDetail> {
+  return apiClient.patch<QuotationDetail>(`/quotations/${quotationId}/cancel`).then((response) => response.data);
+}
+
+export function createQuotationDraft(input: QuotationCreateInput): Promise<QuotationDetail> {
+  return apiClient.post<QuotationDetail>("/quotations", input).then((response) => response.data);
+}
+
+export function updateQuotationDraft(quotationId: number, input: QuotationCreateInput): Promise<QuotationDetail> {
+  return apiClient.put<QuotationDetail>(`/quotations/${quotationId}`, input).then((response) => response.data);
+}
+
+export function sendQuotation(quotationId: number, confirmationToken: string): Promise<QuotationSendResult> {
+  return apiClient.post<QuotationSendResult>(`/quotations/${quotationId}/send`, { confirmationToken }).then((response) => response.data);
 }
 
 export function previewQuotationSchedule(input: {

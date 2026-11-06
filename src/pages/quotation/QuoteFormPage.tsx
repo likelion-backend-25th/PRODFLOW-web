@@ -12,7 +12,7 @@ import { screenHolidayDates } from "@/lib/db.ts";
 import { getClient, listClients, type ClientListItem } from "@/lib/clientApi.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount } from "@/lib/money.ts";
 import { searchProducts } from "@/lib/productApi.ts";
-import { createQuotationPdf, deleteQuotation, getQuotation, listDailyPlanned, listLineCapacities, previewQuotationSchedule, readPdfFailure, regenerateQuotationPdf, sendQuotation, updateQuotationPdf, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
+import { createQuotationDraft, createQuotationPdf, deleteQuotation, getQuotation, listDailyPlanned, listLineCapacities, previewQuotationSchedule, readPdfFailure, regenerateQuotationPdf, sendQuotation, updateQuotationDraft, updateQuotationPdf, type QuotationPdfPreview, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
 import { capacityUntil } from "@/lib/schedule.ts";
 import type { Line, LineStatus } from "@/types/domain.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
@@ -21,10 +21,8 @@ import { useToastStore } from "@/stores/useToastStore.ts";
 const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
 
 function lineStatusOf(status: string): LineStatus {
-  if (status === "OPERATING") return "RUNNING";
-  if (status === "AVAILABLE") return "AVAILABLE";
-  if (status === "BROKEN") return "BROKEN";
-  return "MAINTENANCE";
+  if (status === "OPERATING" || status === "AVAILABLE" || status === "BROKEN" || status === "INSPECTION") return status;
+  return "INSPECTION";
 }
 
 function labelDate(iso: string): string {
@@ -83,6 +81,8 @@ export function QuoteFormPage() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfStatus, setPdfStatus] = useState<QuotePdfPreviewStatus>("empty");
   const [pdfMessage, setPdfMessage] = useState("");
+  const [confirmationToken, setConfirmationToken] = useState("");
+  const [previewEmail, setPreviewEmail] = useState("");
   const [schedule, setSchedule] = useState<QuotationSchedulePreview | null>(null);
   const [scheduleError, setScheduleError] = useState("");
   const [capacity, setCapacity] = useState<{ total: number; available: number } | null>(null);
@@ -329,12 +329,13 @@ export function QuoteFormPage() {
     };
   }
 
-  async function persistDraft() {
-    const input = createInput();
-    const saved = draftId == null ? await createQuotationPdf(input) : await updateQuotationPdf(draftId, input);
+  function rememberPreview(saved: QuotationPdfPreview) {
     setDraftId(saved.quotationId);
     setDraftNo(saved.quotationNo);
-    return saved;
+    setConfirmationToken(saved.confirmationToken ?? "");
+    setPreviewEmail(saved.clientEmail);
+    setPdfUrl(saved.previewUrl);
+    setPdfStatus(saved.previewUrl ? "ready" : "empty");
   }
 
   async function openPreview() {
@@ -343,19 +344,19 @@ export function QuoteFormPage() {
     setPreparing(true);
     setPdfUrl(null);
     setPdfMessage("");
+    setConfirmationToken("");
+    setPreviewEmail(contactEmail.trim());
     setPdfStatus("loading");
     try {
-      const saved = await persistDraft();
-      setPdfUrl(saved.previewUrl);
-      setPdfStatus(saved.previewUrl ? "ready" : "empty");
+      const input = createInput();
+      const saved = draftId == null ? await createQuotationPdf(input) : await updateQuotationPdf(draftId, input);
+      rememberPreview(saved);
     } catch (reason: unknown) {
       const failure = readPdfFailure(reason);
       if (failure?.quotationId != null) {
         setDraftId(failure.quotationId);
         try {
-          const saved = await regenerateQuotationPdf(failure.quotationId);
-          setPdfUrl(saved.previewUrl);
-          setPdfStatus(saved.previewUrl ? "ready" : "empty");
+          rememberPreview(await regenerateQuotationPdf(failure.quotationId));
           setPreparing(false);
           return;
         } catch (retry: unknown) {
@@ -400,8 +401,11 @@ export function QuoteFormPage() {
     setSaving(true);
     setError("");
     try {
-      const saved = await persistDraft();
-      show(`${saved.quotationNo} 견적을 저장했습니다.`);
+      const input = createInput();
+      const saved = draftId == null ? await createQuotationDraft(input) : await updateQuotationDraft(draftId, input);
+      setDraftId(saved.id);
+      setDraftNo(saved.quotationNo);
+      show("초안이 저장되었습니다.");
     } catch (reason: unknown) {
       setError(readApiErrorMessage(reason));
     } finally {
@@ -437,7 +441,7 @@ export function QuoteFormPage() {
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{draftNo ? `${draftNo} 이어서 작성` : "견적 작성"}</h1>
-          <p className="mt-1 text-sm text-muted">{draftNo ? "저장하면 이 초안의 견적번호와 ID를 유지한 채 내용과 PDF를 다시 만듭니다." : "거래처를 검색하거나 새로 입력하고, 품목과 희망 납기를 넣습니다. 배송지는 넣지 않습니다."}</p>
+          <p className="mt-1 text-sm text-muted">{draftNo ? "저장하거나 발송하면 이 초안의 견적번호와 ID를 유지합니다." : "거래처를 검색하거나 새로 입력하고, 품목과 희망 납기를 넣습니다. 배송지는 넣지 않습니다."}</p>
         </div>
         <div className="flex items-center gap-2">
           <Button tone="ghost" className="text-danger" disabled={draftId == null || deleting || saving || preparing} onClick={() => void removeDraft()}>{deleting ? "삭제 중…" : "삭제"}</Button>
@@ -842,19 +846,23 @@ export function QuoteFormPage() {
       {confirmOpen ? (
         <QuoteSendConfirmModal
           companyName={companyName.trim()}
-          email={contactEmail.trim()}
+          email={previewEmail || contactEmail.trim()}
           pdfUrl={pdfUrl}
           pdfStatus={pdfStatus}
           pdfMessage={pdfMessage}
           onClose={() => { if (!preparing) setConfirmOpen(false); }}
           onSend={async () => {
-            if (draftId == null) return;
+            if (draftId == null || !confirmationToken) {
+              show("미리보기 확인값이 없습니다. 견적 발송을 다시 눌러 주세요.");
+              return;
+            }
             try {
-              await sendQuotation(draftId);
-              show(`${draftNo || "견적"} 견적을 발송했습니다.`);
+              const sent = await sendQuotation(draftId, confirmationToken);
+              show(sent.message || "견적 발송이 완료되었습니다.");
               navigate(`/quotations/${draftId}`);
             } catch (reason: unknown) {
               show(readApiErrorMessage(reason));
+              throw reason;
             }
           }}
         />

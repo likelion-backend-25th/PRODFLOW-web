@@ -49,6 +49,7 @@ export function QuoteListPage() {
     listQuotations({
       keyword: keyword.trim(),
       status: pendingOnly ? "APPROVED" : status,
+      orderPending: pendingOnly,
       sortType: sortTypeOf[dateField],
       startDate: from,
       endDate: to,
@@ -68,7 +69,7 @@ export function QuoteListPage() {
       ignore = true;
     };
   }, [dateField, from, keyword, page, pendingOnly, status, to]);
-  const rows = result.content.filter((quote) => !pendingOnly || quote.customerOrderId == null);
+  const rows = result.content;
   const pageCount = Math.max(1, result.totalPages);
   const currentPage = result.page;
 
