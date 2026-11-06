@@ -1,37 +1,54 @@
-import { BadgeCheck, Mail, Shield, UserRound } from "lucide-react";
+import { BadgeCheck, Mail, Phone, RefreshCw, Shield, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
-import { apiClient, readApiErrorMessage } from "@/lib/apiClient.ts";
+import { Button } from "@/components/ui.tsx";
+import { readApiErrorMessage } from "@/lib/apiClient.ts";
+import { getMe, toRole, type MeResponse } from "@/lib/userApi.ts";
 import { accountStatusLabel, roleLabel } from "@/lib/labels.ts";
-import type { AccountStatus, Role } from "@/types/domain.ts";
-
-interface MeResponse {
-  name: string;
-  email: string;
-  role: Role | "INQUIRY_MANAGER";
-  status: AccountStatus;
-}
+import { useAuthStore } from "@/stores/useAuthStore.ts";
 
 export function ProfilePage() {
   const [user, setUser] = useState<MeResponse | null>(null);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const updateSessionUser = useAuthStore((state) => state.updateSessionUser);
+
   useEffect(() => {
     let ignore = false;
-    apiClient.get<MeResponse>("/users/me").then((response) => {
-      if (!ignore) setUser(response.data);
-    }).catch((reason: unknown) => {
-      if (!ignore) setError(readApiErrorMessage(reason));
-    });
+    void (async () => {
+      await Promise.resolve();
+      try {
+        const response = await getMe();
+        if (ignore) return;
+        setUser(response);
+        updateSessionUser({ name: response.name, email: response.email, role: toRole(response.role) });
+      } catch (reason: unknown) {
+        if (!ignore) setError(readApiErrorMessage(reason));
+      }
+    })();
     return () => {
       ignore = true;
     };
-  }, []);
-  if (error) return <p className="text-danger">{error}</p>;
-  if (!user) return <p className="text-muted">계정 정보를 불러오는 중입니다.</p>;
-  const role = user.role === "INQUIRY_MANAGER" ? "VIEWER" : user.role;
+  }, [reloadKey, updateSessionUser]);
+
+  if (error) {
+    return (
+      <section className="rounded-xl border border-line bg-white p-8 text-center">
+        <p className="text-danger">{error}</p>
+        <Button tone="ghost" className="mt-4" onClick={() => {
+          setError("");
+          setReloadKey((key) => key + 1);
+        }}>
+          <RefreshCw size={15} className="mr-2" />다시 시도
+        </Button>
+      </section>
+    );
+  }
+  if (!user) return <div className="h-56 animate-pulse rounded-xl border border-line bg-white" aria-label="내 정보 불러오는 중" />;
+  const role = toRole(user.role);
 
   const rows = [
-    { icon: UserRound, label: "이름", value: user.name },
-    { icon: Mail, label: "이메일", value: user.email },
+    { icon: Mail, label: "로그인 ID", value: user.email },
+    { icon: Phone, label: "연락처", value: user.phone },
     { icon: Shield, label: "역할", value: roleLabel[role], badge: true },
     { icon: BadgeCheck, label: "계정 상태", value: accountStatusLabel[user.status], status: true },
   ];
@@ -40,8 +57,9 @@ export function ProfilePage() {
     <div>
       <h1 className="text-2xl font-bold">내 정보</h1>
       <p className="mt-2 text-sm text-muted">로그인한 본인의 정보를 확인할 수 있습니다.</p>
-      <div className="mt-6 grid items-start gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <section className="rounded-2xl border border-line bg-white px-6 py-10 text-center">
+      <div className="mt-6 rounded-xl border border-line bg-white p-5 sm:p-8">
+        <div className="grid items-stretch gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <section className="px-6 py-5 text-center">
           <span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-primary-soft text-primary">
             <UserRound size={28} />
           </span>
@@ -49,7 +67,7 @@ export function ProfilePage() {
           <p className="mt-3 inline-flex rounded-md bg-primary-soft px-2 py-1 text-xs font-semibold text-primary">{roleLabel[role]}</p>
           <p className="mx-auto mt-4 max-w-[180px] text-sm leading-6 text-muted">ProdFlow와 함께 더 효율적인 생산 관리를 만들어갑니다.</p>
         </section>
-        <section className="rounded-2xl border border-line bg-white">
+        <section className="rounded-xl border border-line bg-white">
           {rows.map((row) => (
             <div key={row.label} className="flex items-center gap-4 border-b border-line px-6 py-4 last:border-b-0">
               <row.icon size={16} className="shrink-0 text-muted" />
@@ -67,6 +85,7 @@ export function ProfilePage() {
             </div>
           ))}
         </section>
+        </div>
       </div>
     </div>
   );
