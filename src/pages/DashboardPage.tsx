@@ -1,58 +1,184 @@
-import { useState } from "react";
-import { Link } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router";
+import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import { ScheduleDrawer } from "@/components/ScheduleDrawer.tsx";
 import { Badge } from "@/components/ui.tsx";
+import { apiStatus, readApiErrorMessage } from "@/lib/apiClient.ts";
+import { fetchDashboard, fetchWorkOrderStatusCodes, type WorkStatusCode } from "@/lib/dashboardApi.ts";
 import { useDb } from "@/lib/db.ts";
-import { localDate, todayISO } from "@/lib/dates.ts";
-import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } from "@/lib/labels.ts";
-import { formatWon, orderQuantity, orderTotal } from "@/lib/money.ts";
-import { activeWorkOrder, delayOf, delayTone, type DelaySignal } from "@/lib/delay.ts";
+import { addDays, parseISO, toISO, todayISO } from "@/lib/dates.ts";
+import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, workOrderTone } from "@/lib/labels.ts";
+import { formatWon } from "@/lib/money.ts";
 import { orderItemsText } from "@/lib/orderText.ts";
 import { factoryCapacity, isWorkingDay, occupiedOn } from "@/lib/schedule.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
-import type { Order } from "@/types/domain.ts";
+import type { DashboardOrderStatusStatistics, DashboardPaymentStatus, DashboardResponse, DashboardRiskType } from "@/types/dashboard.ts";
+import type { PaymentStatus, WorkOrderStatus } from "@/types/domain.ts";
+
+type ProgressGroup = "WAITING" | "PRODUCING" | "SHIPPING";
+
+const progressGroupLabel: Record<ProgressGroup, string> = {
+  WAITING: "대기",
+  PRODUCING: "생산중",
+  SHIPPING: "배송중",
+};
+
+// 진행 중 건수는 대기·생산중·배송중만 센다. 완료·취소는 빼고, 포장완료는 출고 전이라 배송중에 넣는다. 한글 상태명으로 분기하지 않는다.
+const progressGroupOf: Record<string, ProgressGroup | "EXCLUDED"> = {
+  WAITING: "WAITING",
+  CONFIRMED: "WAITING",
+  PRODUCTION_READY: "WAITING",
+  PREPARE: "WAITING",
+  IN_PRODUCTION: "PRODUCING",
+  ON_HOLD: "PRODUCING",
+  PAUSE: "PRODUCING",
+  PACKING: "PRODUCING",
+  PRODUCE: "PRODUCING",
+  PACK: "PRODUCING",
+  SUSPEND: "PRODUCING",
+  HALT: "PRODUCING",
+  READY_TO_SHIP: "SHIPPING",
+  SHIPPING: "SHIPPING",
+  PACK_DONE: "SHIPPING",
+  COMPLETED: "EXCLUDED",
+  CANCELLED: "EXCLUDED",
+};
+
+const riskTypeTone: Record<DashboardRiskType, string> = {
+  DELAYED: "bg-red-50 text-danger",
+  URGENT: "bg-warning-soft text-warning",
+};
+
+// 작업지시 코드(WORK_ORDER_STATUS)와 수주 상태 코드를 위험 문구 단계로 묶는다. 한글 상태명으로 분기하지 않는다.
+// 생산 중지(HALT)·생산보류(ON_HOLD)·중지(PAUSE)도 라인이 멈춘 상태라 일시정지와 같이 생산 중단으로 본다.
+// 포장(PACK)·포장완료(PACK_DONE)·출고대기(READY_TO_SHIP)는 생산이 끝나 출고를 기다리는 단계다.
+type RiskPhase = "PREPARE" | "PRODUCE" | "PAUSED" | "DONE" | "SHIPPING";
+
+const riskPhaseOf: Record<string, RiskPhase> = {
+  PREPARE: "PREPARE",
+  WAITING: "PREPARE",
+  PRODUCTION_READY: "PREPARE",
+  CONFIRMED: "PREPARE",
+  PRODUCE: "PRODUCE",
+  IN_PRODUCTION: "PRODUCE",
+  SUSPEND: "PAUSED",
+  HALT: "PAUSED",
+  ON_HOLD: "PAUSED",
+  PAUSE: "PAUSED",
+  PACK: "DONE",
+  PACK_DONE: "DONE",
+  READY_TO_SHIP: "DONE",
+  SHIPPING: "SHIPPING",
+};
+
+const riskDetail: Record<RiskPhase, { late: string; soon: string }> = {
+  PREPARE: { late: "생산 미착수", soon: "생산 미착수" },
+  PRODUCE: { late: "생산 지연", soon: "생산 진행 중" },
+  PAUSED: { late: "생산 중단", soon: "생산 중단" },
+  DONE: { late: "출고 대기", soon: "출고 대기" },
+  SHIPPING: { late: "배송 지연", soon: "배송 진행 중" },
+};
+
+function daysUntilDue(due: string, today: string): number {
+  const dueDay = due.slice(0, 10);
+  return Math.round((parseISO(dueDay).getTime() - parseISO(today).getTime()) / 86_400_000);
+}
+
+function riskReasonText(due: string, statusCode: string | undefined, today: string): string {
+  const days = daysUntilDue(due, today);
+  const overdue = days < 0;
+  const head = overdue ? `납기 ${Math.abs(days)}일 초과` : `D-${days}`;
+  const phase = statusCode ? riskPhaseOf[statusCode] : undefined;
+  const detail = phase ? riskDetail[phase][overdue ? "late" : "soon"] : undefined;
+  return detail ? `${head} · ${detail}` : head;
+}
+
+function riskReasonTone(due: string, today: string): string {
+  return daysUntilDue(due, today) < 0 ? riskTypeTone.DELAYED : riskTypeTone.URGENT;
+}
+
+// 수주 상세는 기존 /orders/:orderId 다. 로컬 시드 id로 바꾸지 않고 API 수주 id를 넘긴다.
+function orderDetailPath(orderId: number): string {
+  return `/orders/${orderId}`;
+}
 
 export function DashboardPage() {
   const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
+  const logout = useAuthStore((state) => state.logout);
+  const navigate = useNavigate();
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [weekOffset, setWeekOffset] = useState(0);
   const today = todayISO();
-  const month = today.slice(0, 7);
-  const active = db.orders.filter((order) => order.status !== "CANCELLED");
-  const monthOrders = active.filter((order) => localDate(order.createdAt).startsWith(month));
-  const produced = db.workOrders
-    .filter((item) => (item.status === "PACK" || item.status === "PACK_DONE") && item.completedAt && localDate(item.completedAt).startsWith(month))
-    .reduce((sum, item) => sum + item.quantity, 0);
-  const completed = active.filter((order) => order.status === "COMPLETED");
-  const onTime = completed.filter((order) => order.completedAt && localDate(order.completedAt) <= order.dueDate).length;
-  const open = active.filter((order) => order.status !== "COMPLETED");
-  const risks = open
-    .map((order) => ({ order, delay: delayOf(order, activeWorkOrder(db.workOrders, order.id), today) }))
-    .filter((item): item is { order: Order; delay: DelaySignal } => item.delay !== null)
-    .sort((left, right) => (left.delay.level === right.delay.level ? left.order.dueDate.localeCompare(right.order.dueDate) : left.delay.level === "late" ? -1 : 1));
-  const lateCount = risks.filter((item) => item.delay.level === "late").length;
-  const lastDay = new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0).getDate();
-  const weeks = [0, 0, 0, 0];
-  active.forEach((order) => {
-    order.allocations.forEach((slot) => {
-      if (!slot.date.startsWith(month)) return;
-      const bucket = Math.min(3, Math.floor((Number(slot.date.slice(8)) - 1) / 7));
-      weeks[bucket] += slot.quantity;
+  const [period, setPeriod] = useState(() => monthRange(today));
+  const [data, setData] = useState<DashboardResponse | null>(null);
+  const [workStatuses, setWorkStatuses] = useState<WorkStatusCode[]>([]);
+  const [result, setResult] = useState<{ key: string; error: string | null } | null>(null);
+  const periodKey = `${period.startDate}~${period.endDate}`;
+  const loading = result?.key !== periodKey;
+  const error = result?.key === periodKey ? result.error : null;
+
+  useEffect(() => {
+    let ignore = false;
+    const [startDate = "", endDate = ""] = periodKey.split("~");
+    void Promise.all([
+      fetchDashboard(startDate, endDate),
+      fetchWorkOrderStatusCodes().catch(() => [] as WorkStatusCode[]),
+    ]).then(([response, codes]) => {
+      if (ignore) return;
+      setData(response);
+      setWorkStatuses(codes);
+      setResult({ key: periodKey, error: null });
+    }).catch((reason: unknown) => {
+      if (ignore) return;
+      // 토큰 갱신까지 실패한 401은 세션이 끝난 것이므로 로그인으로 돌려보낸다.
+      if (apiStatus(reason) === 401) {
+        logout();
+        navigate("/login", { replace: true });
+        return;
+      }
+      setResult({ key: periodKey, error: readApiErrorMessage(reason) });
     });
-  });
-  const maxWeek = Math.max(1, ...weeks);
-  const mix = new Map<string, number>();
-  monthOrders.forEach((order) => order.lines.forEach((line) => mix.set(line.productId, (mix.get(line.productId) ?? 0) + line.quantity)));
-  const mixTotal = Math.max(1, [...mix.values()].reduce((sum, value) => sum + value, 0));
-  const shares = db.products.map((product) => ({ product, qty: mix.get(product.id) ?? 0 }));
-  const slices = shares.map((share, index) => {
-    const start = shares.slice(0, index).reduce((sum, item) => sum + (item.qty / mixTotal) * 100, 0);
-    return { ...share, start, end: start + (share.qty / mixTotal) * 100 };
-  });
-  const days = weekdays(today);
+    return () => {
+      ignore = true;
+    };
+  }, [periodKey, logout, navigate]);
+
+  const active = db.orders.filter((order) => order.status !== "CANCELLED");
+  const days = weekdays(addDays(today, weekOffset * 7));
   const holidays = db.holidays.map((holiday) => holiday.date);
   const capacity = factoryCapacity(db.lines);
   const detailOrder = detailId ? db.orders.find((order) => order.id === detailId) : undefined;
+
+  const risks = data?.deliveryRiskStatistics.items ?? [];
+  const workStatusById = new Map(workStatuses.map((code) => [code.id, code]));
+  const delayedCount = risks.filter((item) => item.riskType === "DELAYED").length;
+  const urgentCount = risks.filter((item) => item.riskType === "URGENT").length;
+  const unpaidCount = risks.filter((item) => item.paymentStatus === "UNPAID").length;
+  const unpaidAmount = data?.summary.unpaidAmount ?? 0;
+  const progress = groupProgress(data?.orderStatusStatistics ?? []);
+  const inProgress = progress.WAITING + progress.PRODUCING + progress.SHIPPING;
+  const weeks = data?.weeklyProductionStatistics ?? [];
+  const scale = axisMax(Math.max(0, ...weeks.map((week) => Math.max(week.plannedQuantity, week.completedQuantity))));
+  const ticks = [scale, (scale * 3) / 4, scale / 2, scale / 4, 0];
+  const share = data?.productProductionShare;
+  const slices = (share?.items ?? []).map((item, index, items) => {
+    const start = items.slice(0, index).reduce((sum, prev) => sum + prev.productionShare, 0);
+    return { ...item, start, end: start + item.productionShare };
+  });
+  const chartMonth = period.endDate.slice(0, 7).replace("-", "년 ");
+  const notices = [
+    delayedCount > 0 ? `지연 ${delayedCount}건` : "",
+    urgentCount > 0 ? `주의 ${urgentCount}건` : "",
+    unpaidCount > 0 ? `선금 미입금 ${unpaidCount}건` : "",
+    unpaidAmount > 0 ? `미입금 ${formatWon(unpaidAmount)}` : "",
+  ].filter((item) => item.length > 0);
+
+  function selectMonth(value: string) {
+    const [year, month] = value.split("-").map(Number);
+    if (!year || !month) return;
+    setPeriod(monthRange(`${year}-${String(month).padStart(2, "0")}-01`));
+  }
 
   return (
     <div>
@@ -62,59 +188,121 @@ export function DashboardPage() {
           <p className="mt-1 text-muted">{labelDate(today)} {weekdayLabel(today)}요일 · 오늘도 빈틈없는 생산 운영을 시작하세요.</p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="rounded-lg border border-line bg-white px-3 py-2 text-sm">{month.replace("-", ".")}.01 - {month.slice(5)}.{lastDay}</span>
+          <MonthPicker value={period.startDate.slice(0, 7)} onChange={selectMonth} />
           {canManageOrders(role) ? <Link to="/quotations/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 견적 작성</Link> : null}
         </div>
       </div>
-      {risks.length > 0 ? (
-        <div className={`mt-4 flex items-center justify-between rounded-xl px-4 py-3 ${lateCount > 0 ? "bg-red-50 text-red-700" : "bg-warning-soft text-warning"}`}>
-          <span>{lateCount > 0 ? `지연 ${lateCount}건` : ""}{lateCount > 0 && risks.length > lateCount ? " · " : ""}{risks.length > lateCount ? `주의 ${risks.length - lateCount}건` : ""}이 있습니다. 아래 목록에서 사유를 확인하세요.</span>
-          <a href="#risks" className="font-semibold">목록 보기 →</a>
+      {error ? <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-danger">{error}</p> : null}
+      {loading && !data ? <p className="mt-4 rounded-xl border border-line bg-white px-4 py-3 text-muted">통계를 불러오는 중입니다.</p> : null}
+      {data && notices.length > 0 ? (
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-xl bg-warning-soft px-4 py-3 text-warning">
+          <span>{notices.join(" · ")}이 있습니다.{risks.length > 0 ? " 아래 목록에서 확인하세요." : ""}</span>
+          {risks.length > 0 ? <a href="#risks" className="shrink-0 font-semibold">수주 확인 →</a> : null}
         </div>
       ) : null}
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
-        <Metric label="이번 달 수주 건수" value={`${monthOrders.length}건`} hint="등록된 수주" />
-        <Metric label="이번 달 생산 완료량" value={`${produced.toLocaleString("ko-KR")}개`} hint="이번 달 완료된 작업지시 수량" />
-        <Metric label="납기 이행률" value={completed.length === 0 ? "-" : `${Math.round((onTime / completed.length) * 1000) / 10}%`} hint={`${onTime}/${completed.length}건 정시 완료`} />
-        <Metric label="생산 예정 및 진행" value={`${open.length}건`} hint="완료 전 수주" />
-      </div>
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_0.8fr]">
-        <section className="rounded-xl border border-line bg-white p-5">
-          <h2 className="font-semibold">주간 생산 계획량</h2>
-          <p className="text-sm text-muted">{month.replace("-", "년 ")}월 일정 배분 기준 · 1주는 1~7일 · 단위: 개</p>
-          <div className="mt-6 flex h-48 items-end gap-8 px-4">
-            {weeks.map((qty, index) => (
-              <div key={index} className="flex flex-1 flex-col items-center gap-2">
-                <span className="text-xs text-muted">{qty.toLocaleString("ko-KR")}</span>
-                <div className="flex h-36 w-full items-end justify-center">
-                  <div className="w-10 rounded-t bg-primary" style={{ height: `${Math.max(6, (qty / maxWeek) * 100)}%` }} />
+      {data ? (
+        <>
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <Metric
+              label="이번 달 수주 건수"
+              value={countUnit(data.orderStatistics.periodOrderCount)}
+              hint={`이번 달 ${countUnit(data.orderStatistics.periodOrderCount)} · 전체 ${countUnit(data.orderStatistics.totalOrderCount)}`}
+            />
+            <Metric
+              label="이번 달 누적 생산량"
+              value={quantityUnit(data.summary.completedQuantity)}
+              hint={`계획 ${quantityUnit(data.summary.plannedQuantity)} · 진행률 ${data.summary.productionProgressRate}%`}
+              progress={data.summary.productionProgressRate}
+            />
+            <Metric
+              label="납기 이행률"
+              value={data.deliveryPerformance.totalOrderCount === 0 ? "-" : `${data.deliveryPerformance.onTimeDeliveryRate}%`}
+              hint={`정시 납품 ${countUnit(data.deliveryPerformance.onTimeOrderCount)} / 전체 대상 ${countUnit(data.deliveryPerformance.totalOrderCount)}`}
+            />
+            <Metric label="진행 중인 수주" value={countUnit(inProgress)} hint={progressHint(progress)} />
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_0.8fr]">
+            <section className="rounded-xl border border-line bg-white p-5">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h2 className="font-semibold">월간 생산량</h2>
+                  <p className="text-sm text-muted">{chartMonth}월 주차별 계획과 완료 · 단위: 개</p>
                 </div>
-                <span className="text-xs text-muted">{index + 1}주</span>
+                <div className="flex items-center gap-3 text-xs text-muted">
+                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-primary-soft" />계획</span>
+                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-primary" />완료</span>
+                </div>
               </div>
-            ))}
+              {weeks.length === 0 ? <p className="mt-10 text-center text-sm text-muted">주간 생산 데이터가 없습니다.</p> : (
+                <div className="mt-6 flex items-end gap-3">
+                  <div className="flex h-40 flex-col justify-between text-right text-xs text-muted">
+                    {ticks.map((tick) => <span key={tick}>{tick.toLocaleString("ko-KR")}</span>)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="relative h-40">
+                      <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+                        {ticks.map((tick) => <div key={tick} className="border-t border-line" />)}
+                      </div>
+                      <div className="absolute inset-0 flex items-end">
+                        {weeks.map((week) => (
+                          <div key={week.week} className="flex h-full flex-1 items-end justify-center gap-1">
+                            <div className="w-5 rounded-t bg-primary-soft" style={{ height: `${(week.plannedQuantity / scale) * 100}%` }} />
+                            <div className="w-5 rounded-t bg-primary" style={{ height: `${(week.completedQuantity / scale) * 100}%` }} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="mt-2 flex">
+                      {weeks.map((week) => (
+                        <span key={week.week} className="flex-1 text-center text-xs text-muted">{week.week}주차</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+            <section className="rounded-xl border border-line bg-white p-5">
+              <h2 className="font-semibold">품목별 생산 비중</h2>
+              <p className="text-sm text-muted">{chartMonth}월 생산 완료 수량 기준</p>
+              <div className="mt-4 flex items-center gap-4">
+                <div
+                  className="grid h-36 w-36 shrink-0 place-items-center rounded-full bg-canvas"
+                  style={slices.length > 0 ? { background: `conic-gradient(${slices.map((slice, index) => `${donutColor(index)} ${slice.start}% ${slice.end}%`).join(", ")})` } : undefined}
+                >
+                  <div className="grid h-20 w-20 place-items-center rounded-full bg-white text-center text-lg font-semibold">{(share?.totalCompletedQuantity ?? 0).toLocaleString("ko-KR")}<span className="block text-xs font-normal text-muted">개</span></div>
+                </div>
+                <ul className="min-w-0 flex-1 space-y-2 text-sm">
+                  {slices.map((slice, index) => (
+                    <li key={slice.productId} className="flex items-center justify-between gap-3">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: donutColor(index) }} />
+                        <span className="truncate">{slice.productName}</span>
+                      </span>
+                      <span className="shrink-0 text-muted">{slice.productionShare}%</span>
+                    </li>
+                  ))}
+                  {slices.length === 0 ? <li className="text-muted">생산 완료된 품목이 없습니다.</li> : null}
+                </ul>
+              </div>
+            </section>
           </div>
-        </section>
-        <section className="rounded-xl border border-line bg-white p-5">
-          <h2 className="font-semibold">품목별 생산 비중</h2>
-          <p className="text-sm text-muted">이번 달 등록 수주 수량 기준</p>
-          <div className="mt-4 flex items-center gap-4">
-            <div className="grid h-36 w-36 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${slices.map((slice, index) => `${donutColor(index)} ${slice.start}% ${slice.end}%`).join(", ")})` }}>
-              <div className="grid h-20 w-20 place-items-center rounded-full bg-white text-center text-sm font-semibold">{mixTotal.toLocaleString("ko-KR")}<span className="block text-xs font-normal text-muted">개</span></div>
-            </div>
-            <ul className="space-y-1 text-sm">
-              {slices.map((slice) => (
-                <li key={slice.product.id} className="flex justify-between gap-3">
-                  <span className="truncate">{slice.product.productName}</span>
-                  <span className="text-muted">{Math.round((slice.qty / mixTotal) * 100)}%</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-      </div>
+        </>
+      ) : null}
       <section className="mt-4 rounded-xl border border-line bg-white p-5">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-semibold">이번 주 생산 일정</h2>
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-semibold">주간 생산 일정</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <p className="text-sm text-muted">{weekRangeLabel(days[0] ?? today, days[4] ?? today)}</p>
+              <button type="button" aria-label="이전 주" className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-white text-muted hover:bg-canvas" onClick={() => setWeekOffset((value) => value - 1)}>
+                <ChevronLeft size={16} />
+              </button>
+              <button type="button" className="h-8 rounded-lg bg-primary-soft px-3 text-sm font-semibold text-primary" onClick={() => setWeekOffset(0)}>오늘</button>
+              <button type="button" aria-label="다음 주" className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-white text-muted hover:bg-canvas" onClick={() => setWeekOffset((value) => value + 1)}>
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
           <Link to="/calendar" className="text-sm font-semibold text-primary">전체 일정 →</Link>
         </div>
         <div className="grid gap-3 md:grid-cols-5">
@@ -123,69 +311,91 @@ export function DashboardPage() {
             const working = isWorkingDay(iso, holidays);
             const left = Math.max(0, capacity - occupiedOn(iso, db.orders));
             return (
-              <div key={iso} className="rounded-xl bg-canvas p-3">
+              <div key={iso} className={`flex h-[220px] flex-col rounded-xl p-3 ${iso === today ? "bg-primary-soft" : "bg-canvas"}`}>
                 <p className="text-sm font-semibold">{weekdayLabel(iso)} {Number(iso.slice(8))} {iso === today ? "오늘" : ""}</p>
                 <p className="text-xs text-muted">
                   {jobs.length}건 · {working ? <span className={left === 0 ? "font-semibold text-warning" : "font-semibold text-primary"}>가용 생산량 {left.toLocaleString("ko-KR")}개</span> : "휴무"}
                 </p>
-                <ul className="mt-2 space-y-2">
-                  {jobs.slice(0, 2).map((order) => {
-                    const client = db.clients.find((item) => item.id === order.clientId);
-                    return (
-                      <li key={order.id}>
-                        <button type="button" className="w-full rounded-lg bg-white p-2 text-left hover:ring-1 hover:ring-primary" onClick={() => setDetailId(order.id)}>
-                          <span className="block font-semibold text-primary">{client?.companyName}</span>
-                          <span className="block truncate text-xs text-muted">{orderItemsText(db.products, order.lines)}</span>
-                          <Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                {jobs.length === 0 ? (
+                  <p className="flex flex-1 items-center justify-center text-xs text-muted">등록된 일정 없음</p>
+                ) : (
+                  <ul className="mt-2 space-y-2">
+                    {jobs.slice(0, 2).map((order) => {
+                      const client = db.clients.find((item) => item.id === order.clientId);
+                      return (
+                        <li key={order.id}>
+                          <button type="button" className="w-full rounded-lg bg-white p-2 text-left hover:ring-1 hover:ring-primary" onClick={() => setDetailId(order.id)}>
+                            <span className="block font-semibold text-primary">{client?.companyName}</span>
+                            <span className="block truncate text-xs text-muted">{orderItemsText(db.products, order.lines)}</span>
+                            <Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             );
           })}
         </div>
       </section>
-      <section id="risks" className="mt-4 overflow-hidden rounded-xl border border-line bg-white">
-        <div className="flex items-center justify-between px-5 pt-5">
-          <div>
-            <h2 className="font-semibold">지연·위험 수주</h2>
-            <p className="text-xs text-muted">납기 초과, 완료 예정일 경과, 착수 지연, 담당자 미배정, 일시정지, 납기 3일 이내 미출고</p>
+      {data ? (
+        <section id="risks" className="mt-4 overflow-hidden rounded-xl border border-line bg-white">
+          <div className="flex items-center justify-between px-5 pt-5">
+            <div>
+              <h2 className="font-semibold">납기 위험 수주</h2>
+              <p className="text-xs text-muted">납기일이 지났거나 3일 이내인 수주</p>
+            </div>
+            <Link to="/orders" className="text-sm font-semibold text-primary">수주 목록으로 →</Link>
           </div>
-          <Link to="/orders" className="text-sm font-semibold text-primary">수주 목록으로 →</Link>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="mt-3 w-full min-w-[760px] text-left">
-            <thead className="bg-primary-soft/40 text-muted">
-              <tr>
-                <th className="px-5 py-3 font-medium">수주번호</th>
-                <th className="py-3 font-medium">사유</th>
-                <th className="py-3 font-medium">클라이언트 / 품목</th>
-                <th className="py-3 font-medium">납기일</th>
-                <th className="py-3 font-medium">작업 상태</th>
-                <th className="py-3 pr-5 font-medium">입금</th>
-              </tr>
-            </thead>
-            <tbody>
-              {risks.map(({ order, delay }) => {
-                const client = db.clients.find((item) => item.id === order.clientId);
-                return (
-                  <tr key={order.id} className="border-t border-line">
-                    <td className="px-5 py-3"><Link className="font-semibold text-primary" to={`/orders/${order.id}`}>{order.orderNo}</Link></td>
-                    <td><Badge className={delayTone(delay.level)}>{delay.level === "late" ? "지연" : "주의"} · {delay.reason}</Badge></td>
-                    <td>{client?.companyName} · {orderItemsText(db.products, order.lines)}</td>
-                    <td>{order.dueDate}</td>
-                    <td><Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge></td>
-                    <td className="pr-5"><Badge className={paymentTone(order.paymentStatus)}>{paymentStatusLabel[order.paymentStatus]}</Badge> · {orderQuantity(order.lines).toLocaleString("ko-KR")}개 · {formatWon(orderTotal(order.lines, order.vatIncluded))}</td>
-                  </tr>
-                );
-              })}
-              {risks.length === 0 ? <tr><td colSpan={6} className="px-5 py-8 text-center text-muted">지연되거나 주의가 필요한 수주가 없습니다.</td></tr> : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+          <div className="overflow-x-auto">
+            <table className="mt-3 w-full min-w-[920px] text-left text-sm">
+              <thead className="bg-primary-soft/40 text-muted">
+                <tr>
+                  <th className="px-5 py-3 font-medium">수주번호</th>
+                  <th className="px-4 py-3 font-medium">클라이언트 / 품목</th>
+                  <th className="px-4 py-3 font-medium">납기일</th>
+                  <th className="px-4 py-3 font-medium">작업 상태</th>
+                  <th className="px-4 py-3 font-medium">위험 사유</th>
+                  <th className="px-4 py-3 font-medium">입금 상태</th>
+                  <th className="w-14 py-3 pr-4 font-medium"><span className="sr-only">수주 상세</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {risks.map((item) => {
+                  const workStatus = workStatusById.get(item.statusCode);
+                  return (
+                    <tr key={item.orderId} className="border-t border-line">
+                      <td className="px-5 py-3 align-middle font-semibold whitespace-nowrap">{item.orderNo}</td>
+                      <td className="px-4 py-3 align-middle">
+                        <span className="block">{item.customerName}</span>
+                        <span className="block text-xs text-muted">{item.productName} · {item.quantity.toLocaleString("ko-KR")}개</span>
+                      </td>
+                      <td className="px-4 py-3 align-middle whitespace-nowrap">
+                        <span className="block">{dotDate(item.requestedDueDate)}</span>
+                        {item.plannedEndDate ? <span className="block text-xs text-muted">완료 예정 {dotDate(item.plannedEndDate)}</span> : null}
+                      </td>
+                      <td className="px-4 py-3 align-middle">
+                        {workStatus ? <Badge className={workStatusTone(workStatus.code)}>{workStatus.name}</Badge> : <span className="text-muted">-</span>}
+                      </td>
+                      <td className="px-4 py-3 align-middle">
+                        <Badge className={`whitespace-nowrap ${riskReasonTone(item.requestedDueDate, today)}`}>{riskReasonText(item.requestedDueDate, workStatus?.code, today)}</Badge>
+                      </td>
+                      <td className="px-4 py-3 align-middle"><Badge className={`whitespace-nowrap ${paymentTone(toPaymentStatus(item.paymentStatus))}`}>{paymentStatusLabel[toPaymentStatus(item.paymentStatus)]}</Badge></td>
+                      <td className="pr-4 align-middle">
+                        <Link to={orderDetailPath(item.orderId)} aria-label={`${item.orderNo} 수주 상세`} className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-canvas hover:text-primary">
+                          <ChevronRight size={18} />
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {risks.length === 0 ? <tr><td colSpan={7} className="px-5 py-8 text-center text-muted">납기 위험 수주가 없습니다.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
       {detailOrder ? (
         <ScheduleDrawer
           order={detailOrder}
@@ -201,14 +411,144 @@ export function DashboardPage() {
   );
 }
 
-function Metric({ label, value, hint }: { label: string; value: string; hint: string }) {
+function MonthPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [yearText = "", monthText = ""] = value.split("-");
+  const selectedYear = Number(yearText);
+  const selectedMonth = Number(monthText);
+  const [open, setOpen] = useState(false);
+  const [viewYear, setViewYear] = useState(selectedYear);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function close(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-label="조회 월"
+        aria-expanded={open}
+        className="flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm"
+        onClick={() => {
+          setViewYear(selectedYear);
+          setOpen((current) => !current);
+        }}
+      >
+        <Calendar size={16} className="text-muted" />
+        <span>{selectedYear}년 {selectedMonth}월</span>
+      </button>
+      {open ? (
+        <div className="absolute right-0 z-20 mt-1 w-56 rounded-lg border border-line bg-white p-3">
+          <div className="flex items-center justify-between">
+            <button type="button" className="h-8 w-8 rounded-md text-muted hover:bg-canvas" aria-label="이전 해" onClick={() => setViewYear((year) => year - 1)}>‹</button>
+            <p className="text-sm font-semibold">{viewYear}</p>
+            <button type="button" className="h-8 w-8 rounded-md text-muted hover:bg-canvas" aria-label="다음 해" onClick={() => setViewYear((year) => year + 1)}>›</button>
+          </div>
+          <div className="mt-2 grid grid-cols-4 gap-1">
+            {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => {
+              const selected = viewYear === selectedYear && month === selectedMonth;
+              return (
+                <button
+                  key={month}
+                  type="button"
+                  aria-label={`${viewYear}년 ${month}월`}
+                  className={selected ? "h-9 rounded-md bg-primary font-semibold text-white" : "h-9 rounded-md hover:bg-canvas"}
+                  onClick={() => {
+                    onChange(`${viewYear}-${String(month).padStart(2, "0")}`);
+                    setOpen(false);
+                  }}
+                >
+                  {month}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Metric({ label, value, hint, progress }: { label: string; value: string; hint: string; progress?: number }) {
+  const rate = progress === undefined ? undefined : Math.min(100, Math.max(0, progress));
   return (
     <section className="rounded-xl border border-line bg-white p-4">
       <p className="text-sm text-muted">{label}</p>
-      <p className="mt-2 text-2xl font-semibold">{value}</p>
+      <p className="mt-2 text-3xl font-semibold">{value}</p>
+      {rate !== undefined ? (
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-primary-soft" role="progressbar" aria-valuenow={rate} aria-valuemin={0} aria-valuemax={100} aria-label="계획 대비 진행률">
+          <div className="h-full rounded-full bg-primary" style={{ width: `${rate}%` }} />
+        </div>
+      ) : null}
       <p className="mt-1 text-xs text-muted">{hint}</p>
     </section>
   );
+}
+
+function groupProgress(rows: DashboardOrderStatusStatistics[]): Record<ProgressGroup, number> {
+  const counts: Record<ProgressGroup, number> = { WAITING: 0, PRODUCING: 0, SHIPPING: 0 };
+  rows.forEach((row) => {
+    const group = progressGroupOf[row.statusCode];
+    if (group && group !== "EXCLUDED") counts[group] += row.orderCount;
+  });
+  return counts;
+}
+
+function progressHint(progress: Record<ProgressGroup, number>): string {
+  return (Object.keys(progressGroupLabel) as ProgressGroup[])
+    .map((group) => `${progressGroupLabel[group]} ${countUnit(progress[group])}`)
+    .join(" · ");
+}
+
+function countUnit(count: number): string {
+  return `${count.toLocaleString("ko-KR")}건`;
+}
+
+function quantityUnit(quantity: number): string {
+  return `${quantity.toLocaleString("ko-KR")}개`;
+}
+
+const workOrderStatuses: readonly WorkOrderStatus[] = ["PREPARE", "PRODUCE", "SUSPEND", "HALT", "PACK", "PACK_DONE"];
+
+function workStatusTone(code: string): string {
+  return workOrderStatuses.includes(code as WorkOrderStatus) ? workOrderTone(code as WorkOrderStatus) : "bg-slate-100 text-muted";
+}
+
+// 백엔드 OrderPaymentStatus는 계약금 입금을 PARTIALLY_PAID로 보내므로 프론트 PARTIAL 라벨로 맞춘다.
+function toPaymentStatus(status: DashboardPaymentStatus): PaymentStatus {
+  return status === "PARTIALLY_PAID" ? "PARTIAL" : status;
+}
+
+function monthRange(today: string): { startDate: string; endDate: string } {
+  const [year, month] = today.split("-").map(Number);
+  const start = new Date(year ?? 1970, (month ?? 1) - 1, 1);
+  const end = new Date(year ?? 1970, month ?? 1, 0);
+  return { startDate: toISO(start), endDate: toISO(end) };
+}
+
+function axisMax(maxValue: number): number {
+  if (maxValue <= 0) return 4;
+  const magnitude = 10 ** Math.floor(Math.log10(maxValue));
+  const leading = maxValue / magnitude;
+  const nice = leading <= 1 ? 1 : leading <= 2 ? 2 : leading <= 4 ? 4 : leading <= 5 ? 5 : 10;
+  return nice * magnitude;
+}
+
+function dotDate(iso: string): string {
+  return iso.replaceAll("-", ".");
 }
 
 function donutColor(index: number): string {
@@ -227,6 +567,12 @@ function weekdays(today: string): string[] {
     next.setDate(date.getDate() + index);
     return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
   });
+}
+
+function weekRangeLabel(start: string, end: string): string {
+  const [, startMonth, startDay] = start.split("-");
+  const [, endMonth, endDay] = end.split("-");
+  return `${Number(startMonth)}월 ${Number(startDay)}일 ~ ${Number(endMonth)}월 ${Number(endDay)}일`;
 }
 
 function weekdayLabel(iso: string): string {

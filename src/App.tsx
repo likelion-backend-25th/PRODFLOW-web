@@ -43,7 +43,8 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/change-password" element={<ChangePasswordPage />} />
         <Route element={<RootLayout />}>
-          <Route path="/" element={<DashboardPage />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/quotations" element={<QuoteListPage />} />
           <Route path="/quotations/new" element={<OrderWriters><QuoteFormPage /></OrderWriters>} />
           <Route path="/quotations/:quotationId" element={<QuoteDetailPage />} />
@@ -72,7 +73,7 @@ export default function App() {
           <Route path="/admin" element={<AdminOnly><AdminPage /></AdminOnly>} />
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/me" element={<ProfilePage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -40,7 +40,7 @@ export function Sidebar() {
       </div>
       <p className="mt-5 px-3 text-[11px] font-semibold tracking-wide text-muted">WORKSPACE</p>
       <nav className="mt-2 flex flex-1 flex-col gap-1">
-        <Item to="/" end icon={LayoutGrid} label="대시보드" />
+        <Item to="/dashboard" end icon={LayoutGrid} label="대시보드" />
         <Item to="/quotations" icon={FileText} label="견적 관리" active={location.pathname.startsWith("/quotations")} />
         <Item to="/orders" icon={ClipboardList} label="수주 및 생산기록" badge={orders} active={location.pathname.startsWith("/work-orders") || location.pathname.startsWith("/shipping") || location.pathname.startsWith("/orders/schedule") || location.pathname.startsWith("/production-plans")} />
         <Item to="/orders" end icon={Factory} label="수주 관리" nested />
