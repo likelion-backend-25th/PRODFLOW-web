@@ -144,6 +144,10 @@ export function deleteQuotation(quotationId: number): Promise<void> {
   return apiClient.delete(`/quotations/${quotationId}`).then(() => undefined);
 }
 
+export function sendQuotation(quotationId: number): Promise<void> {
+  return apiClient.post(`/quotations/${quotationId}/send`).then(() => undefined);
+}
+
 export function previewQuotationSchedule(input: {
   items: Array<{ productId: number; quantity: number }>;
   requestedDueDate?: string;
