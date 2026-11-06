@@ -1,6 +1,6 @@
 import { Calendar, Check, ChevronDown, MapPin, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { ProductModal } from "@/components/ProductModal.tsx";
 import { QuoteSendConfirmModal, type QuotePdfPreviewStatus } from "@/components/QuoteSendConfirmModal.tsx";
@@ -12,7 +12,7 @@ import { screenHolidayDates } from "@/lib/db.ts";
 import { getClient, listClients, type ClientListItem } from "@/lib/clientApi.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount } from "@/lib/money.ts";
 import { searchProducts } from "@/lib/productApi.ts";
-import { createQuotationPdf, listDailyPlanned, listLineCapacities, previewQuotationSchedule, readPdfFailure, regenerateQuotationPdf, updateQuotationPdf, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
+import { createQuotationDraft, createQuotationPdf, deleteQuotation, getQuotation, listDailyPlanned, listLineCapacities, previewQuotationSchedule, readPdfFailure, regenerateQuotationPdf, sendQuotation, updateQuotationDraft, updateQuotationPdf, type QuotationPdfPreview, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
 import { capacityUntil } from "@/lib/schedule.ts";
 import type { Line, LineStatus } from "@/types/domain.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
@@ -21,10 +21,8 @@ import { useToastStore } from "@/stores/useToastStore.ts";
 const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
 
 function lineStatusOf(status: string): LineStatus {
-  if (status === "OPERATING") return "RUNNING";
-  if (status === "AVAILABLE") return "AVAILABLE";
-  if (status === "BROKEN") return "BROKEN";
-  return "MAINTENANCE";
+  if (status === "OPERATING" || status === "AVAILABLE" || status === "BROKEN" || status === "INSPECTION") return status;
+  return "INSPECTION";
 }
 
 function labelDate(iso: string): string {
@@ -52,6 +50,7 @@ interface ProductChoice {
 }
 
 export function QuoteFormPage() {
+  const navigate = useNavigate();
   const actor = useAuthStore((state) => state.user);
   const show = useToastStore((state) => state.show);
   const [clientId, setClientId] = useState("");
@@ -75,10 +74,15 @@ export function QuoteFormPage() {
   const [dueOpen, setDueOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [draftId, setDraftId] = useState<number | null>(null);
+  const [draftNo, setDraftNo] = useState("");
   const [preparing, setPreparing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfStatus, setPdfStatus] = useState<QuotePdfPreviewStatus>("empty");
   const [pdfMessage, setPdfMessage] = useState("");
+  const [confirmationToken, setConfirmationToken] = useState("");
+  const [previewEmail, setPreviewEmail] = useState("");
   const [schedule, setSchedule] = useState<QuotationSchedulePreview | null>(null);
   const [scheduleError, setScheduleError] = useState("");
   const [capacity, setCapacity] = useState<{ total: number; available: number } | null>(null);
@@ -173,6 +177,57 @@ export function QuoteFormPage() {
 
   const [clientMatches, setClientMatches] = useState<ClientListItem[]>([]);
   const [selectedClient, setSelectedClient] = useState<ClientListItem | null>(null);
+  const [searchParams] = useSearchParams();
+  const draftParam = Number(searchParams.get("draft"));
+  useEffect(() => {
+    if (!Number.isInteger(draftParam) || draftParam <= 0) return;
+    let ignore = false;
+    getQuotation(draftParam).then((detail) => {
+      if (ignore) return;
+      if (detail.status !== "DRAFT") {
+        show("초안만 이어서 작성할 수 있습니다.");
+        return;
+      }
+      const dueDate = detail.requestedDueDate.slice(0, 10);
+      const until = detail.validUntil.slice(0, 10);
+      setDraftId(detail.id);
+      setDraftNo(detail.quotationNo);
+      setClientId(String(detail.clientId));
+      setCompanyName(detail.clientCompany);
+      setContactName(detail.clientName);
+      setContactPhone(detail.clientPhone);
+      setContactEmail(detail.clientEmail);
+      setZipcode("");
+      setCompanyAddress(detail.clientAddress ?? "");
+      setDetailAddress("");
+      setSelectedClient({
+        id: detail.clientId,
+        company: detail.clientCompany,
+        employee: detail.clientName,
+        phone: detail.clientPhone,
+        email: detail.clientEmail,
+        totalOrder: 0,
+        totalAmount: 0,
+        recentOrderedAt: null,
+      });
+      setLines(detail.items.map((item) => ({
+        productId: String(item.productId),
+        productName: item.productName,
+        modelName: item.deviceName,
+        description: "",
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      })));
+      setVatIncluded(detail.vatIncluded);
+      setRequestedDueDate(dueDate);
+      setValidityDays(until === addDays(todayISO(), 7) ? 7 : 14);
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [draftParam, show]);
   const [productMatches, setProductMatches] = useState<ProductChoice[]>([]);
   useEffect(() => {
     const query = companyName.trim();
@@ -274,27 +329,34 @@ export function QuoteFormPage() {
     };
   }
 
+  function rememberPreview(saved: QuotationPdfPreview) {
+    setDraftId(saved.quotationId);
+    setDraftNo(saved.quotationNo);
+    setConfirmationToken(saved.confirmationToken ?? "");
+    setPreviewEmail(saved.clientEmail);
+    setPdfUrl(saved.previewUrl);
+    setPdfStatus(saved.previewUrl ? "ready" : "empty");
+  }
+
   async function openPreview() {
     setError("");
     setConfirmOpen(true);
     setPreparing(true);
     setPdfUrl(null);
     setPdfMessage("");
+    setConfirmationToken("");
+    setPreviewEmail(contactEmail.trim());
     setPdfStatus("loading");
     try {
       const input = createInput();
       const saved = draftId == null ? await createQuotationPdf(input) : await updateQuotationPdf(draftId, input);
-      setDraftId(saved.quotationId);
-      setPdfUrl(saved.previewUrl);
-      setPdfStatus(saved.previewUrl ? "ready" : "empty");
+      rememberPreview(saved);
     } catch (reason: unknown) {
       const failure = readPdfFailure(reason);
       if (failure?.quotationId != null) {
         setDraftId(failure.quotationId);
         try {
-          const saved = await regenerateQuotationPdf(failure.quotationId);
-          setPdfUrl(saved.previewUrl);
-          setPdfStatus(saved.previewUrl ? "ready" : "empty");
+          rememberPreview(await regenerateQuotationPdf(failure.quotationId));
           setPreparing(false);
           return;
         } catch (retry: unknown) {
@@ -311,49 +373,64 @@ export function QuoteFormPage() {
     }
   }
 
-  function send() {
-    if (!actor) return;
-    setError("");
-    if (!companyName.trim()) {
-      setError("회사명을 입력하세요.");
-      return;
-    }
-    if (!contactName.trim()) {
-      setError("담당자명을 입력하세요.");
-      return;
-    }
-    if (digitsOnly(contactPhone).length < 9) {
-      setError("거래처 연락처를 확인하세요.");
-      return;
-    }
-    if (!contactEmail.trim().includes("@")) {
-      setError("이메일을 확인하세요.");
-      return;
-    }
+  function formError() {
+    if (!actor) return "로그인 후 작성하세요.";
+    if (!companyName.trim()) return "회사명을 입력하세요.";
+    if (!contactName.trim()) return "담당자명을 입력하세요.";
+    if (digitsOnly(contactPhone).length < 9) return "거래처 연락처를 확인하세요.";
+    if (!contactEmail.trim().includes("@")) return "이메일을 확인하세요.";
     if (serverClientId() == null && (!zipcode.trim() || !companyAddress.trim() || !detailAddress.trim())) {
       setNewAddressOpen(true);
-      setError("우편번호, 도로명 주소, 상세 주소를 입력하세요.");
-      return;
+      return "우편번호, 도로명 주소, 상세 주소를 입력하세요.";
     }
     const nextLines = draftLines();
-    if (nextLines.length === 0) {
-      setError("품목 줄을 1개 이상 입력하세요.");
+    if (nextLines.length === 0) return "품목 줄을 1개 이상 입력하세요.";
+    if (new Set(nextLines.map((line) => line.productId)).size !== nextLines.length) return "같은 품목이 두 줄 이상 있습니다. 수량을 한 줄로 합치세요.";
+    if (nextLines.some((line) => line.quantity < 100)) return "견적 품목 수량은 100개 이상이어야 합니다.";
+    if (!requestedDueDate) return "희망 납기일을 선택하세요.";
+    if (nextLines.some((line) => !Number.isInteger(Number(line.productId)) || Number(line.productId) <= 0)) return "품목은 서버에 등록된 품목 번호여야 합니다.";
+    return "";
+  }
+
+  async function save() {
+    const message = formError();
+    if (message) {
+      setError(message);
       return;
     }
-    if (new Set(nextLines.map((line) => line.productId)).size !== nextLines.length) {
-      setError("같은 품목이 두 줄 이상 있습니다. 수량을 한 줄로 합치세요.");
-      return;
+    setSaving(true);
+    setError("");
+    try {
+      const input = createInput();
+      const saved = draftId == null ? await createQuotationDraft(input) : await updateQuotationDraft(draftId, input);
+      setDraftId(saved.id);
+      setDraftNo(saved.quotationNo);
+      show("초안이 저장되었습니다.");
+    } catch (reason: unknown) {
+      setError(readApiErrorMessage(reason));
+    } finally {
+      setSaving(false);
     }
-    if (nextLines.some((line) => line.quantity < 100)) {
-      setError("견적 품목 수량은 100개 이상이어야 합니다.");
-      return;
+  }
+
+  async function removeDraft() {
+    if (draftId == null || deleting) return;
+    if (!window.confirm("저장한 견적을 삭제할까요? 초안만 삭제되며, 삭제 후에는 되돌릴 수 없습니다.")) return;
+    setDeleting(true);
+    try {
+      await deleteQuotation(draftId);
+      show("견적을 삭제했습니다.");
+      navigate("/quotations");
+    } catch (reason: unknown) {
+      show(readApiErrorMessage(reason));
+      setDeleting(false);
     }
-    if (!requestedDueDate) {
-      setError("희망 납기일을 선택하세요.");
-      return;
-    }
-    if (nextLines.some((line) => !Number.isInteger(Number(line.productId)) || Number(line.productId) <= 0)) {
-      setError("품목은 서버에 등록된 품목 번호여야 합니다.");
+  }
+
+  function send() {
+    const message = formError();
+    if (message) {
+      setError(message);
       return;
     }
     void openPreview();
@@ -363,10 +440,13 @@ export function QuoteFormPage() {
     <div>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">견적 작성</h1>
-          <p className="mt-1 text-sm text-muted">거래처를 검색하거나 새로 입력하고, 품목과 희망 납기를 넣습니다. 배송지는 넣지 않습니다.</p>
+          <h1 className="text-2xl font-semibold">{draftNo ? `${draftNo} 이어서 작성` : "견적 작성"}</h1>
+          <p className="mt-1 text-sm text-muted">{draftNo ? "저장하거나 발송하면 이 초안의 견적번호와 ID를 유지합니다." : "거래처를 검색하거나 새로 입력하고, 품목과 희망 납기를 넣습니다. 배송지는 넣지 않습니다."}</p>
         </div>
-        <Link to="/quotations" className="inline-flex h-10 items-center rounded-lg border border-line bg-white px-4 text-sm font-semibold">견적 목록</Link>
+        <div className="flex items-center gap-2">
+          <Button tone="ghost" className="text-danger" disabled={draftId == null || deleting || saving || preparing} onClick={() => void removeDraft()}>{deleting ? "삭제 중…" : "삭제"}</Button>
+          <Link to="/quotations" className="inline-flex h-10 items-center rounded-lg border border-line bg-white px-4 text-sm font-semibold">견적 목록</Link>
+        </div>
       </div>
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div className="space-y-4">
@@ -744,7 +824,10 @@ export function QuoteFormPage() {
             <div className="flex justify-between"><dt className="text-muted">잔금 50%</dt><dd>{formatWon(total - depositTarget(total))}</dd></div>
           </dl>
           {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
-          <Button className="mt-4 w-full" disabled={preparing} onClick={send}>{preparing ? "견적서 준비 중…" : "발송 전 확인"}</Button>
+          <div className="mt-4 flex gap-2">
+            <Button tone="ghost" className="flex-1" disabled={saving || preparing || deleting} onClick={() => void save()}>{saving ? "저장 중…" : "저장"}</Button>
+            <Button className="flex-1" disabled={saving || preparing || deleting} onClick={send}>{preparing ? "견적서 준비 중…" : "견적 발송"}</Button>
+          </div>
         </aside>
       </div>
       {modalName !== null && actor ? (
@@ -763,12 +846,25 @@ export function QuoteFormPage() {
       {confirmOpen ? (
         <QuoteSendConfirmModal
           companyName={companyName.trim()}
-          email={contactEmail.trim()}
+          email={previewEmail || contactEmail.trim()}
           pdfUrl={pdfUrl}
           pdfStatus={pdfStatus}
           pdfMessage={pdfMessage}
           onClose={() => { if (!preparing) setConfirmOpen(false); }}
-          onSend={() => undefined}
+          onSend={async () => {
+            if (draftId == null || !confirmationToken) {
+              show("미리보기 확인값이 없습니다. 견적 발송을 다시 눌러 주세요.");
+              return;
+            }
+            try {
+              const sent = await sendQuotation(draftId, confirmationToken);
+              show(sent.message || "견적 발송이 완료되었습니다.");
+              navigate(`/quotations/${draftId}`);
+            } catch (reason: unknown) {
+              show(readApiErrorMessage(reason));
+              throw reason;
+            }
+          }}
         />
       ) : null}
     </div>

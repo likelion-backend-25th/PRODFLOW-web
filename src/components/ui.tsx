@@ -52,7 +52,7 @@ export function SelectField({
 }
 
 export function Badge({ className, children }: { className?: string; children: ReactNode }) {
-  return <span className={cn("inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold", className)}>{children}</span>;
+  return <span className={cn("inline-flex h-6 items-center rounded-full px-2 text-xs font-semibold leading-none", className)}>{children}</span>;
 }
 
 export function Card({ children, className }: { children: ReactNode; className?: string }) {

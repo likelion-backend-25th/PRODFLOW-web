@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { apiClient, readApiErrorMessage } from "@/lib/apiClient.ts";
-import { readDb } from "@/lib/db.ts";
+import { apiClient, readApiErrorMessage, refreshAccessToken, setAccessToken } from "@/lib/apiClient.ts";
+import { toRole, type ApiRole } from "@/lib/userApi.ts";
 import type { Role } from "@/types/domain.ts";
 
 export interface SessionUser {
@@ -14,11 +14,15 @@ export interface SessionUser {
 
 interface AuthState {
   user: SessionUser | null;
-  token: string | null;
+  temporaryPassword: string | null;
+  initialized: boolean;
+  initialize: () => Promise<void>;
   login: (email: string, password: string) => Promise<string | null>;
-  logout: () => void;
-  refresh: () => void;
-  clearPasswordChange: () => void;
+  logout: () => Promise<void>;
+  expireSession: () => void;
+  completePasswordChange: () => void;
+  setMustChangePassword: (mustChangePassword: boolean) => void;
+  updateSessionUser: (input: Pick<SessionUser, "name" | "email" | "role">) => void;
 }
 
 interface LoginResponse {
@@ -26,67 +30,105 @@ interface LoginResponse {
   userId: number;
   name: string;
   email: string;
-  role: Role | "INQUIRY_MANAGER";
+  role: ApiRole;
   mustChangePassword: boolean;
 }
 
-function toRole(role: LoginResponse["role"]): Role {
-  return role === "INQUIRY_MANAGER" ? "VIEWER" : role;
-}
-
 const SESSION_KEY = "prodflow-session";
+export const PASSWORD_CHANGED_KEY = "prodflow-password-changed";
 
-function loadSession(): Pick<AuthState, "user" | "token"> {
+function loadUser(): SessionUser | null {
   const raw = localStorage.getItem(SESSION_KEY);
-  if (!raw) return { user: null, token: null };
-  return JSON.parse(raw) as Pick<AuthState, "user" | "token">;
+  if (!raw) return null;
+  try {
+    return (JSON.parse(raw) as { user?: SessionUser }).user ?? null;
+  } catch {
+    localStorage.removeItem(SESSION_KEY);
+    return null;
+  }
 }
+
+function persistUser(user: SessionUser | null): void {
+  if (user) localStorage.setItem(SESSION_KEY, JSON.stringify({ user }));
+  else localStorage.removeItem(SESSION_KEY);
+}
+
+const storedUser = loadUser();
 
 export const useAuthStore = create<AuthState>((set, get) => ({
-  ...loadSession(),
+  user: storedUser,
+  temporaryPassword: null,
+  initialized: !storedUser,
+  initialize: async () => {
+    if (get().initialized) return;
+    try {
+      await refreshAccessToken();
+      // 임시 비밀번호는 저장하지 않으므로 최초 변경 중 새로고침하면 다시 로그인해야 한다.
+      if (get().user?.mustChangePassword && !get().temporaryPassword) {
+        sessionStorage.setItem(PASSWORD_CHANGED_KEY, "보안을 위해 임시 비밀번호로 다시 로그인해 주세요.");
+        get().expireSession();
+        return;
+      }
+      set({ initialized: true });
+    } catch {
+      get().expireSession();
+    }
+  },
   login: async (email, password) => {
     try {
       const response = await apiClient.post<LoginResponse>("/auth/login", { email, password });
       const body = response.data;
-      const next = {
-        user: {
-          id: String(body.userId),
-          name: body.name,
-          role: toRole(body.role),
-          loginId: body.email,
-          email: body.email,
-          mustChangePassword: body.mustChangePassword,
-        },
-        token: body.accessToken,
+      const user: SessionUser = {
+        id: String(body.userId),
+        name: body.name,
+        role: toRole(body.role),
+        loginId: body.email,
+        email: body.email,
+        mustChangePassword: body.mustChangePassword,
       };
-      localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-      set(next);
+      setAccessToken(body.accessToken);
+      persistUser(user);
+      set({
+        user,
+        temporaryPassword: body.mustChangePassword ? password : null,
+        initialized: true,
+      });
       return null;
     } catch (error: unknown) {
       return readApiErrorMessage(error);
     }
   },
-  logout: () => {
-    const token = get().token;
-    void apiClient.post("/auth/logout", null, { headers: token ? { Authorization: `Bearer ${token}` } : {} }).catch(() => undefined);
-    localStorage.removeItem(SESSION_KEY);
-    set({ user: null, token: null });
+  logout: async () => {
+    try {
+      await apiClient.post("/auth/logout");
+    } catch {
+      // 서버 로그아웃에 실패해도 브라우저 인증 정보는 반드시 정리한다.
+    } finally {
+      get().expireSession();
+    }
   },
-  clearPasswordChange: () => {
-    const { user, token } = get();
+  expireSession: () => {
+    setAccessToken(null);
+    persistUser(null);
+    set({ user: null, temporaryPassword: null, initialized: true });
+  },
+  completePasswordChange: () => {
+    sessionStorage.setItem(PASSWORD_CHANGED_KEY, "비밀번호가 변경되었습니다. 새 비밀번호로 다시 로그인해 주세요.");
+    get().expireSession();
+  },
+  setMustChangePassword: (mustChangePassword) => {
+    const { user } = get();
     if (!user) return;
-    const next = { user: { ...user, mustChangePassword: false }, token };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-    set(next);
+    const next = { ...user, mustChangePassword };
+    persistUser(next);
+    set({ user: next });
   },
-  refresh: () => {
-    const { user, token } = get();
-    const account = readDb().users.find((item) => item.id === user?.id);
-    if (!user || !account) return;
-    if (account.name === user.name && account.role === user.role) return;
-    const next = { user: { ...user, name: account.name, role: account.role }, token };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-    set(next);
+  updateSessionUser: (input) => {
+    const { user } = get();
+    if (!user) return;
+    const next = { ...user, ...input, loginId: input.email };
+    persistUser(next);
+    set({ user: next });
   },
 }));
 

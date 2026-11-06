@@ -55,7 +55,6 @@ const emptyDraft: Draft = { loginId: "", password: "", name: "", email: "", depa
 export function AdminPage() {
   const db = useDb();
   const me = useAuthStore((state) => state.user);
-  const refreshSession = useAuthStore((state) => state.refresh);
   const show = useToastStore((state) => state.show);
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
@@ -94,7 +93,6 @@ export function AdminPage() {
     try {
       const id = saveUser(draft, me.id);
       if (draft.id) {
-        if (draft.id === me.id) refreshSession();
         show("계정 정보를 수정했습니다.");
       } else {
         setSelectedId(id);

@@ -1,7 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { RootLayout } from "@/layouts/RootLayout.tsx";
-import { AdminPage } from "@/pages/AdminPage.tsx";
 import { AssistantPage } from "@/pages/AssistantPage.tsx";
 import { CalendarPage } from "@/pages/CalendarPage.tsx";
 import { ClientDetailPage, ClientFormPage, ClientListPage } from "@/pages/clients/ClientPages.tsx";
@@ -21,6 +20,7 @@ import { ProductionPlanPage } from "@/pages/plans/ProductionPlanPage.tsx";
 import { ProfilePage } from "@/pages/ProfilePage.tsx";
 import { ProductDetailPage, ProductFormPage, ProductListPage } from "@/pages/products/ProductPages.tsx";
 import { ShippingPage } from "@/pages/ShippingPage.tsx";
+import { UserManagementPage } from "@/pages/UserManagementPage.tsx";
 import { WorkOrderDetailPage, WorkOrderListPage } from "@/pages/work-orders/WorkOrderPages.tsx";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 
@@ -36,14 +36,28 @@ function OrderWriters({ children }: { children: ReactNode }) {
   return children;
 }
 
+function AuthBootstrap({ children }: { children: ReactNode }) {
+  const initialized = useAuthStore((state) => state.initialized);
+  const initialize = useAuthStore((state) => state.initialize);
+  useEffect(() => {
+    void initialize();
+  }, [initialize]);
+  if (!initialized) {
+    return <div className="grid min-h-screen place-items-center bg-canvas text-sm text-muted">로그인 상태를 확인하는 중입니다.</div>;
+  }
+  return children;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/change-password" element={<ChangePasswordPage />} />
-        <Route element={<RootLayout />}>
-          <Route path="/" element={<DashboardPage />} />
+      <AuthBootstrap>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/change-password" element={<ChangePasswordPage />} />
+          <Route element={<RootLayout />}>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/quotations" element={<QuoteListPage />} />
           <Route path="/quotations/new" element={<OrderWriters><QuoteFormPage /></OrderWriters>} />
           <Route path="/quotations/:quotationId" element={<QuoteDetailPage />} />
@@ -69,12 +83,13 @@ export default function App() {
           <Route path="/lines/:lineId/edit" element={<OrderWriters><LineFormPage /></OrderWriters>} />
           <Route path="/payments" element={<PaymentsPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
-          <Route path="/admin" element={<AdminOnly><AdminPage /></AdminOnly>} />
+          <Route path="/admin" element={<AdminOnly><UserManagementPage /></AdminOnly>} />
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/me" element={<ProfilePage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Route>
+        </Routes>
+      </AuthBootstrap>
     </BrowserRouter>
   );
 }

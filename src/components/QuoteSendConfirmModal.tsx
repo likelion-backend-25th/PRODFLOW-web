@@ -19,11 +19,10 @@ export function QuoteSendConfirmModal({
   pdfStatus?: QuotePdfPreviewStatus;
   pdfMessage?: string;
   onClose: () => void;
-  onSend: () => void;
+  onSend: () => void | Promise<void>;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const [sending, setSending] = useState(false);
-  const sendLinked = false;
   const preview = pdfStatus === "empty" && pdfUrl ? "ready" : pdfStatus;
 
   useEffect(() => {
@@ -64,9 +63,9 @@ export function QuoteSendConfirmModal({
   }, [onClose, sending]);
 
   function confirmSend() {
-    if (!sendLinked || sending) return;
+    if (preview !== "ready" || sending) return;
     setSending(true);
-    onSend();
+    void Promise.resolve(onSend()).finally(() => setSending(false));
   }
 
   function close() {
@@ -121,10 +120,9 @@ export function QuoteSendConfirmModal({
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-4">
           <p className="text-sm text-muted">위 견적서를 해당 이메일로 발송하시겠습니까?</p>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <p id="quote-send-pending" className="text-xs text-muted">발송 기능 연동 예정</p>
             <Button tone="ghost" disabled={sending} onClick={close}>수정</Button>
-            <Button disabled={!sendLinked || sending} aria-describedby="quote-send-pending" onClick={confirmSend}>
-              {sending ? "발송 중…" : "견적 발송"}
+            <Button disabled={preview !== "ready" || sending} onClick={confirmSend}>
+              {sending ? "발송 중…" : "발송"}
             </Button>
           </div>
         </div>
