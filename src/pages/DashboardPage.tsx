@@ -13,7 +13,7 @@ import { orderItemsText } from "@/lib/orderText.ts";
 import { factoryCapacity, isWorkingDay, occupiedOn } from "@/lib/schedule.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import type { DashboardOrderStatusStatistics, DashboardPaymentStatus, DashboardResponse, DashboardRiskType } from "@/types/dashboard.ts";
-import type { PaymentStatus, WorkOrderStatus } from "@/types/domain.ts";
+import type { OrderStatus, PaymentStatus, WorkOrderStatus } from "@/types/domain.ts";
 
 type ProgressGroup = "WAITING" | "PRODUCING" | "SHIPPING";
 
@@ -102,6 +102,27 @@ function orderDetailPath(orderId: number): string {
   return `/orders/${orderId}`;
 }
 
+// 배정은 그 날짜에 공장 용량을 먹는 수량이다. 잔여 가용은 하루 생산량에서 배정을 뺀 남은 용량이고, 완료 실적(producedQuantity)이 아니다.
+function allocationOn(slots: { date: string; quantity: number }[], iso: string): number {
+  return slots.find((slot) => slot.date === iso)?.quantity ?? 0;
+}
+
+function ScheduleJobButton({ company, product, quantity, status, onOpen }: { company: string; product: string; quantity: number; status: OrderStatus; onOpen: () => void }) {
+  return (
+    <button type="button" className="flex w-full items-center gap-2 rounded-lg bg-white p-2 text-left hover:ring-1 hover:ring-primary" onClick={onOpen}>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-semibold text-primary">{company}</span>
+        <span className="block truncate text-xs text-muted">{product}</span>
+      </span>
+      <span className="shrink-0 text-right">
+        <span className="block text-xs text-muted">배정</span>
+        <span className="block text-xs font-semibold">{quantity.toLocaleString("ko-KR")}개</span>
+        <Badge className={orderStatusTone(status)}>{orderStatusLabel[status]}</Badge>
+      </span>
+    </button>
+  );
+}
+
 export function DashboardPage() {
   const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
@@ -110,6 +131,9 @@ export function DashboardPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const today = todayISO();
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [moreDate, setMoreDate] = useState<string | null>(null);
+  const scheduleRef = useRef<HTMLElement>(null);
   const [period, setPeriod] = useState(() => monthRange(today));
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [workStatuses, setWorkStatuses] = useState<WorkStatusCode[]>([]);
@@ -143,6 +167,15 @@ export function DashboardPage() {
       ignore = true;
     };
   }, [periodKey, logout, navigate]);
+
+  useEffect(() => {
+    if (!moreDate) return;
+    function close(event: MouseEvent) {
+      if (!scheduleRef.current?.contains(event.target as Node)) setMoreDate(null);
+    }
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [moreDate]);
 
   const active = db.orders.filter((order) => order.status !== "CANCELLED");
   const days = weekdays(addDays(today, weekOffset * 7));
@@ -228,7 +261,7 @@ export function DashboardPage() {
                   <h2 className="font-semibold">월간 생산량</h2>
                   <p className="text-sm text-muted">{chartMonth}월 주차별 계획과 완료 · 단위: 개</p>
                 </div>
-                <div className="flex items-center gap-3 text-xs text-muted">
+                <div className="flex items-center gap-3 text-sm text-muted">
                   <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-primary-soft" />계획</span>
                   <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-primary" />완료</span>
                 </div>
@@ -288,52 +321,92 @@ export function DashboardPage() {
           </div>
         </>
       ) : null}
-      <section className="mt-4 rounded-xl border border-line bg-white p-5">
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="font-semibold">주간 생산 일정</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <p className="text-sm text-muted">{weekRangeLabel(days[0] ?? today, days[4] ?? today)}</p>
-              <button type="button" aria-label="이전 주" className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-white text-muted hover:bg-canvas" onClick={() => setWeekOffset((value) => value - 1)}>
+      <section ref={scheduleRef} className="mt-4 rounded-xl border border-line bg-white p-5">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-semibold">주간 생산 일정</h2>
+          <div className="flex flex-wrap items-center">
+            <p className="text-sm text-muted">{weekRangeLabel(days[0] ?? today, days[4] ?? today)}</p>
+            <div className="ml-3 flex items-center gap-2">
+              <button type="button" aria-label="이전 주" className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-white text-muted hover:bg-canvas" onClick={() => { setWeekOffset((value) => value - 1); setMoreDate(null); }}>
                 <ChevronLeft size={16} />
               </button>
-              <button type="button" className="h-8 rounded-lg bg-primary-soft px-3 text-sm font-semibold text-primary" onClick={() => setWeekOffset(0)}>오늘</button>
-              <button type="button" aria-label="다음 주" className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-white text-muted hover:bg-canvas" onClick={() => setWeekOffset((value) => value + 1)}>
+              <button type="button" className="h-8 rounded-lg bg-primary-soft px-3 text-sm font-semibold text-primary" onClick={() => { setWeekOffset(0); setSelectedDate(today); setMoreDate(null); }}>오늘</button>
+              <button type="button" aria-label="다음 주" className="grid h-8 w-8 place-items-center rounded-lg border border-line bg-white text-muted hover:bg-canvas" onClick={() => { setWeekOffset((value) => value + 1); setMoreDate(null); }}>
                 <ChevronRight size={16} />
               </button>
             </div>
+            <Link to="/calendar" className="ml-6 text-sm font-semibold text-primary">전체 일정 →</Link>
           </div>
-          <Link to="/calendar" className="text-sm font-semibold text-primary">전체 일정 →</Link>
         </div>
         <div className="grid gap-3 md:grid-cols-5">
           {days.map((iso) => {
             const jobs = active.filter((order) => order.allocations.some((slot) => slot.date === iso));
             const working = isWorkingDay(iso, holidays);
-            const left = Math.max(0, capacity - occupiedOn(iso, db.orders));
+            const planned = occupiedOn(iso, db.orders);
+            const left = Math.max(0, capacity - planned);
+            const shownCount = jobs.length > 2 ? 1 : jobs.length;
+            const hiddenCount = jobs.length - shownCount;
+            const selected = selectedDate === iso;
             return (
-              <div key={iso} className={`flex h-[220px] flex-col rounded-xl p-3 ${iso === today ? "bg-primary-soft" : "bg-canvas"}`}>
-                <p className="text-sm font-semibold">{weekdayLabel(iso)} {Number(iso.slice(8))} {iso === today ? "오늘" : ""}</p>
-                <p className="text-xs text-muted">
-                  {jobs.length}건 · {working ? <span className={left === 0 ? "font-semibold text-warning" : "font-semibold text-primary"}>가용 생산량 {left.toLocaleString("ko-KR")}개</span> : "휴무"}
-                </p>
+              <div key={iso} className={`relative flex h-[248px] flex-col rounded-xl p-3 ${selected ? "bg-primary-soft ring-2 ring-primary" : "bg-canvas"}`}>
+                <button type="button" className="flex items-center gap-1 text-left" aria-pressed={selected} onClick={() => { setSelectedDate(iso); setMoreDate(null); }}>
+                  <span className="text-sm font-semibold">{weekdayLabel(iso)}</span>
+                  <span className={iso === today ? "inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-semibold text-white" : "inline-flex h-6 w-6 items-center justify-center text-sm font-semibold"}>
+                    {Number(iso.slice(8))}
+                  </span>
+                  {iso === today ? <span className="text-xs font-semibold text-primary">오늘</span> : null}
+                </button>
+                <div className="mt-2 grid grid-cols-3 gap-1 text-center">
+                  <div className="rounded-md bg-white px-1 py-1" title="이 날짜에 일정이 있는 수주">
+                    <p className="text-xs text-muted">수주</p>
+                    <p className="text-xs font-semibold">{jobs.length}건</p>
+                  </div>
+                  <div className="rounded-md bg-white px-1 py-1" title="공장 용량을 차지하도록 이 날짜에 배정된 수량">
+                    <p className="text-xs text-muted">배정</p>
+                    <p className="text-xs font-semibold text-primary">{planned.toLocaleString("ko-KR")}개</p>
+                  </div>
+                  <div className="rounded-md bg-white px-1 py-1" title="라인 하루 생산량에서 배정 수량을 뺀 남은 용량">
+                    <p className="text-xs text-muted">잔여 가용</p>
+                    <p className={`text-xs font-semibold ${working && left === 0 ? "text-warning" : "text-ink"}`}>{working ? `${left.toLocaleString("ko-KR")}개` : "휴무"}</p>
+                  </div>
+                </div>
                 {jobs.length === 0 ? (
                   <p className="flex flex-1 items-center justify-center text-xs text-muted">등록된 일정 없음</p>
                 ) : (
-                  <ul className="mt-2 space-y-2">
-                    {jobs.slice(0, 2).map((order) => {
-                      const client = db.clients.find((item) => item.id === order.clientId);
-                      return (
-                        <li key={order.id}>
-                          <button type="button" className="w-full rounded-lg bg-white p-2 text-left hover:ring-1 hover:ring-primary" onClick={() => setDetailId(order.id)}>
-                            <span className="block font-semibold text-primary">{client?.companyName}</span>
-                            <span className="block truncate text-xs text-muted">{orderItemsText(db.products, order.lines)}</span>
-                            <Badge className={orderStatusTone(order.status)}>{orderStatusLabel[order.status]}</Badge>
-                          </button>
-                        </li>
-                      );
-                    })}
+                  <ul className="mt-2 space-y-1.5">
+                    {jobs.slice(0, shownCount).map((order) => (
+                      <li key={order.id}>
+                        <ScheduleJobButton
+                          company={db.clients.find((item) => item.id === order.clientId)?.companyName ?? ""}
+                          product={orderItemsText(db.products, order.lines)}
+                          quantity={allocationOn(order.allocations, iso)}
+                          status={order.status}
+                          onOpen={() => setDetailId(order.id)}
+                        />
+                      </li>
+                    ))}
                   </ul>
                 )}
+                {hiddenCount > 0 ? (
+                  <button type="button" className="mt-auto pt-1 text-left text-xs font-semibold text-primary" aria-expanded={moreDate === iso} onClick={() => setMoreDate((current) => current === iso ? null : iso)}>
+                    +{hiddenCount}건 더보기
+                  </button>
+                ) : null}
+                {moreDate === iso ? (
+                  <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-48 space-y-1 overflow-auto rounded-lg border border-line bg-white p-2 shadow-lg">
+                    {jobs.slice(shownCount).map((order) => (
+                      <li key={order.id}>
+                        <ScheduleJobButton
+                          company={db.clients.find((item) => item.id === order.clientId)?.companyName ?? ""}
+                          product={orderItemsText(db.products, order.lines)}
+                          quantity={allocationOn(order.allocations, iso)}
+                          status={order.status}
+                          onOpen={() => { setDetailId(order.id); setMoreDate(null); }}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             );
           })}
@@ -341,24 +414,25 @@ export function DashboardPage() {
       </section>
       {data ? (
         <section id="risks" className="mt-4 overflow-hidden rounded-xl border border-line bg-white">
-          <div className="flex items-center justify-between px-5 pt-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-5">
             <div>
               <h2 className="font-semibold">납기 위험 수주</h2>
-              <p className="text-xs text-muted">납기일이 지났거나 3일 이내인 수주</p>
+              <p className="text-sm text-muted">납기일이 지났거나 3일 이내인 수주</p>
             </div>
             <Link to="/orders" className="text-sm font-semibold text-primary">수주 목록으로 →</Link>
           </div>
           <div className="overflow-x-auto">
-            <table className="mt-3 w-full min-w-[920px] text-left text-sm">
+            <table className="mt-3 w-full min-w-[1080px] text-left text-sm">
               <thead className="bg-primary-soft/40 text-muted">
                 <tr>
                   <th className="px-5 py-3 font-medium">수주번호</th>
-                  <th className="px-4 py-3 font-medium">클라이언트 / 품목</th>
-                  <th className="px-4 py-3 font-medium">납기일</th>
-                  <th className="px-4 py-3 font-medium">작업 상태</th>
-                  <th className="px-4 py-3 font-medium">위험 사유</th>
-                  <th className="px-4 py-3 font-medium">입금 상태</th>
-                  <th className="w-14 py-3 pr-4 font-medium"><span className="sr-only">수주 상세</span></th>
+                  <th className="px-5 py-3 font-medium">거래처 / 품목</th>
+                  <th className="px-5 py-3 font-medium">납기일</th>
+                  <th className="px-5 py-3 font-medium">완료 예정일</th>
+                  <th className="px-5 py-3 font-medium">작업 상태</th>
+                  <th className="px-5 py-3 font-medium">위험 사유</th>
+                  <th className="px-5 py-3 font-medium">입금 상태</th>
+                  <th className="w-14 py-3 pr-5 font-medium"><span className="sr-only">수주 상세</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -367,22 +441,20 @@ export function DashboardPage() {
                   return (
                     <tr key={item.orderId} className="border-t border-line">
                       <td className="px-5 py-3 align-middle font-semibold whitespace-nowrap">{item.orderNo}</td>
-                      <td className="px-4 py-3 align-middle">
-                        <span className="block">{item.customerName}</span>
-                        <span className="block text-xs text-muted">{item.productName} · {item.quantity.toLocaleString("ko-KR")}개</span>
+                      <td className="px-5 py-3 align-middle">
+                        <span className="block font-semibold">{item.customerName}</span>
+                        <span className="block text-sm text-muted">{item.productName} · {item.quantity.toLocaleString("ko-KR")}개</span>
                       </td>
-                      <td className="px-4 py-3 align-middle whitespace-nowrap">
-                        <span className="block">{dotDate(item.requestedDueDate)}</span>
-                        {item.plannedEndDate ? <span className="block text-xs text-muted">완료 예정 {dotDate(item.plannedEndDate)}</span> : null}
-                      </td>
-                      <td className="px-4 py-3 align-middle">
+                      <td className="px-5 py-3 align-middle font-semibold whitespace-nowrap">{dotDate(item.requestedDueDate)}</td>
+                      <td className="px-5 py-3 align-middle whitespace-nowrap text-muted">{item.plannedEndDate ? dotDate(item.plannedEndDate) : "-"}</td>
+                      <td className="px-5 py-3 align-middle">
                         {workStatus ? <Badge className={workStatusTone(workStatus.code)}>{workStatus.name}</Badge> : <span className="text-muted">-</span>}
                       </td>
-                      <td className="px-4 py-3 align-middle">
+                      <td className="px-5 py-3 align-middle">
                         <Badge className={`whitespace-nowrap ${riskReasonTone(item.requestedDueDate, today)}`}>{riskReasonText(item.requestedDueDate, workStatus?.code, today)}</Badge>
                       </td>
-                      <td className="px-4 py-3 align-middle"><Badge className={`whitespace-nowrap ${paymentTone(toPaymentStatus(item.paymentStatus))}`}>{paymentStatusLabel[toPaymentStatus(item.paymentStatus)]}</Badge></td>
-                      <td className="pr-4 align-middle">
+                      <td className="px-5 py-3 align-middle"><Badge className={paymentTone(toPaymentStatus(item.paymentStatus))}>{paymentStatusLabel[toPaymentStatus(item.paymentStatus)]}</Badge></td>
+                      <td className="pr-5 align-middle">
                         <Link to={orderDetailPath(item.orderId)} aria-label={`${item.orderNo} 수주 상세`} className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-canvas hover:text-primary">
                           <ChevronRight size={18} />
                         </Link>
@@ -390,7 +462,7 @@ export function DashboardPage() {
                     </tr>
                   );
                 })}
-                {risks.length === 0 ? <tr><td colSpan={7} className="px-5 py-8 text-center text-muted">납기 위험 수주가 없습니다.</td></tr> : null}
+                {risks.length === 0 ? <tr><td colSpan={8} className="px-5 py-8 text-center text-muted">납기 위험 수주가 없습니다.</td></tr> : null}
               </tbody>
             </table>
           </div>
@@ -485,7 +557,7 @@ function MonthPicker({ value, onChange }: { value: string; onChange: (value: str
 function Metric({ label, value, hint, progress }: { label: string; value: string; hint: string; progress?: number }) {
   const rate = progress === undefined ? undefined : Math.min(100, Math.max(0, progress));
   return (
-    <section className="rounded-xl border border-line bg-white p-4">
+    <section className="rounded-xl border border-line bg-white p-5">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 text-3xl font-semibold">{value}</p>
       {rate !== undefined ? (
@@ -493,7 +565,7 @@ function Metric({ label, value, hint, progress }: { label: string; value: string
           <div className="h-full rounded-full bg-primary" style={{ width: `${rate}%` }} />
         </div>
       ) : null}
-      <p className="mt-1 text-xs text-muted">{hint}</p>
+      <p className="mt-1 text-sm text-muted">{hint}</p>
     </section>
   );
 }
