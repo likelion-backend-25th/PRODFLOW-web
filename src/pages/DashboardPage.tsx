@@ -157,7 +157,7 @@ export function DashboardPage() {
       if (ignore) return;
       // 토큰 갱신까지 실패한 401은 세션이 끝난 것이므로 로그인으로 돌려보낸다.
       if (apiStatus(reason) === 401) {
-        logout();
+        void logout();
         navigate("/login", { replace: true });
         return;
       }

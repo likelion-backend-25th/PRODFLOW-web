@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { Bell } from "lucide-react";
 import { Link, Navigate, Outlet, useLocation } from "react-router";
-import { crumbs, Sidebar } from "@/components/layout/Sidebar.tsx";
+import { Sidebar } from "@/components/layout/Sidebar.tsx";
+import { crumbs } from "@/lib/crumbs.ts";
 import { useDb } from "@/lib/db.ts";
 import { expireUnpaidOrders } from "@/lib/workflow.ts";
 import { todayISO } from "@/lib/dates.ts";
@@ -11,8 +12,6 @@ import { useToastStore } from "@/stores/useToastStore.ts";
 
 export function RootLayout() {
   const user = useAuthStore((state) => state.user);
-  const logout = useAuthStore((state) => state.logout);
-  const refresh = useAuthStore((state) => state.refresh);
   const message = useToastStore((state) => state.message);
   const show = useToastStore((state) => state.show);
   const clear = useToastStore((state) => state.clear);
@@ -20,24 +19,13 @@ export function RootLayout() {
   const db = useDb();
   const today = todayISO();
   const alerts = db.orders.filter((order) => delayOf(order, activeWorkOrder(db.workOrders, order.id), today)).length;
-  const account = db.users.find((item) => item.id === user?.id);
-  const revoked = Boolean(account) && account?.status !== "ACTIVE";
 
   useEffect(() => {
     const expired = expireUnpaidOrders();
     if (expired > 0) show(`계약금 입금 마감일이 지난 대기 수주 ${expired}건을 취소하고 일정을 되돌렸습니다.`);
   }, [show]);
 
-  useEffect(() => {
-    if (revoked) {
-      logout();
-      show("계정이 비활성화되어 로그아웃했습니다. 최고 관리자에게 문의하세요.");
-    } else if (account && user && (account.role !== user.role || account.name !== user.name)) {
-      refresh();
-    }
-  }, [revoked, account, user, logout, refresh, show]);
-
-  if (!user || revoked) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to="/login" replace />;
   if (user.mustChangePassword) return <Navigate to="/change-password" replace />;
   const trail = crumbs(pathname);
 
