@@ -122,7 +122,7 @@ export function QuoteSendConfirmModal({
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button tone="ghost" disabled={sending} onClick={close}>수정</Button>
             <Button disabled={preview !== "ready" || sending} onClick={confirmSend}>
-              {sending ? "발송 중…" : "견적 발송"}
+              {sending ? "발송 중…" : "발송"}
             </Button>
           </div>
         </div>

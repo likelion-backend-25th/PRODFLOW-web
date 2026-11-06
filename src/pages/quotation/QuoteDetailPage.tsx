@@ -8,7 +8,7 @@ import { parseISO, todayISO } from "@/lib/dates.ts";
 import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { quotationStatusLabel, quotationStatusTone } from "@/lib/labels.ts";
 import { formatWon } from "@/lib/money.ts";
-import { deleteQuotation, getQuotation, previewQuotationReschedule, updateQuotationSchedule, type QuotationDetail, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
+import { approveQuotation, cancelQuotation, deleteQuotation, getQuotation, previewQuotationReschedule, rejectQuotation, updateQuotationSchedule, type QuotationDetail, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
@@ -25,6 +25,7 @@ export function QuoteDetailPage() {
   const [dueOpen, setDueOpen] = useState(false);
   const [savingDue, setSavingDue] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [changingStatus, setChangingStatus] = useState(false);
   const [scheduleResult, setScheduleResult] = useState<QuotationSchedulePreview | string | null>(null);
   const dueRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -86,8 +87,29 @@ export function QuoteDetailPage() {
   const dueToday = quote.estimatedDueDate.slice(0, 10) === todayISO();
   const quotationKey = quote.id;
 
-  function unsupportedStatus() {
-    show("승인, 거절, 취소는 아직 견적 API에 없습니다.");
+  async function changeStatus(action: "approve" | "reject" | "cancel") {
+    if (changingStatus) return;
+    const prompt = action === "approve"
+      ? "이 견적을 승인할까요?"
+      : action === "reject"
+        ? "이 견적을 거절할까요?"
+        : "이 견적을 취소할까요? 연결된 수주는 취소되지 않습니다.";
+    if (!window.confirm(prompt)) return;
+    setChangingStatus(true);
+    try {
+      const next = action === "approve"
+        ? await approveQuotation(quotationKey)
+        : action === "reject"
+          ? await rejectQuotation(quotationKey)
+          : await cancelQuotation(quotationKey);
+      setQuote(next);
+      setDue(next.requestedDueDate);
+      show(action === "approve" ? "견적을 승인했습니다." : action === "reject" ? "견적을 거절했습니다." : "견적을 취소했습니다.");
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    } finally {
+      setChangingStatus(false);
+    }
   }
 
   async function removeDraft() {
@@ -141,8 +163,8 @@ export function QuoteDetailPage() {
         <div className="flex flex-wrap items-center gap-2">
           {canEditDraft ? <Link to={`/quotations/new?draft=${quote.id}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">이어서 작성</Link> : null}
           {canEditDraft ? <Button tone="ghost" className="text-danger" disabled={deleting} onClick={() => void removeDraft()}>{deleting ? "삭제 중…" : "초안 삭제"}</Button> : null}
-          {canChange ? <Button onClick={unsupportedStatus}>승인</Button> : null}
-          {canChange ? <Button tone="ghost" onClick={unsupportedStatus}>거절</Button> : null}
+          {canChange ? <Button disabled={changingStatus} onClick={() => void changeStatus("approve")}>승인</Button> : null}
+          {canChange ? <Button tone="ghost" disabled={changingStatus} onClick={() => void changeStatus("reject")}>거절</Button> : null}
           {quote.status === "APPROVED" && !hasOrder && canManageOrders(role) ? <Link to={`/orders/new?quotationId=${quote.id}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">수주 등록</Link> : null}
           {hasOrder ? <Link to={`/orders/${quote.customerOrderId}`} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">수주 {quote.orderNo}</Link> : null}
           {quote.status === "EXPIRED" && canManageOrders(role) ? <Link to="/quotations/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">새 견적 작성</Link> : null}
@@ -221,7 +243,7 @@ export function QuoteDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             {dueToday ? <span className="rounded-full bg-primary-soft px-3 py-1 text-xs font-semibold text-primary">오늘 납기</span> : null}
             {canChange ? <Button tone="ghost" onClick={() => { setDue(quote.requestedDueDate); setOpen((value) => !value); }}>{open ? "재산정 닫기" : "납기 재산정"}</Button> : null}
-            {canChange ? <Button tone="ghost" className="text-danger" onClick={unsupportedStatus}>취소</Button> : null}
+            {canChange ? <Button tone="ghost" className="text-danger" disabled={changingStatus} onClick={() => void changeStatus("cancel")}>취소</Button> : null}
           </div>
         </div>
         <dl className="mt-4 grid gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
