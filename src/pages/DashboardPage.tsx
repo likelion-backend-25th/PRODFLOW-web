@@ -1,19 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
-import { ScheduleDrawer } from "@/components/ScheduleDrawer.tsx";
 import { Badge } from "@/components/ui.tsx";
 import { apiStatus, readApiErrorMessage } from "@/lib/apiClient.ts";
 import { fetchDashboard, fetchWorkOrderStatusCodes, type WorkStatusCode } from "@/lib/dashboardApi.ts";
-import { useDb } from "@/lib/db.ts";
 import { addDays, parseISO, toISO, todayISO } from "@/lib/dates.ts";
-import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone, workOrderTone } from "@/lib/labels.ts";
+import { paymentStatusLabel, paymentTone, workOrderStatusLabel, workOrderTone } from "@/lib/labels.ts";
 import { formatWon } from "@/lib/money.ts";
-import { orderItemsText } from "@/lib/orderText.ts";
-import { factoryCapacity, isWorkingDay, occupiedOn } from "@/lib/schedule.ts";
+import { asWorkOrderStatus, fetchProductionCalender, schedulesOnDate, type ProductionSchedule } from "@/lib/productionCalenderApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import type { DashboardOrderStatusStatistics, DashboardPaymentStatus, DashboardResponse, DashboardRiskType } from "@/types/dashboard.ts";
-import type { OrderStatus, PaymentStatus, WorkOrderStatus } from "@/types/domain.ts";
+import type { PaymentStatus, WorkOrderStatus } from "@/types/domain.ts";
 
 type ProgressGroup = "WAITING" | "PRODUCING" | "SHIPPING";
 
@@ -102,33 +99,27 @@ function orderDetailPath(orderId: number): string {
   return `/orders/${orderId}`;
 }
 
-// 배정은 그 날짜에 공장 용량을 먹는 수량이다. 잔여 가용은 하루 생산량에서 배정을 뺀 남은 용량이고, 완료 실적(producedQuantity)이 아니다.
-function allocationOn(slots: { date: string; quantity: number }[], iso: string): number {
-  return slots.find((slot) => slot.date === iso)?.quantity ?? 0;
-}
-
-function ScheduleJobButton({ company, product, quantity, status, onOpen }: { company: string; product: string; quantity: number; status: OrderStatus; onOpen: () => void }) {
+function ScheduleJobLink({ job }: { job: ProductionSchedule }) {
+  const status = asWorkOrderStatus(job.status);
   return (
-    <button type="button" className="flex w-full items-center gap-2 rounded-lg bg-white p-2 text-left hover:ring-1 hover:ring-primary" onClick={onOpen}>
+    <Link to={`/work-orders/${job.workOrderId}`} className="flex w-full items-center gap-2 rounded-lg bg-white p-2 text-left hover:ring-1 hover:ring-primary">
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-primary">{company}</span>
-        <span className="block truncate text-xs text-muted">{product}</span>
+        <span className="block truncate text-sm font-semibold text-primary">{job.workNo}</span>
+        <span className="block truncate text-xs text-muted">{job.orderNo} · {job.productName}</span>
       </span>
       <span className="shrink-0 text-right">
         <span className="block text-xs text-muted">배정</span>
-        <span className="block text-xs font-semibold">{quantity.toLocaleString("ko-KR")}개</span>
-        <Badge className={orderStatusTone(status)}>{orderStatusLabel[status]}</Badge>
+        <span className="block text-xs font-semibold">{job.quantity.toLocaleString("ko-KR")}개</span>
+        {status ? <Badge className={workOrderTone(status)}>{workOrderStatusLabel[status]}</Badge> : <Badge>{job.status}</Badge>}
       </span>
-    </button>
+    </Link>
   );
 }
 
 export function DashboardPage() {
-  const db = useDb();
   const role = useAuthStore((state) => state.user?.role);
   const logout = useAuthStore((state) => state.logout);
   const navigate = useNavigate();
-  const [detailId, setDetailId] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const today = todayISO();
   const [selectedDate, setSelectedDate] = useState(today);
@@ -138,6 +129,8 @@ export function DashboardPage() {
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [workStatuses, setWorkStatuses] = useState<WorkStatusCode[]>([]);
   const [result, setResult] = useState<{ key: string; error: string | null } | null>(null);
+  const [schedules, setSchedules] = useState<ProductionSchedule[] | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const periodKey = `${period.startDate}~${period.endDate}`;
   const loading = result?.key !== periodKey;
   const error = result?.key === periodKey ? result.error : null;
@@ -169,6 +162,23 @@ export function DashboardPage() {
   }, [periodKey, logout, navigate]);
 
   useEffect(() => {
+    let ignore = false;
+    void fetchProductionCalender().then((rows) => {
+      if (ignore) return;
+      setSchedules(rows);
+      setScheduleError(null);
+    }).catch((reason: unknown) => {
+      if (ignore) return;
+      if (apiStatus(reason) === 401) return;
+      setSchedules([]);
+      setScheduleError(readApiErrorMessage(reason));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!moreDate) return;
     function close(event: MouseEvent) {
       if (!scheduleRef.current?.contains(event.target as Node)) setMoreDate(null);
@@ -177,11 +187,8 @@ export function DashboardPage() {
     return () => document.removeEventListener("mousedown", close);
   }, [moreDate]);
 
-  const active = db.orders.filter((order) => order.status !== "CANCELLED");
   const days = weekdays(addDays(today, weekOffset * 7));
-  const holidays = db.holidays.map((holiday) => holiday.date);
-  const capacity = factoryCapacity(db.lines);
-  const detailOrder = detailId ? db.orders.find((order) => order.id === detailId) : undefined;
+  const scheduleRows = schedules ?? [];
 
   const risks = data?.deliveryRiskStatistics.items ?? [];
   const workStatusById = new Map(workStatuses.map((code) => [code.id, code]));
@@ -244,15 +251,22 @@ export function DashboardPage() {
             <Metric
               label="이번 달 누적 생산량"
               value={quantityUnit(data.summary.completedQuantity)}
-              hint={`계획 ${quantityUnit(data.summary.plannedQuantity)} · 진행률 ${data.summary.productionProgressRate}%`}
-              progress={data.summary.productionProgressRate}
+              hint={data.summary.plannedQuantity === 0
+                ? `계획 ${quantityUnit(data.summary.plannedQuantity)}`
+                : `계획 ${quantityUnit(data.summary.plannedQuantity)} · 진행률 ${data.summary.productionProgressRate}%`}
+              meter={data.summary.plannedQuantity === 0 ? undefined : <RateBar label="계획 대비 진행률" rate={data.summary.productionProgressRate} />}
             />
             <Metric
               label="납기 이행률"
               value={data.deliveryPerformance.totalOrderCount === 0 ? "-" : `${data.deliveryPerformance.onTimeDeliveryRate}%`}
               hint={`정시 납품 ${countUnit(data.deliveryPerformance.onTimeOrderCount)} / 전체 대상 ${countUnit(data.deliveryPerformance.totalOrderCount)}`}
+              meter={data.deliveryPerformance.totalOrderCount === 0 ? undefined : <RateBar label="납기 이행률" rate={data.deliveryPerformance.onTimeDeliveryRate} />}
             />
-            <Metric label="진행 중인 수주" value={countUnit(inProgress)} hint={progressHint(progress)} />
+            <Metric
+              label="진행 중인 수주"
+              value={countUnit(inProgress)}
+              meter={<StatusSplit counts={progress} />}
+            />
           </div>
           <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_0.8fr]">
             <section className="rounded-xl border border-line bg-white p-5">
@@ -338,17 +352,17 @@ export function DashboardPage() {
             <Link to="/calendar" className="ml-6 text-sm font-semibold text-primary">전체 일정 →</Link>
           </div>
         </div>
+        {schedules == null ? <p className="mb-3 text-sm text-muted">생산 일정을 불러오는 중입니다.</p> : null}
+        {scheduleError ? <p className="mb-3 text-sm text-danger">{scheduleError}</p> : null}
         <div className="grid gap-3 md:grid-cols-5">
           {days.map((iso) => {
-            const jobs = active.filter((order) => order.allocations.some((slot) => slot.date === iso));
-            const working = isWorkingDay(iso, holidays);
-            const planned = occupiedOn(iso, db.orders);
-            const left = Math.max(0, capacity - planned);
-            const shownCount = jobs.length > 2 ? 1 : jobs.length;
+            const jobs = schedulesOnDate(scheduleRows, iso);
+            const assigned = jobs.reduce((sum, job) => sum + job.quantity, 0);
+            const shownCount = Math.min(jobs.length, 2);
             const hiddenCount = jobs.length - shownCount;
             const selected = selectedDate === iso;
             return (
-              <div key={iso} className={`relative flex h-[248px] flex-col rounded-xl p-3 ${selected ? "bg-primary-soft ring-2 ring-primary" : "bg-canvas"}`}>
+              <div key={iso} className={`relative flex h-[300px] flex-col rounded-xl p-3 ${selected ? "bg-primary-soft ring-2 ring-primary" : "bg-canvas"}`}>
                 <button type="button" className="flex items-center gap-1 text-left" aria-pressed={selected} onClick={() => { setSelectedDate(iso); setMoreDate(null); }}>
                   <span className="text-sm font-semibold">{weekdayLabel(iso)}</span>
                   <span className={iso === today ? "inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-semibold text-white" : "inline-flex h-6 w-6 items-center justify-center text-sm font-semibold"}>
@@ -356,53 +370,37 @@ export function DashboardPage() {
                   </span>
                   {iso === today ? <span className="text-xs font-semibold text-primary">오늘</span> : null}
                 </button>
-                <div className="mt-2 grid grid-cols-3 gap-1 text-center">
-                  <div className="rounded-md bg-white px-1 py-1" title="이 날짜에 일정이 있는 수주">
-                    <p className="text-xs text-muted">수주</p>
+                <div className="mt-2 grid grid-cols-2 gap-1 text-center">
+                  <div className="rounded-md bg-white px-1 py-1" title="이 날짜의 생산계획에 있는 작업지시">
+                    <p className="text-xs text-muted">작업지시</p>
                     <p className="text-xs font-semibold">{jobs.length}건</p>
                   </div>
-                  <div className="rounded-md bg-white px-1 py-1" title="공장 용량을 차지하도록 이 날짜에 배정된 수량">
+                  <div className="rounded-md bg-white px-1 py-1" title="이 날짜 생산계획 수량의 합">
                     <p className="text-xs text-muted">배정</p>
-                    <p className="text-xs font-semibold text-primary">{planned.toLocaleString("ko-KR")}개</p>
-                  </div>
-                  <div className="rounded-md bg-white px-1 py-1" title="라인 하루 생산량에서 배정 수량을 뺀 남은 용량">
-                    <p className="text-xs text-muted">잔여 가용</p>
-                    <p className={`text-xs font-semibold ${working && left === 0 ? "text-warning" : "text-ink"}`}>{working ? `${left.toLocaleString("ko-KR")}개` : "휴무"}</p>
+                    <p className="text-xs font-semibold text-primary">{assigned.toLocaleString("ko-KR")}개</p>
                   </div>
                 </div>
                 {jobs.length === 0 ? (
                   <p className="flex flex-1 items-center justify-center text-xs text-muted">등록된 일정 없음</p>
                 ) : (
                   <ul className="mt-2 space-y-1.5">
-                    {jobs.slice(0, shownCount).map((order) => (
-                      <li key={order.id}>
-                        <ScheduleJobButton
-                          company={db.clients.find((item) => item.id === order.clientId)?.companyName ?? ""}
-                          product={orderItemsText(db.products, order.lines)}
-                          quantity={allocationOn(order.allocations, iso)}
-                          status={order.status}
-                          onOpen={() => setDetailId(order.id)}
-                        />
+                    {jobs.slice(0, shownCount).map((job) => (
+                      <li key={job.workOrderId}>
+                        <ScheduleJobLink job={job} />
                       </li>
                     ))}
                   </ul>
                 )}
                 {hiddenCount > 0 ? (
-                  <button type="button" className="mt-auto pt-1 text-left text-xs font-semibold text-primary" aria-expanded={moreDate === iso} onClick={() => setMoreDate((current) => current === iso ? null : iso)}>
+                  <button type="button" className="mt-auto self-end pt-1.5 text-xs font-semibold text-primary" aria-expanded={moreDate === iso} onClick={() => setMoreDate((current) => current === iso ? null : iso)}>
                     +{hiddenCount}건 더보기
                   </button>
                 ) : null}
                 {moreDate === iso ? (
                   <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-48 space-y-1 overflow-auto rounded-lg border border-line bg-white p-2 shadow-lg">
-                    {jobs.slice(shownCount).map((order) => (
-                      <li key={order.id}>
-                        <ScheduleJobButton
-                          company={db.clients.find((item) => item.id === order.clientId)?.companyName ?? ""}
-                          product={orderItemsText(db.products, order.lines)}
-                          quantity={allocationOn(order.allocations, iso)}
-                          status={order.status}
-                          onOpen={() => { setDetailId(order.id); setMoreDate(null); }}
-                        />
+                    {jobs.slice(shownCount).map((job) => (
+                      <li key={job.workOrderId}>
+                        <ScheduleJobLink job={job} />
                       </li>
                     ))}
                   </ul>
@@ -467,17 +465,6 @@ export function DashboardPage() {
             </table>
           </div>
         </section>
-      ) : null}
-      {detailOrder ? (
-        <ScheduleDrawer
-          order={detailOrder}
-          clients={db.clients}
-          products={db.products}
-          users={db.users}
-          workOrders={db.workOrders}
-          today={today}
-          onClose={() => setDetailId(null)}
-        />
       ) : null}
     </div>
   );
@@ -554,19 +541,54 @@ function MonthPicker({ value, onChange }: { value: string; onChange: (value: str
   );
 }
 
-function Metric({ label, value, hint, progress }: { label: string; value: string; hint: string; progress?: number }) {
-  const rate = progress === undefined ? undefined : Math.min(100, Math.max(0, progress));
+function Metric({ label, value, hint, meter }: { label: string; value: string; hint?: string; meter?: ReactNode }) {
   return (
     <section className="rounded-xl border border-line bg-white p-5">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 text-3xl font-semibold">{value}</p>
-      {rate !== undefined ? (
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-primary-soft" role="progressbar" aria-valuenow={rate} aria-valuemin={0} aria-valuemax={100} aria-label="계획 대비 진행률">
-          <div className="h-full rounded-full bg-primary" style={{ width: `${rate}%` }} />
+      {hint ? <p className="mt-1 text-sm text-muted">{hint}</p> : null}
+      {meter}
+    </section>
+  );
+}
+
+function RateBar({ label, rate }: { label: string; rate: number }) {
+  const width = Math.min(100, Math.max(0, rate));
+  return (
+    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-primary-soft" role="progressbar" aria-valuenow={width} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
+      <div className="h-full rounded-full bg-primary" style={{ width: `${width}%` }} />
+    </div>
+  );
+}
+
+const splitColor: Record<ProgressGroup, string> = {
+  WAITING: "#D9A441",
+  PRODUCING: "#12786F",
+  SHIPPING: "#8B70B5",
+};
+
+function StatusSplit({ counts }: { counts: Record<ProgressGroup, number> }) {
+  const groups = Object.keys(progressGroupLabel) as ProgressGroup[];
+  const total = groups.reduce((sum, group) => sum + counts[group], 0);
+  const shown = groups.filter((group) => counts[group] > 0);
+  return (
+    <div className="mt-3">
+      {total > 0 ? (
+        <div className="flex h-1.5 overflow-hidden rounded-full" role="img" aria-label={progressHint(counts)}>
+          {shown.map((group) => (
+            <div key={group} style={{ width: `${(counts[group] / total) * 100}%`, backgroundColor: splitColor[group] }} title={`${progressGroupLabel[group]} ${countUnit(counts[group])}`} />
+          ))}
         </div>
       ) : null}
-      <p className="mt-1 text-sm text-muted">{hint}</p>
-    </section>
+      <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted">
+        {groups.map((group) => (
+          <li key={group} className="flex items-center gap-1.5">
+            <span className="h-2 w-2 shrink-0 rounded-sm" style={{ backgroundColor: splitColor[group] }} />
+            {progressGroupLabel[group]} {countUnit(counts[group])}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

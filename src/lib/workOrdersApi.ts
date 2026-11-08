@@ -45,6 +45,8 @@ export interface DailyPlanRow {
   assignedId: number;
   assignedName: string;
   status: WorkOrderStatus;
+  plannedStartDate: string;
+  plannedEndDate: string;
 }
 
 export interface WorkOrderPage {
@@ -112,6 +114,8 @@ export async function fetchDailyPlans(): Promise<DailyPlanRow[]> {
     assignedId: detail.assignedId,
     assignedName: detail.assignedName,
     status: detail.status,
+    plannedStartDate: detail.plannedStartDate,
+    plannedEndDate: detail.plannedEndDate,
   })));
 }
 

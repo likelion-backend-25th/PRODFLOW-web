@@ -18,6 +18,7 @@ import {
   type LineWorkOrder,
 } from "@/lib/linesApi.ts";
 import { lineStatusLabel, lineTone, workOrderStatusLabel, workOrderTone, workProductionDone } from "@/lib/labels.ts";
+import { notifyNotificationsChanged } from "@/lib/notificationApi.ts";
 import { fetchWorkOrders } from "@/lib/workOrdersApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
@@ -265,6 +266,8 @@ export function LineDetailPage() {
     try {
       await changeLineStatus(line!.lineId, status);
       show("라인 상태를 변경했습니다.");
+      // 상태 변경 성공이 알림 생성을 뜻하지는 않는다. 종 아이콘이 unread-count를 다시 읽는다.
+      notifyNotificationsChanged();
       setReloadKey((value) => value + 1);
     } catch (error: unknown) {
       show(readApiErrorMessage(error));
