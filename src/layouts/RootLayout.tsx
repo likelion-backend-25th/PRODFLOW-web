@@ -1,12 +1,9 @@
 import { useEffect } from "react";
-import { Bell } from "lucide-react";
-import { Link, Navigate, Outlet, useLocation } from "react-router";
+import { Navigate, Outlet, useLocation } from "react-router";
+import { NotificationBell } from "@/components/NotificationBell.tsx";
 import { Sidebar } from "@/components/layout/Sidebar.tsx";
 import { crumbs } from "@/lib/crumbs.ts";
-import { useDb } from "@/lib/db.ts";
 import { expireUnpaidOrders } from "@/lib/workflow.ts";
-import { todayISO } from "@/lib/dates.ts";
-import { activeWorkOrder, delayOf } from "@/lib/delay.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
@@ -16,9 +13,6 @@ export function RootLayout() {
   const show = useToastStore((state) => state.show);
   const clear = useToastStore((state) => state.clear);
   const { pathname } = useLocation();
-  const db = useDb();
-  const today = todayISO();
-  const alerts = db.orders.filter((order) => delayOf(order, activeWorkOrder(db.workOrders, order.id), today)).length;
 
   useEffect(() => {
     const expired = expireUnpaidOrders();
@@ -44,8 +38,7 @@ export function RootLayout() {
           </p>
           <div className="flex items-center gap-4 text-sm text-muted">
             <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-success" />내부 네트워크 연결됨</span>
-            <Bell size={16} />
-            <Link to="/" className="rounded-full bg-primary-soft px-2 py-1 text-xs font-semibold text-primary" title="지연·위험 수주">알림 {alerts}</Link>
+            <NotificationBell />
           </div>
         </header>
         <main className="flex-1 px-6 py-6">
