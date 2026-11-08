@@ -9,8 +9,10 @@ import {
   changeLineStatus,
   createLine,
   fetchLine,
+  fetchLineCapacityHistory,
   fetchLines,
   updateLine,
+  type LineCapacityLog,
   type LineDetail,
   type LineListItem,
   type LineWorkOrder,
@@ -200,6 +202,7 @@ export function LineDetailPage() {
   const [line, setLine] = useState<LineDetail | null>(null);
   const [missing, setMissing] = useState(false);
   const [workOrderIds, setWorkOrderIds] = useState<Record<string, number>>({});
+  const [capacityLogs, setCapacityLogs] = useState<LineCapacityLog[] | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -210,6 +213,7 @@ export function LineDetailPage() {
     }
     let ignore = false;
     setMissing(false);
+    setCapacityLogs(null);
     void fetchLines().then((response) => {
       if (!ignore) setLines(response.lines);
     }).catch(() => {
@@ -221,6 +225,13 @@ export function LineDetailPage() {
     }).catch((error: unknown) => {
       if (ignore) return;
       setMissing(true);
+      show(readApiErrorMessage(error));
+    });
+    void fetchLineCapacityHistory(id).then((logs) => {
+      if (!ignore) setCapacityLogs(logs);
+    }).catch((error: unknown) => {
+      if (ignore) return;
+      setCapacityLogs([]);
       show(readApiErrorMessage(error));
     });
     void fetchWorkOrders({ lineId: id, page: 0, size: 100 }).then((page) => {
@@ -419,7 +430,10 @@ export function LineDetailPage() {
       </section>
       <section className="rounded-xl border border-line bg-white px-5 py-4">
         <h2 className="text-sm font-semibold">하루 생산량 변경 이력</h2>
-        {line.capacityLogs.length === 0 ? <p className="mt-3 text-sm text-muted">변경 이력이 없습니다.</p> : (
+        <p className="mt-1 text-xs text-muted">최근 3건입니다.</p>
+        {capacityLogs == null ? <p className="mt-3 text-sm text-muted">변경 이력을 불러오는 중입니다.</p> : null}
+        {capacityLogs != null && capacityLogs.length === 0 ? <p className="mt-3 text-sm text-muted">변경 이력이 없습니다.</p> : null}
+        {capacityLogs != null && capacityLogs.length > 0 ? (
           <div className="mt-3 overflow-x-auto">
             <table className={tableClass}>
               <thead>
@@ -432,7 +446,7 @@ export function LineDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {line.capacityLogs.map((log) => (
+                {capacityLogs.map((log) => (
                   <tr key={`${log.changedAt}-${log.afterCapacity}`}>
                     <td>{localDateTime(log.changedAt)}</td>
                     <td>{log.beforeCapacity.toLocaleString("ko-KR")}개</td>
@@ -444,7 +458,7 @@ export function LineDetailPage() {
               </tbody>
             </table>
           </div>
-        )}
+        ) : null}
       </section>
     </div>
   );
