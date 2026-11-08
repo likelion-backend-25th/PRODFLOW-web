@@ -10,8 +10,10 @@ import { workOrderStatusLabel, workOrderTone, workProductionDone } from "@/lib/l
 import {
   changeWorkOrderStatus,
   fetchWorkOrder,
+  fetchWorkOrderHistory,
   fetchWorkOrders,
   updateWorkOrder,
+  type WorkOrderChangeHistory,
   type WorkOrderDetail,
   type WorkOrderRow,
 } from "@/lib/workOrdersApi.ts";
@@ -334,6 +336,8 @@ function WorkOrderEditor({ workOrderId, onChanged }: { workOrderId: string; onCh
   const [pending, setPending] = useState(false);
   const [haltReasonOpen, setHaltReasonOpen] = useState(false);
   const [reason, setReason] = useState("");
+  const [histories, setHistories] = useState<WorkOrderChangeHistory[] | null>(null);
+  const [historyKey, setHistoryKey] = useState(0);
 
   useEffect(() => {
     const id = Number(workOrderId);
@@ -369,6 +373,23 @@ function WorkOrderEditor({ workOrderId, onChanged }: { workOrderId: string; onCh
       ignore = true;
     };
   }, [workOrderId, show, user?.role]);
+
+  useEffect(() => {
+    const id = Number(workOrderId);
+    if (!Number.isInteger(id)) return;
+    let ignore = false;
+    setHistories(null);
+    void fetchWorkOrderHistory(id).then((rows) => {
+      if (!ignore) setHistories(rows);
+    }).catch((error: unknown) => {
+      if (ignore) return;
+      setHistories([]);
+      show(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [workOrderId, historyKey, show]);
 
   if (missing) return <p className="mt-4 text-muted">작업지시를 찾을 수 없습니다.</p>;
   if (!workOrder || !user) return <p className="mt-4 text-muted">작업지시를 불러오는 중입니다.</p>;
@@ -442,7 +463,9 @@ function WorkOrderEditor({ workOrderId, onChanged }: { workOrderId: string; onCh
       show("변경된 라인 또는 담당자가 없습니다.");
       return;
     }
-    void run(() => updateWorkOrder(workOrder!.id, body), "저장했습니다.");
+    void run(() => updateWorkOrder(workOrder!.id, body), "저장했습니다.").then((saved) => {
+      if (saved) setHistoryKey((value) => value + 1);
+    });
   }
 
   return (
@@ -546,6 +569,42 @@ function WorkOrderEditor({ workOrderId, onChanged }: { workOrderId: string; onCh
         ) : null}
         {!mine && workOrder.status === "PREPARE" && user.role !== "SUPER_ADMIN" ? <p className="mt-2 text-xs text-muted">배정된 담당자만 작업을 시작할 수 있습니다.</p> : null}
         {canChangeStatus && workOrder.status === "PREPARE" && !startReady ? <p className="mt-2 text-xs text-muted">생산 시작 예정일 {workOrder.plannedStartDate}부터 작업을 시작할 수 있습니다.</p> : null}
+        <div className="mt-4 border-t border-line pt-3">
+          <p className="text-xs font-semibold text-muted">변경 이력</p>
+          {histories == null ? <p className="mt-2 text-xs text-muted">불러오는 중입니다.</p> : null}
+          {histories != null && histories.length === 0 ? <p className="mt-2 text-xs text-muted">변경 이력이 없습니다.</p> : null}
+          {histories != null && histories.length > 0 ? (
+            <table className="mt-2 w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-line text-muted">
+                  <th className="py-1.5 pr-3 font-medium">변경한 사람</th>
+                  <th className="py-1.5 pr-3 font-medium">변경 전</th>
+                  <th className="py-1.5 font-medium">변경 후</th>
+                </tr>
+              </thead>
+              <tbody>
+                {histories.map((item, index) => {
+                  const lineChanged = item.previousLineName !== item.newLineName;
+                  const assigneeChanged = item.previousUserName !== item.newUserName;
+                  if (!lineChanged && !assigneeChanged) return null;
+                  return (
+                    <tr key={`${item.changedByName}-${item.previousLineName}-${item.newLineName}-${item.previousUserName}-${item.newUserName}-${index}`} className="border-b border-line last:border-0">
+                      <td className="py-2 pr-3 align-top">{item.changedByName}</td>
+                      <td className="py-2 pr-3 align-top">
+                        {lineChanged ? <p>라인 {item.previousLineName}</p> : null}
+                        {assigneeChanged ? <p>담당자 {item.previousUserName}</p> : null}
+                      </td>
+                      <td className="py-2 align-top">
+                        {lineChanged ? <p>라인 {item.newLineName}</p> : null}
+                        {assigneeChanged ? <p>담당자 {item.newUserName}</p> : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : null}
+        </div>
       </section>
     </div>
   );

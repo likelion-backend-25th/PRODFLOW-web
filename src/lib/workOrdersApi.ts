@@ -75,6 +75,19 @@ export async function fetchWorkOrder(workOrderId: number): Promise<WorkOrderDeta
   return data;
 }
 
+export interface WorkOrderChangeHistory {
+  previousLineName: string;
+  newLineName: string;
+  previousUserName: string;
+  newUserName: string;
+  changedByName: string;
+}
+
+export async function fetchWorkOrderHistory(workOrderId: number): Promise<WorkOrderChangeHistory[]> {
+  const { data } = await apiClient.get<WorkOrderChangeHistory[]>(`/work-orders/${workOrderId}/history`);
+  return data;
+}
+
 export async function fetchDailyPlans(): Promise<DailyPlanRow[]> {
   const rows: WorkOrderRow[] = [];
   let page = 0;

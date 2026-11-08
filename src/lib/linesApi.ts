@@ -1,4 +1,5 @@
 import { apiClient } from "@/lib/apiClient.ts";
+import { getUsers } from "@/lib/userApi.ts";
 import type { LineStatus, WorkOrderStatus } from "@/types/domain.ts";
 
 export interface LineListItem {
@@ -79,6 +80,11 @@ export async function fetchLine(lineId: number): Promise<LineDetail> {
   return data;
 }
 
+export async function fetchLineCapacityHistory(lineId: number): Promise<LineCapacityLog[]> {
+  const { data } = await apiClient.get<LineCapacityLog[]>(`/lines/${lineId}/capacity-history`);
+  return data;
+}
+
 export async function createLine(lineName: string, productionCapacity: number): Promise<LineSaved> {
   const { data } = await apiClient.post<LineSaved>("/lines", { lineName, productionCapacity });
   return data;
@@ -98,6 +104,19 @@ export async function changeLineStatus(lineId: number, status: LineStatus): Prom
 }
 
 export async function fetchStaff(): Promise<StaffUser[]> {
-  const { data } = await apiClient.get<StaffUser[]>("/users");
-  return data;
+  const staff: StaffUser[] = [];
+  let page = 0;
+  let totalPages = 1;
+  while (page < totalPages) {
+    const result = await getUsers({ status: "ACTIVE", page, size: 100 });
+    staff.push(...result.content.map((user) => ({
+      id: user.id,
+      name: user.name,
+      role: user.role,
+      status: user.status,
+    })));
+    totalPages = result.totalPages;
+    page += 1;
+  }
+  return staff;
 }
