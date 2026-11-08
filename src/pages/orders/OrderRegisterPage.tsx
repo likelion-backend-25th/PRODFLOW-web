@@ -7,6 +7,8 @@ import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { addDays, todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount, orderTotal } from "@/lib/money.ts";
+import { getClient } from "@/lib/clientApi.ts";
+import { createCustomerOrder } from "@/lib/orderApi.ts";
 import { getQuotation, type QuotationDetail } from "@/lib/quotationApi.ts";
 import { clientFullAddress, createOrder, previewDuePlan, previewSchedule } from "@/lib/workflow.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
@@ -23,6 +25,7 @@ export function OrderRegisterPage() {
   const localQuote = db.quotations.find((item) => item.id === quotationKey);
   const [remote, setRemote] = useState<QuotationDetail | null>(null);
   const [remoteError, setRemoteError] = useState("");
+  const [companyParts, setCompanyParts] = useState<{ zipcode: string; roadAddress: string; detailAddress: string } | null>(null);
   useEffect(() => {
     if (!quotationKey || localQuote) return;
     const id = Number(quotationKey);
@@ -37,6 +40,19 @@ export function OrderRegisterPage() {
       ignore = true;
     };
   }, [localQuote, quotationKey]);
+  useEffect(() => {
+    const clientId = remote?.clientId;
+    if (!clientId) return;
+    let ignore = false;
+    getClient(clientId).then((detail) => {
+      if (!ignore) setCompanyParts({ zipcode: detail.zipcode ?? "", roadAddress: detail.roadAddress ?? "", detailAddress: detail.detailAddress ?? "" });
+    }).catch(() => {
+      if (!ignore) setCompanyParts(null);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [remote?.clientId]);
   const quote: Quotation | null = localQuote ?? (remote?.status === "APPROVED" ? {
     id: String(remote.id),
     quotationNo: remote.quotationNo,
@@ -59,15 +75,18 @@ export function OrderRegisterPage() {
     updatedAt: remote.updatedAt,
   } : null);
   const localClient = db.clients.find((item) => item.id === quote?.clientId);
+  const registeredAddress = localClient
+    ? { zipcode: localClient.zipcode, roadAddress: localClient.roadAddress, detailAddress: localClient.detailAddress }
+    : companyParts;
   const client = localClient ?? (remote && quote ? {
     companyName: remote.clientCompany,
     contactName: remote.clientName,
     contactMobile: remote.clientPhone,
-    zipcode: "",
-    roadAddress: remote.clientAddress,
-    detailAddress: "",
+    zipcode: registeredAddress?.zipcode ?? "",
+    roadAddress: registeredAddress?.roadAddress ?? "",
+    detailAddress: registeredAddress?.detailAddress ?? "",
   } : undefined);
-  const companyAddress = localClient ? clientFullAddress(localClient) : (remote?.clientAddress ?? "");
+  const companyAddress = registeredAddress ? clientFullAddress(registeredAddress) : "";
   useEffect(() => {
     if (!remote || localClient) return;
     setReceiverName((current) => current || remote.clientName || "");
@@ -84,6 +103,16 @@ export function OrderRegisterPage() {
   const [roadAddress, setRoadAddress] = useState("");
   const [addressDetail, setAddressDetail] = useState("");
   const [shippingAddress, setShippingAddress] = useState("");
+  const registeredZip = registeredAddress?.zipcode ?? "";
+  const registeredRoad = registeredAddress?.roadAddress ?? "";
+  const registeredDetail = registeredAddress?.detailAddress ?? "";
+  useEffect(() => {
+    if (!useCompanyAddress || (!registeredZip && !registeredRoad && !registeredDetail)) return;
+    setPostalCode(registeredZip);
+    setRoadAddress(registeredRoad);
+    setAddressDetail(registeredDetail);
+    setShippingAddress(clientFullAddress({ zipcode: registeredZip, roadAddress: registeredRoad, detailAddress: registeredDetail }));
+  }, [registeredDetail, registeredRoad, registeredZip, useCompanyAddress]);
   const [receiverName, setReceiverName] = useState(client?.contactName ?? "");
   const [receiverPhone, setReceiverPhone] = useState(client?.contactMobile ?? "");
   const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>("SMS");
@@ -94,6 +123,7 @@ export function OrderRegisterPage() {
   const [dueOpen, setDueOpen] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
   const quantity = quote?.lines.reduce((sum, line) => sum + (quantities[line.id] ?? line.quantity), 0) ?? 0;
   const current = useMemo(() => {
     if (!quote || quote.status !== "APPROVED" || quantity <= 0) return null;
@@ -136,7 +166,10 @@ export function OrderRegisterPage() {
   const reduced = orderLines.some((line) => line.quantity < (quote.lines.find((item) => item.id === line.id)?.quantity ?? line.quantity));
   const orderAmount = orderTotal(orderLines, quote.vatIncluded);
   const needsConsent = reduced || slipped;
-  const existing = db.orders.find((order) => order.quotationId === quote.id && order.status !== "CANCELLED");
+  const existing = db.orders.find((order) => order.quotationId === quote.id && order.status !== "CANCELLED")
+    ?? (remote?.customerOrderId != null && remote.orderNo && remote.orderNo !== "-"
+      ? { id: String(remote.customerOrderId), orderNo: remote.orderNo }
+      : undefined);
   if (existing) {
     return (
       <Card>
@@ -146,13 +179,17 @@ export function OrderRegisterPage() {
     );
   }
 
-  function register() {
-    if (!actor || !quote) return;
+  async function register() {
+    if (!actor || !quote || saving) return;
     if (useCompanyAddress && !companyAddress) {
       setError("등록된 회사 주소가 없습니다. 체크를 해제하고 배송지를 직접 입력하세요.");
       return;
     }
-    if (!shippingAddress.trim()) {
+    if (!useCompanyAddress && (!postalCode.trim() || !roadAddress.trim() || !addressDetail.trim())) {
+      setError("배송지를 입력하세요.");
+      return;
+    }
+    if (useCompanyAddress && !shippingAddress.trim()) {
       setError("배송지를 입력하세요.");
       return;
     }
@@ -172,27 +209,53 @@ export function OrderRegisterPage() {
       setError("변경된 수량이나 납기에 거래처가 동의한 뒤에 등록합니다.");
       return;
     }
+    const quotationId = Number(quote.id);
+    const items = orderLines.map((line) => ({ quotationItemId: Number(line.id), quantity: line.quantity }));
+    const serverQuote = Number.isInteger(quotationId) && quotationId > 0 && items.every((item) => Number.isInteger(item.quotationItemId) && item.quotationItemId > 0);
+    if (!serverQuote) {
+      try {
+        const order = createOrder({
+          quotationId: quote.id,
+          clientId: quote.clientId,
+          lines: orderLines.map(({ productId, quantity: lineQuantity, unitPrice }) => ({ productId, quantity: lineQuantity, unitPrice })),
+          requestedDueDate: quote.requestedDueDate,
+          dueDate: registerDue,
+          depositDueDate,
+          plannedStartDate: selection?.plannedStartDate,
+          plannedEndDate: selection?.plannedEndDate,
+          shippingAddress,
+          receiverName,
+          receiverPhone,
+          notifyChannel,
+          memo,
+          actor,
+        });
+        show(`${order.orderNo} 수주를 등록했습니다. 확정은 예정, 진행은 대기입니다.`);
+        navigate(`/orders/${order.id}`);
+      } catch (reason: unknown) {
+        setError(reason instanceof Error ? reason.message : "등록하지 못했습니다.");
+      }
+      return;
+    }
+    setSaving(true);
     try {
-      const order = createOrder({
-        quotationId: quote.id,
-        clientId: quote.clientId,
-        lines: orderLines.map(({ productId, quantity: lineQuantity, unitPrice }) => ({ productId, quantity: lineQuantity, unitPrice })),
-        requestedDueDate: quote.requestedDueDate,
+      const order = await createCustomerOrder({
+        quotationId,
+        items,
         dueDate: registerDue,
-        depositDueDate,
-        plannedStartDate: selection?.plannedStartDate,
-        plannedEndDate: selection?.plannedEndDate,
-        shippingAddress,
-        receiverName,
-        receiverPhone,
+        useCompanyAddress,
+        shippingAddress: { zipcode: postalCode.trim(), roadAddress: roadAddress.trim(), detailAddress: addressDetail.trim() },
+        receiverName: receiverName.trim(),
+        receiverPhone: receiverPhone.trim(),
         notifyChannel,
         memo,
-        actor,
       });
       show(`${order.orderNo} 수주를 등록했습니다. 확정은 예정, 진행은 대기입니다.`);
       navigate(`/orders/${order.id}`);
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "등록하지 못했습니다.");
+      setError(readApiErrorMessage(reason));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -330,7 +393,7 @@ export function OrderRegisterPage() {
           </label>
           <div className="space-y-2">
             <div className="flex gap-2">
-              <input readOnly value={postalCode} placeholder="우편번호" className="h-10 w-28 rounded-lg border border-line bg-white px-3 text-sm" />
+              <input readOnly value={postalCode} placeholder="우편번호" className={`h-10 w-28 rounded-lg border border-line px-3 text-sm ${useCompanyAddress ? "bg-canvas" : "bg-white"}`} />
               <Button
                 tone="ghost"
                 className="shrink-0"
@@ -355,12 +418,12 @@ export function OrderRegisterPage() {
                 우편번호 찾기
               </Button>
             </div>
-            <input readOnly value={roadAddress} placeholder="우편번호 찾기로 도로명 주소를 선택하세요" className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" />
+            <input readOnly value={roadAddress} placeholder="우편번호 찾기로 도로명 주소를 선택하세요" className={`h-10 w-full rounded-lg border border-line px-3 text-sm ${useCompanyAddress ? "bg-canvas" : "bg-white"}`} />
             <input
               readOnly={useCompanyAddress}
               value={addressDetail}
               placeholder="건물명, 층, 호수 등 상세 주소"
-              className="h-10 w-full rounded-lg border border-line px-3 text-sm read-only:bg-canvas"
+              className={`h-10 w-full rounded-lg border border-line px-3 text-sm ${useCompanyAddress ? "bg-canvas" : "bg-white"}`}
               onChange={(event) => {
                 const detail = event.target.value;
                 setAddressDetail(detail);
@@ -420,7 +483,7 @@ export function OrderRegisterPage() {
           </label>
         ) : null}
         {error ? <p className="text-sm text-danger">{error}</p> : null}
-        <Button className="w-full" disabled={needsConsent && !agreed} onClick={register}>수주 등록</Button>
+        <Button className="w-full" disabled={(needsConsent && !agreed) || saving} onClick={() => void register()}>수주 등록</Button>
       </Card>
       </div>
     </div>

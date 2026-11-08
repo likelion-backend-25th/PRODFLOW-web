@@ -26,6 +26,9 @@ export interface ClientDetail {
   email: string;
   phone: string;
   address: string;
+  zipcode: string;
+  roadAddress: string;
+  detailAddress: string;
   userName: string;
   userPhone: string;
   totalOrder: number;
