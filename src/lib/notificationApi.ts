@@ -16,25 +16,25 @@ export interface NoticeItem {
 
 interface LineNotificationResponse {
   notification: number;
+  lineId: number | null;
   lineName: string | null;
   notificationType: LineNotificationType;
   message: string;
   createdAt: string;
   readAt: string | null;
-  isRead?: boolean;
-  read?: boolean;
+  isRead: boolean;
 }
 
 interface OrderNotificationResponse {
   notification: number;
+  orderId: number | null;
   orderNo: string | null;
   clientName: string | null;
   notificationType: OrderNotificationType;
   message: string;
   createdAt: string;
   readAt: string | null;
-  isRead?: boolean;
-  read?: boolean;
+  isRead: boolean;
 }
 
 const lineTypeLabel: Record<LineNotificationType, string> = {
@@ -88,6 +88,12 @@ export async function fetchOrderNotifications(): Promise<NoticeItem[]> {
     createdAt: row.createdAt,
     isRead: readFlag(row),
   }));
+}
+
+export const notificationsChangedEvent = "prodflow-notifications-changed";
+
+export function notifyNotificationsChanged(): void {
+  window.dispatchEvent(new Event(notificationsChangedEvent));
 }
 
 export async function fetchUnreadCount(): Promise<number> {
