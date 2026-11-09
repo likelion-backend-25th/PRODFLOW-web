@@ -58,6 +58,7 @@ export interface WorkOrderPage {
 }
 
 export interface WorkOrderQuery {
+  orderId?: number;
   keyword?: string;
   from?: string;
   to?: string;
