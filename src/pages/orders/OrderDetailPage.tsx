@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, Check, Pencil } from "lucide-react";
 import { AddressPicker } from "@/components/AddressPicker.tsx";
-import { Badge, Button, Card, TextField } from "@/components/ui.tsx";
+import { Badge, Button, Card, SelectField, TextField } from "@/components/ui.tsx";
 import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { localDateTime, todayISO } from "@/lib/dates.ts";
 import { delayTone } from "@/lib/delay.ts";
@@ -12,21 +12,18 @@ import {
   getOrder,
   getOrderHistories,
   getOrderPayments,
-  getOrderShipment,
   listOrderWorkOrders,
   recordManualDeposit,
-  registerShipment,
   screenOrderStatus,
   screenPaymentStatus,
-  trackShipment,
   type OrderDetail,
   type OrderHistory,
   type OrderPayments,
-  type OrderShipment,
 } from "@/lib/orderApi.ts";
+import { CARRIERS, completeShipment, getOrderShipment, refreshShipmentTracking, registerShipment, trackShipment, type OrderShipment } from "@/lib/shipmentApi.ts";
 import type { WorkOrderRow } from "@/lib/workOrdersApi.ts";
 import type { OrderStatus } from "@/types/domain.ts";
-import { canManageOrders, canProduce, useAuthStore } from "@/stores/useAuthStore.ts";
+import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
 export function OrderDetailPage() {
@@ -41,7 +38,7 @@ export function OrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [missing, setMissing] = useState("");
   const [amount, setAmount] = useState(0);
-  const [carrier, setCarrier] = useState("CJ대한통운");
+  const [carrier, setCarrier] = useState<string>(CARRIERS[0].code);
   const [trackingNo, setTrackingNo] = useState("");
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [editingItems, setEditingItems] = useState(false);
@@ -51,6 +48,8 @@ export function OrderDetailPage() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [shipping, setShipping] = useState(false);
+  const [completing, setCompleting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [depositing, setDepositing] = useState(false);
   const [depositSaved, setDepositSaved] = useState(false);
 
@@ -195,6 +194,45 @@ export function OrderDetailPage() {
       show(readApiErrorMessage(error));
     } finally {
       setShipping(false);
+    }
+  }
+
+  async function finishDelivery() {
+    if (!shipment || completing) return;
+    setCompleting(true);
+    try {
+      await completeShipment(shipment.shipmentId);
+      const loaded = await load(currentOrder.id);
+      setOrder(loaded.order);
+      setHistories(loaded.histories);
+      setPayments(loaded.payments);
+      setShipment(loaded.shipment);
+      setWorkOrders(loaded.workOrders);
+      setTrackingOpen(false);
+      show("배송 완료로 변경했습니다.");
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    } finally {
+      setCompleting(false);
+    }
+  }
+
+  async function refreshTracking() {
+    if (!shipment || refreshing) return;
+    setRefreshing(true);
+    try {
+      const updated = await refreshShipmentTracking(shipment.shipmentId);
+      const loaded = await load(currentOrder.id);
+      setOrder(loaded.order);
+      setHistories(loaded.histories);
+      setPayments(loaded.payments);
+      setShipment(loaded.shipment);
+      setWorkOrders(loaded.workOrders);
+      show(updated.complete || updated.orderStatus === "COMPLETED" ? "배송이 완료되어 수주를 완료로 바꿨습니다." : "운송장 상태를 갱신했습니다.");
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -398,7 +436,7 @@ export function OrderDetailPage() {
       <Card>
         <div id="order-ship" className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold">배송 알림</h2>
-          <span className="text-xs text-muted">{shipment?.trackingNumber ? "발송됨" : "발송 대기"}</span>
+          <span className="text-xs text-muted">{shipment?.trackingNumber ? "운송장 등록됨" : "운송장 없음"}</span>
         </div>
         <dl className="mt-4 grid gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
           <Field label="수신 연락처" value={order.receiverPhone || "-"} />
@@ -406,19 +444,25 @@ export function OrderDetailPage() {
           <Field label="택배사" value={shipment?.carrierName || "-"} />
           <Field label="운송장" value={shipment?.trackingNumber || "-"} />
         </dl>
-        <p className="mt-3 text-sm text-muted">아직 발송 이력이 없습니다.</p>
-        {shipment?.trackingNumber ? <Button tone="ghost" className="mt-3" onClick={() => setTrackingOpen((open) => !open)}>배송조회</Button> : null}
+        {shipment?.trackingNumber ? null : <p className="mt-3 text-sm text-muted">운송장이 등록되지 않았습니다.</p>}
+        {shipment?.trackingNumber ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button tone="ghost" onClick={() => setTrackingOpen((open) => !open)}>배송조회</Button>
+            <Button tone="ghost" disabled={refreshing} onClick={() => void refreshTracking()}>상태 갱신</Button>
+          </div>
+        ) : null}
         {trackingOpen ? <p className="mt-3 text-sm">{trackingText}</p> : null}
         <div className="mt-4 space-y-2">
-          {(canProduce(user.role) || canManageOrders(user.role)) && order.status === "PACKING" ? <Button onClick={() => unavailable("출고 대기로 바꾸는 API가 없습니다.")}>출고 대기로</Button> : null}
           {canManageOrders(user.role) && order.status === "READY_TO_SHIP" ? (
             <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
-              <TextField label="택배사" value={carrier} onChange={(event) => setCarrier(event.target.value)} />
-              <TextField label="운송장" value={trackingNo} onChange={(event) => setTrackingNo(event.target.value)} />
-              <Button onClick={() => void ship()}>출고</Button>
+              <SelectField label="택배사" value={carrier} onChange={(event) => setCarrier(event.target.value)}>
+                {CARRIERS.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
+              </SelectField>
+              <TextField label="운송장" value={trackingNo} onChange={(event) => setTrackingNo(event.target.value.replace(/[^0-9-]/g, ""))} />
+              <Button disabled={shipping} onClick={() => void ship()}>출고</Button>
             </div>
           ) : null}
-          {canManageOrders(user.role) && order.status === "SHIPPING" ? <Button onClick={() => unavailable("배송 완료로 바꾸는 API가 없습니다.")}>배송 완료</Button> : null}
+          {canManageOrders(user.role) && order.status === "SHIPPING" && shipment ? <Button disabled={completing} onClick={() => void finishDelivery()}>배송 완료</Button> : null}
           {canManageOrders(user.role) && order.status === "WAITING" && paidAmount === 0 ? (
             cancelling ? (
               <div className="space-y-2">

@@ -112,40 +112,6 @@ export interface OrderPayments {
   payments: OrderPaymentRow[];
 }
 
-export interface OrderShipment {
-  shipmentId: number;
-  orderId: number;
-  carrierCode: string;
-  carrierName: string;
-  trackingNumber: string;
-  level: number | null;
-  result: string | null;
-  complete: boolean | null;
-  estimate: string | null;
-  startedAt: string | null;
-  deliveredAt: string | null;
-}
-
-export interface TrackingResult {
-  invoiceNo: string;
-  result: string;
-  complete: boolean;
-  level: number;
-  estimate: string | null;
-}
-
-const carrierCodes: Record<string, string> = {
-  CJ대한통운: "04",
-  한진택배: "05",
-  롯데택배: "08",
-  우체국택배: "01",
-};
-
-export function carrierCodeOf(value: string): string {
-  const trimmed = value.trim();
-  return carrierCodes[trimmed] ?? trimmed;
-}
-
 export function screenPaymentStatus(status: string): PaymentStatus {
   if (status === "PAID") return "PAID";
   if (status === "PARTIAL" || status === "PARTIALLY_PAID") return "PARTIAL";
@@ -189,26 +155,6 @@ export interface ManualDepositResult {
 
 export async function recordManualDeposit(orderId: number, amount: number): Promise<ManualDepositResult> {
   const { data } = await apiClient.post<ManualDepositResult>("/payments/deposit/manual", { orderId, amount });
-  return data;
-}
-
-export async function getOrderShipment(orderId: number): Promise<OrderShipment | null> {
-  const { data } = await apiClient.get<{ shipment: OrderShipment | null }>(`/shipments/${orderId}`);
-  return data.shipment;
-}
-
-export async function registerShipment(orderId: number, carrier: string, trackingNumber: string): Promise<void> {
-  await apiClient.post("/shipments", {
-    orderId,
-    carrierCode: carrierCodeOf(carrier),
-    trackingNumber: trackingNumber.trim(),
-  });
-}
-
-export async function trackShipment(carrierCode: string, trackingNumber: string): Promise<TrackingResult> {
-  const { data } = await apiClient.get<TrackingResult>("/shipments/tracking", {
-    params: { carrierCode, trackingNumber },
-  });
   return data;
 }
 
