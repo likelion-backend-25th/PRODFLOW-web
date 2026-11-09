@@ -8,6 +8,7 @@ import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { createClient, getClient, importClientsFile, listClients, updateClient, type ClientDetail, type ClientListItem, type ClientPage } from "@/lib/clientApi.ts";
 import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } from "@/lib/labels.ts";
 import { getRecentClientOrder, listClientOrders, screenOrderStatus, screenPaymentStatus, type ClientOrder, type ClientOrderPage } from "@/lib/orderApi.ts";
+import { getOrderManagers, type OrderManagerResponse } from "@/lib/userApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
@@ -372,13 +373,26 @@ export function ClientFormPage() {
   const [form, setForm] = useState(emptyClient);
   const [checked, setChecked] = useState(false);
   const [duplicates, setDuplicates] = useState<ClientListItem[]>([]);
+  const [orderManagers, setOrderManagers] = useState<OrderManagerResponse[]>([]);
+  const [selectedManagerId, setSelectedManagerId] = useState("");
+  const [managerLoadError, setManagerLoadError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const editing = Boolean(clientId);
   useEffect(() => {
-    if (!clientId) return;
-    const id = Number(clientId);
-    if (!Number.isInteger(id)) return;
-    getClient(id).then((detail) => {
+    let ignore = false;
+    const managersRequest = getOrderManagers();
+    const clientIdNumber = Number(clientId);
+    const clientRequest = clientId && Number.isInteger(clientIdNumber) ? getClient(clientIdNumber) : Promise.resolve(null);
+    Promise.all([managersRequest, clientRequest]).then(([managers, detail]) => {
+      if (ignore) return;
+      setOrderManagers(managers);
+      setManagerLoadError("");
+      const assignableManagers = managers.filter((item) => item.status === "ACTIVE");
+      const selectedManager = detail
+        ? managers.find((item) => item.name === detail.userName)
+        : assignableManagers.find((item) => String(item.id) === manager?.id);
+      setSelectedManagerId(String(selectedManager?.id ?? assignableManagers[0]?.id ?? ""));
+      if (!detail) return;
       setForm({
         companyName: detail.company,
         representative: detail.employee,
@@ -388,8 +402,16 @@ export function ClientFormPage() {
         phone: detail.phone,
         taxEmail: detail.email,
       });
-    }).catch((error: unknown) => show(readApiErrorMessage(error)));
-  }, [clientId, show]);
+    }).catch((error: unknown) => {
+      if (ignore) return;
+      const message = readApiErrorMessage(error);
+      setManagerLoadError(message);
+      show(message);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [clientId, manager?.id, show]);
   const patch = (next: Partial<typeof form>) => {
     setForm({ ...form, ...next });
     setChecked(false);
@@ -439,9 +461,9 @@ export function ClientFormPage() {
               show("등록 전에 중복 확인을 눌러 주세요.");
               return;
             }
-            const userId = Number(manager?.id);
+            const userId = Number(selectedManagerId);
             if (!Number.isInteger(userId) || userId <= 0) {
-              show("로그인한 계정으로만 거래처를 저장할 수 있습니다.");
+              show("담당 직원을 선택해 주세요.");
               return;
             }
             const input = {
@@ -510,14 +532,21 @@ export function ClientFormPage() {
             <FormField label="이메일 *">
               <input required type="email" placeholder="예: user1234@company.com" value={form.taxEmail} className={inputClass} onChange={(event) => patch({ taxEmail: event.target.value })} />
             </FormField>
-            <FormField label="담당 직원">
+            <FormField label="담당 직원 *">
               <span className="relative block">
                 <select
+                  required
                   className={`${inputClass} appearance-none pr-9`}
-                  value={manager?.id ?? ""}
-                  onChange={() => undefined}
+                  value={selectedManagerId}
+                  disabled={orderManagers.length === 0}
+                  onChange={(event) => setSelectedManagerId(event.target.value)}
                 >
-                  <option value={manager?.id ?? ""}>{manager ? `${manager.name} · 로그인한 계정` : "로그인 필요"}</option>
+                  <option value="">{managerLoadError ? "담당 직원 조회 실패" : "담당 직원을 선택하세요"}</option>
+                  {orderManagers.filter((item) => item.status !== "DELETED").map((item) => (
+                    <option key={item.id} value={item.id} disabled={item.status !== "ACTIVE"}>
+                      {item.name} · {item.email}{item.status !== "ACTIVE" ? " · 비활성" : ""}
+                    </option>
+                  ))}
                 </select>
                 <ChevronDown size={14} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
               </span>
