@@ -410,7 +410,8 @@ function WorkOrderEditor({ workOrderId, onChanged }: { workOrderId: string; onCh
   const canResume = canChangeStatus && workOrder.status === "SUSPEND";
   const canReturn = canChangeStatus && workOrder.status === "HALT";
   const canStop = canChangeStatus && (workOrder.status === "PRODUCE" || workOrder.status === "SUSPEND");
-  const lineEditable = canProduce(user.role) && ["PREPARE", "PRODUCE", "SUSPEND", "HALT"].includes(workOrder.status);
+  // 생산 중인 작업은 그 라인에 둔다. 준비·일시정지·생산 중지는 가동 가능 라인으로 옮길 수 있다.
+  const lineEditable = canProduce(user.role) && ["PREPARE", "SUSPEND", "HALT"].includes(workOrder.status);
   const lineOptions = lines.filter((line) => line.lineId === workOrder.lineId || line.status === "AVAILABLE");
   const managers = staff.some((item) => item.id === workOrder.assignedId) || staff.length === 0
     ? staff
@@ -460,7 +461,7 @@ function WorkOrderEditor({ workOrderId, onChanged }: { workOrderId: string; onCh
     if (lineEditable && lineId !== "" && lineId !== workOrder?.lineId) body.lineId = lineId;
     if (canManageOrders(user?.role) && assigneeId !== "" && assigneeId !== workOrder?.assignedId) body.assignedId = assigneeId;
     if (body.lineId == null && body.assignedId == null) {
-      show("변경된 라인 또는 담당자가 없습니다.");
+      show(lineEditable ? "변경된 라인 또는 담당자가 없습니다." : "변경된 담당자가 없습니다.");
       return;
     }
     void run(() => updateWorkOrder(workOrder!.id, body), "저장했습니다.").then((saved) => {
@@ -481,9 +482,13 @@ function WorkOrderEditor({ workOrderId, onChanged }: { workOrderId: string; onCh
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <Field label="작업지시번호"><input className={readOnlyClass} value={workOrder.workNo} disabled /></Field>
           <Field label="생산라인" required>
-            <select className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm disabled:bg-canvas" value={lineId} disabled={!lineEditable} onChange={(event) => setLineId(Number(event.target.value))}>
-              {lineOptions.map((line) => <option key={line.lineId} value={line.lineId}>{line.lineName}</option>)}
-            </select>
+            {lineEditable ? (
+              <select className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm disabled:bg-canvas" value={lineId} onChange={(event) => setLineId(Number(event.target.value))}>
+                {lineOptions.map((line) => <option key={line.lineId} value={line.lineId}>{line.lineName}</option>)}
+              </select>
+            ) : (
+              <input className={readOnlyClass} value={workOrder.lineName} disabled />
+            )}
           </Field>
           <Field label="지시일"><input className={readOnlyClass} type="date" value={workOrder.workOrderDate} disabled /></Field>
           <Field label="담당자" required>
