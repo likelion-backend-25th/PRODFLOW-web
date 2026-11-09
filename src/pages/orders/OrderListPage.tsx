@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { Badge, Button } from "@/components/ui.tsx";
 import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { localDate } from "@/lib/dates.ts";
@@ -16,11 +16,12 @@ const emptySummary: OrderSummary = { waiting: 0, making: 0, shipping: 0, doneThi
 export function OrderListPage() {
   const role = useAuthStore((state) => state.user?.role);
   const show = useToastStore((state) => state.show);
+  const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<"open" | "done">("open");
   const [statusCodeId, setStatusCodeId] = useState("");
   const [registration, setRegistration] = useState<"" | "PENDING" | "CONFIRMED">("");
   const [payment, setPayment] = useState<PaymentStatus | "">("");
-  const [keyword, setKeyword] = useState("");
+  const [keyword, setKeyword] = useState(() => searchParams.get("keyword") ?? "");
   const [page, setPage] = useState(0);
   const [summary, setSummary] = useState<OrderSummary>(emptySummary);
   const [statuses, setStatuses] = useState<OrderStatusOption[]>([]);

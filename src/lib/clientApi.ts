@@ -69,7 +69,7 @@ export function createClient(input: ClientInput): Promise<ClientDetail> {
 }
 
 export function updateClient(id: number, input: ClientInput): Promise<ClientDetail> {
-  return apiClient.post<ClientDetail>(`/clients/${id}`, input).then((response) => response.data);
+  return apiClient.put<ClientDetail>(`/clients/${id}`, input).then((response) => response.data);
 }
 
 export function importClientsFile(file: File): Promise<Array<{ id: number; company: string }>> {
