@@ -2,17 +2,9 @@ import { apiClient } from "@/lib/apiClient.ts";
 
 export type ShipmentTab = "PACKING" | "READY_TO_SHIP" | "SHIPPING" | "BALANCE";
 
-export const CARRIERS = [
-  { code: "04", name: "CJ대한통운" },
-  { code: "05", name: "한진택배" },
-  { code: "08", name: "롯데택배" },
-  { code: "01", name: "우체국택배" },
-] as const;
-
-export function carrierCodeOf(value: string): string {
-  const trimmed = value.trim();
-  const found = CARRIERS.find((item) => item.name === trimmed || item.code === trimmed);
-  return found?.code ?? trimmed;
+export interface Carrier {
+  code: string;
+  name: string;
 }
 
 export interface ShipmentTabCounts {
@@ -90,14 +82,18 @@ export interface ShipmentCompleted {
   deliveredAt: string | null;
 }
 
+export function listCarriers(): Promise<Carrier[]> {
+  return apiClient.get<Carrier[]>("/carriers").then((response) => response.data);
+}
+
 export function listShipments(tab: ShipmentTab): Promise<ShipmentList> {
   return apiClient.get<ShipmentList>("/shipments", { params: { tab } }).then((response) => response.data);
 }
 
-export function registerShipment(orderId: number, carrier: string, trackingNumber: string): Promise<ShipmentRegistered> {
+export function registerShipment(orderId: number, carrierCode: string, trackingNumber: string): Promise<ShipmentRegistered> {
   return apiClient.post<ShipmentRegistered>("/shipments", {
     orderId,
-    carrierCode: carrierCodeOf(carrier),
+    carrierCode,
     trackingNumber: trackingNumber.trim(),
   }).then((response) => response.data);
 }

@@ -8,7 +8,7 @@ import { localDateTime } from "@/lib/dates.ts";
 import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } from "@/lib/labels.ts";
 import { formatWon } from "@/lib/money.ts";
 import { getOrderPayments, screenOrderStatus, screenPaymentStatus } from "@/lib/orderApi.ts";
-import { CARRIERS, completeShipment, listShipments, refreshShipmentTracking, registerShipment, type ShipmentList, type ShipmentListItem, type ShipmentTab } from "@/lib/shipmentApi.ts";
+import { completeShipment, listCarriers, listShipments, refreshShipmentTracking, registerShipment, type Carrier, type ShipmentList, type ShipmentListItem, type ShipmentTab } from "@/lib/shipmentApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
@@ -41,10 +41,23 @@ export function ShippingPage() {
   const [balances, setBalances] = useState<Record<number, number | null>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [carrierOptions, setCarrierOptions] = useState<Carrier[]>([]);
   const [carriers, setCarriers] = useState<Record<number, string>>({});
   const [tracking, setTracking] = useState<Record<number, string>>({});
   const [busyId, setBusyId] = useState<number | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let ignore = false;
+    listCarriers().then((items) => {
+      if (!ignore) setCarrierOptions(items);
+    }).catch((reason: unknown) => {
+      if (!ignore) show(readApiErrorMessage(reason));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [show]);
 
   useEffect(() => {
     let ignore = false;
@@ -83,6 +96,7 @@ export function ShippingPage() {
   const counts = list?.counts ?? emptyCounts;
   const rows = list?.tab === tab ? list.items : [];
   const canShip = canManageOrders(user.role);
+  const defaultCarrier = carrierOptions[0]?.code ?? "";
 
   async function run(orderId: number, action: () => Promise<string>) {
     if (busyId !== null) return;
@@ -140,15 +154,18 @@ export function ShippingPage() {
                   tab={tab}
                   canShip={canShip}
                   busy={busyId === order.orderId}
-                  carrier={carriers[order.orderId] ?? CARRIERS[0].code}
+                  carrierOptions={carrierOptions}
+                  carrier={carriers[order.orderId] ?? defaultCarrier}
                   trackingNo={tracking[order.orderId] ?? ""}
                   balance={balances[order.orderId]}
                   onCarrier={(value) => setCarriers({ ...carriers, [order.orderId]: value })}
                   onTracking={(value) => setTracking({ ...tracking, [order.orderId]: value.replace(/[^0-9-]/g, "") })}
                   onShip={() => void run(order.orderId, async () => {
+                    const carrierCode = carriers[order.orderId] ?? defaultCarrier;
                     const number = (tracking[order.orderId] ?? "").trim();
+                    if (!carrierCode) throw new Error("택배사를 선택하세요.");
                     if (!number) throw new Error("운송장 번호를 입력하세요.");
-                    await registerShipment(order.orderId, carriers[order.orderId] ?? CARRIERS[0].code, number);
+                    await registerShipment(order.orderId, carrierCode, number);
                     return "출고했습니다.";
                   })}
                   onComplete={() => void run(order.orderId, async () => {
@@ -179,6 +196,7 @@ function ShipmentRow({
   tab,
   canShip,
   busy,
+  carrierOptions,
   carrier,
   trackingNo,
   balance,
@@ -192,6 +210,7 @@ function ShipmentRow({
   tab: ShipmentTab;
   canShip: boolean;
   busy: boolean;
+  carrierOptions: Carrier[];
   carrier: string;
   trackingNo: string;
   balance: number | null | undefined;
@@ -234,11 +253,12 @@ function ShipmentRow({
         {tab === "READY_TO_SHIP" ? (
           canShip ? (
             <div className="flex flex-wrap items-center gap-2">
-              <select className="h-10 rounded-lg border border-line bg-white px-2" value={carrier} onChange={(event) => onCarrier(event.target.value)} aria-label="택배사">
-                {CARRIERS.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
+              <select className="h-10 rounded-lg border border-line bg-white px-2" value={carrier} onChange={(event) => onCarrier(event.target.value)} aria-label="택배사" disabled={carrierOptions.length === 0}>
+                {carrierOptions.length === 0 ? <option value="">택배사 없음</option> : null}
+                {carrierOptions.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
               </select>
               <input className="h-10 w-36 rounded-lg border border-line px-3" value={trackingNo} placeholder="운송장 번호" aria-label="운송장 번호" onChange={(event) => onTracking(event.target.value)} />
-              <Button disabled={busy} onClick={onShip}>출고</Button>
+              <Button disabled={busy || !carrier} onClick={onShip}>출고</Button>
             </div>
           ) : <span className="text-xs text-muted">수주 관리자가 처리</span>
         ) : null}
