@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { Button, Card } from "@/components/ui.tsx";
@@ -9,8 +9,8 @@ import { useDb } from "@/lib/db.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount, orderTotal } from "@/lib/money.ts";
 import { getClient } from "@/lib/clientApi.ts";
 import { createCustomerOrder } from "@/lib/orderApi.ts";
-import { getQuotation, type QuotationDetail } from "@/lib/quotationApi.ts";
-import { clientFullAddress, createOrder, previewDuePlan, previewSchedule } from "@/lib/workflow.ts";
+import { getQuotation, previewQuotationSchedule, type QuotationDetail, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
+import { clientFullAddress, createOrder } from "@/lib/workflow.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { NotifyChannel, Quotation } from "@/types/domain.ts";
@@ -124,29 +124,79 @@ export function OrderRegisterPage() {
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const quantity = quote?.lines.reduce((sum, line) => sum + (quantities[line.id] ?? line.quantity), 0) ?? 0;
-  const current = useMemo(() => {
-    if (!quote || quote.status !== "APPROVED" || quantity <= 0) return null;
-    try {
-      return previewSchedule(quantity, undefined, depositDueDate || undefined);
-    } catch (reason: unknown) {
-      return reason instanceof Error ? reason.message : "납기를 계산하지 못했습니다.";
-    }
-  }, [db, depositDueDate, quantity, quote]);
-  const selection = useMemo(() => {
-    if (!quote || !current || typeof current === "string") return null;
-    const slipped = quote.estimatedDueDate < current.earliestDueDate;
-    const registerDue = slipped ? (chosenDue >= current.earliestDueDate ? chosenDue : current.earliestDueDate) : quote.estimatedDueDate;
-    if (registerDue <= current.earliestDueDate) {
-      return { slipped, registerDue, earliest: current.earliestDueDate, plannedStartDate: current.plannedStartDate, plannedEndDate: current.plannedEndDate };
-    }
-    try {
-      const plan = previewDuePlan(quantity, registerDue, depositDueDate || undefined);
-      return { slipped, registerDue, earliest: current.earliestDueDate, plannedStartDate: plan.plannedStartDate, plannedEndDate: plan.plannedEndDate };
-    } catch {
-      return { slipped, registerDue: current.earliestDueDate, earliest: current.earliestDueDate, plannedStartDate: current.plannedStartDate, plannedEndDate: current.plannedEndDate };
-    }
-  }, [chosenDue, current, db, depositDueDate, quantity, quote]);
+  const [preview, setPreview] = useState<{
+    key: string;
+    result: QuotationSchedulePreview | null;
+    error: string;
+  } | null>(null);
+  // 같은 조건의 응답만 사용해 수량·납기 변경 직후 이전 일정으로 등록하지 않는다.
+  const previewKey = quote?.status === "APPROVED" ? JSON.stringify({
+    quotationId: quote.id,
+    estimatedDueDate: quote.estimatedDueDate,
+    chosenDue,
+    depositDueDate,
+    items: quote.lines.map((line) => ({
+      productId: Number(line.productId),
+      quantity: quantities[line.id] ?? line.quantity,
+    })),
+  }) : "";
+  const scheduleLoading = Boolean(previewKey) && preview?.key !== previewKey;
+  const scheduleError = preview?.key === previewKey ? preview.error : "";
+  const schedule = preview?.key === previewKey ? preview.result : null;
+
+  useEffect(() => {
+    if (!previewKey) return;
+    const input: {
+      estimatedDueDate: string;
+      chosenDue: string;
+      items: Array<{ productId: number; quantity: number }>;
+    } = JSON.parse(previewKey);
+    let ignore = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        if (input.items.some((item) => !Number.isInteger(item.productId) || item.productId <= 0
+          || !Number.isInteger(item.quantity) || item.quantity < 100)) {
+          throw new Error("서버에 등록된 품목과 품목별 100개 이상의 수량으로 납기를 계산할 수 있습니다.");
+        }
+        const initial = await previewQuotationSchedule({
+          items: input.items,
+          requestedDueDate: input.estimatedDueDate,
+        });
+        if (ignore) return;
+        let result = initial;
+        if (input.estimatedDueDate < initial.earliestDueDate) {
+          result = await previewQuotationSchedule({
+            items: input.items,
+            requestedDueDate: input.chosenDue >= initial.earliestDueDate
+              ? input.chosenDue : initial.earliestDueDate,
+          });
+        }
+        if (ignore) return;
+        if (!result.feasible || !result.plannedStartDate || !result.plannedEndDate) {
+          throw new Error(`선택한 납기를 지킬 수 없습니다. 가능한 가장 빠른 납기일: ${result.earliestDueDate}`);
+        }
+        setPreview({ key: previewKey, result, error: "" });
+      } catch (reason: unknown) {
+        if (!ignore) setPreview({
+          key: previewKey,
+          result: null,
+          error: reason instanceof Error && !("isAxiosError" in reason)
+            ? reason.message : readApiErrorMessage(reason),
+        });
+      }
+    }, 250);
+    return () => {
+      ignore = true;
+      window.clearTimeout(timer);
+    };
+  }, [previewKey]);
+
+  const selection = quote && schedule ? {
+    slipped: quote.estimatedDueDate < schedule.earliestDueDate,
+    registerDue: schedule.requestedDueDate ?? schedule.earliestDueDate,
+    plannedStartDate: schedule.plannedStartDate,
+    plannedEndDate: schedule.plannedEndDate,
+  } : null;
 
   if (!quote && quotationKey && !localQuote && !remote && !remoteError) return <p>수주 등록 화면을 불러오는 중입니다.</p>;
   if (!quote || quote.status !== "APPROVED") {
@@ -159,7 +209,6 @@ export function OrderRegisterPage() {
     );
   }
 
-  const schedule = current && typeof current !== "string" ? current : null;
   const slipped = selection?.slipped ?? false;
   const registerDue = selection?.registerDue ?? "";
   const orderLines = quote.lines.map((line) => ({ ...line, quantity: quantities[line.id] ?? line.quantity }));
@@ -202,7 +251,7 @@ export function OrderRegisterPage() {
       return;
     }
     if (!schedule || !registerDue) {
-      setError(typeof current === "string" ? current : "납기를 계산하지 못했습니다.");
+      setError(scheduleLoading ? "납기를 계산 중입니다. 잠시 기다려 주세요." : scheduleError || "납기를 계산하지 못했습니다.");
       return;
     }
     if (needsConsent && !agreed) {
@@ -221,8 +270,8 @@ export function OrderRegisterPage() {
           requestedDueDate: quote.requestedDueDate,
           dueDate: registerDue,
           depositDueDate,
-          plannedStartDate: selection?.plannedStartDate,
-          plannedEndDate: selection?.plannedEndDate,
+          plannedStartDate: selection?.plannedStartDate ?? undefined,
+          plannedEndDate: selection?.plannedEndDate ?? undefined,
           shippingAddress,
           receiverName,
           receiverPhone,
@@ -320,8 +369,10 @@ export function OrderRegisterPage() {
           </div>
           <p className="mt-3 text-xs text-muted">품목을 빼거나 단가를 바꾸려면 견적을 새로 작성합니다. 화면을 닫으면 수주는 만들어지지 않습니다.</p>
           <div className={`mt-3 rounded-lg px-3 py-2 text-sm leading-5 ${needsConsent ? "bg-warning-soft text-warning" : "bg-primary-soft text-primary"}`}>
-            {typeof current === "string" ? (
-              current
+            {scheduleLoading ? (
+              "서버에서 생산 일정과 납기를 계산하고 있습니다."
+            ) : scheduleError ? (
+              scheduleError
             ) : reduced && !slipped ? (
               <>수량을 줄이면 견적 예상 납기 {quote.estimatedDueDate}이 가능합니다. 거래처가 이 수량에 동의한 뒤에 등록합니다.</>
             ) : slipped ? (
@@ -483,7 +534,7 @@ export function OrderRegisterPage() {
           </label>
         ) : null}
         {error ? <p className="text-sm text-danger">{error}</p> : null}
-        <Button className="w-full" disabled={(needsConsent && !agreed) || saving} onClick={() => void register()}>수주 등록</Button>
+        <Button className="w-full" disabled={!schedule || scheduleLoading || (needsConsent && !agreed) || saving} onClick={() => void register()}>수주 등록</Button>
       </Card>
       </div>
     </div>
