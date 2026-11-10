@@ -24,6 +24,8 @@ export interface ProductDrawing {
   id: number;
   fileName: string;
   createdAt: string;
+  previewUrl?: string | null;
+  expiresAt?: string | null;
 }
 
 export function listProducts(status?: ProductStatus): Promise<ProductItem[]> {
@@ -92,8 +94,16 @@ export function listCurrentDrawings(productId: number): Promise<ProductDrawing[]
   return apiClient.get<ProductDrawing[]>(`/products/${productId}/drawings/current`).then((response) => response.data);
 }
 
-export function uploadDrawing(productId: number, file: File): Promise<ProductDrawing> {
+export function uploadDrawings(productId: number, files: File[]): Promise<ProductDrawing[]> {
   const body = new FormData();
-  body.append("file", file);
-  return apiClient.post<ProductDrawing>(`/products/${productId}/drawings`, body).then((response) => response.data);
+  for (const file of files) body.append("files", file);
+  return apiClient.post<ProductDrawing[]>(`/products/${productId}/drawings`, body).then((response) => response.data);
+}
+
+export function uploadDrawing(productId: number, file: File): Promise<ProductDrawing> {
+  return uploadDrawings(productId, [file]).then((drawings) => drawings[0]);
+}
+
+export function deleteDrawing(productId: number, drawingId: number): Promise<void> {
+  return apiClient.delete(`/products/${productId}/drawings/${drawingId}`).then(() => undefined);
 }

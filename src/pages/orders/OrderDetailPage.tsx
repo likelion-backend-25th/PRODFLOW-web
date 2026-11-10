@@ -20,7 +20,7 @@ import {
   type OrderHistory,
   type OrderPayments,
 } from "@/lib/orderApi.ts";
-import { CARRIERS, completeShipment, getOrderShipment, refreshShipmentTracking, registerShipment, trackShipment, type OrderShipment } from "@/lib/shipmentApi.ts";
+import { completeShipment, getOrderShipment, listCarriers, markReadyToShip, refreshShipmentTracking, registerShipment, trackShipment, type Carrier, type OrderShipment } from "@/lib/shipmentApi.ts";
 import type { WorkOrderRow } from "@/lib/workOrdersApi.ts";
 import type { OrderStatus } from "@/types/domain.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
@@ -38,7 +38,8 @@ export function OrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [missing, setMissing] = useState("");
   const [amount, setAmount] = useState(0);
-  const [carrier, setCarrier] = useState<string>(CARRIERS[0].code);
+  const [carrierOptions, setCarrierOptions] = useState<Carrier[]>([]);
+  const [carrier, setCarrier] = useState("");
   const [trackingNo, setTrackingNo] = useState("");
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [editingItems, setEditingItems] = useState(false);
@@ -52,6 +53,21 @@ export function OrderDetailPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [depositing, setDepositing] = useState(false);
   const [depositSaved, setDepositSaved] = useState(false);
+  const [readying, setReadying] = useState(false);
+
+  useEffect(() => {
+    let ignore = false;
+    listCarriers().then((items) => {
+      if (ignore) return;
+      setCarrierOptions(items);
+      setCarrier((current) => current || items[0]?.code || "");
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [show]);
 
   useEffect(() => {
     const id = Number(orderId);
@@ -176,8 +192,35 @@ export function OrderDetailPage() {
     }
   }
 
+  async function moveToReady() {
+    if (readying) return;
+    setReadying(true);
+    try {
+      await markReadyToShip(currentOrder.id);
+      const loaded = await load(currentOrder.id);
+      setOrder(loaded.order);
+      setHistories(loaded.histories);
+      setPayments(loaded.payments);
+      setShipment(loaded.shipment);
+      setWorkOrders(loaded.workOrders);
+      show("출고 대기로 변경했습니다.");
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    } finally {
+      setReadying(false);
+    }
+  }
+
   async function ship() {
     if (shipping) return;
+    if (!carrier) {
+      show("택배사를 선택하세요.");
+      return;
+    }
+    if (!trackingNo.trim()) {
+      show("운송장 번호를 입력하세요.");
+      return;
+    }
     setShipping(true);
     try {
       await registerShipment(currentOrder.id, carrier, trackingNo);
@@ -453,13 +496,15 @@ export function OrderDetailPage() {
         ) : null}
         {trackingOpen ? <p className="mt-3 text-sm">{trackingText}</p> : null}
         <div className="mt-4 space-y-2">
+          {canManageOrders(user.role) && order.status === "PACKING" ? <Button disabled={readying} onClick={() => void moveToReady()}>출고 대기</Button> : null}
           {canManageOrders(user.role) && order.status === "READY_TO_SHIP" ? (
             <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
-              <SelectField label="택배사" value={carrier} onChange={(event) => setCarrier(event.target.value)}>
-                {CARRIERS.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
+              <SelectField label="택배사" value={carrier} onChange={(event) => setCarrier(event.target.value)} disabled={carrierOptions.length === 0}>
+                {carrierOptions.length === 0 ? <option value="">택배사 없음</option> : null}
+                {carrierOptions.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
               </SelectField>
               <TextField label="운송장" value={trackingNo} onChange={(event) => setTrackingNo(event.target.value.replace(/[^0-9-]/g, ""))} />
-              <Button disabled={shipping} onClick={() => void ship()}>출고</Button>
+              <Button disabled={shipping || !carrier} onClick={() => void ship()}>출고</Button>
             </div>
           ) : null}
           {canManageOrders(user.role) && order.status === "SHIPPING" && shipment ? <Button disabled={completing} onClick={() => void finishDelivery()}>배송 완료</Button> : null}

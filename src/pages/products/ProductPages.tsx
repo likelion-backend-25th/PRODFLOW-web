@@ -5,7 +5,7 @@ import { Badge, Button } from "@/components/ui.tsx";
 import { localDate } from "@/lib/dates.ts";
 import { apiStatus, readApiErrorMessage } from "@/lib/apiClient.ts";
 import { formatWon } from "@/lib/money.ts";
-import { checkModelCode, createProduct, getProduct, listCurrentDrawings, listDevices, listProductOrders, listProducts, searchProducts, updateProduct, updateProductStatus, uploadDrawing, type DeviceCode, type ProductItem, type ProductOrderHistory } from "@/lib/productApi.ts";
+import { checkModelCode, createProduct, deleteDrawing, getProduct, listCurrentDrawings, listDevices, listProductOrders, listProducts, searchProducts, updateProduct, updateProductStatus, uploadDrawings, type DeviceCode, type ProductDrawing, type ProductItem, type ProductOrderHistory } from "@/lib/productApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { ProductStatus } from "@/types/domain.ts";
@@ -202,8 +202,10 @@ function ProductEditor({ productId }: { productId?: string }) {
   const [description, setDescription] = useState("");
   const [priceText, setPriceText] = useState("");
   const [codeCheck, setCodeCheck] = useState("");
-  const [drawingFile, setDrawingFile] = useState<File | null>(null);
-  const [drawingPdfName, setDrawingPdfName] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [savedDrawings, setSavedDrawings] = useState<ProductDrawing[]>([]);
+  const [previewId, setPreviewId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [drawingError, setDrawingError] = useState("");
   const [deviceModal, setDeviceModal] = useState(false);
   const [deviceDraft, setDeviceDraft] = useState("");
@@ -226,13 +228,48 @@ function ProductEditor({ productId }: { productId?: string }) {
       setModelName(product.deviceName);
       setDescription(product.productDescription ?? "");
       setPriceText(formatPriceInput(String(product.currentPrice)));
-      setDrawingPdfName(drawings[0]?.fileName ?? "");
+      setSavedDrawings(drawings.filter((drawing) => drawing.fileName.length > 0));
       setReady(true);
     }).catch((error: unknown) => {
       if (!ignore) show(readApiErrorMessage(error));
     });
     return () => { ignore = true; };
   }, [productId, show]);
+
+  async function openSavedDrawing(drawing: ProductDrawing) {
+    if (!productId) return;
+    if (previewId === drawing.id) {
+      setPreviewId(null);
+      return;
+    }
+    if (!previewStale(drawing)) {
+      setPreviewId(drawing.id);
+      return;
+    }
+    try {
+      const drawings = (await listCurrentDrawings(Number(productId))).filter((item) => item.fileName.length > 0);
+      setSavedDrawings(drawings);
+      setPreviewId(drawing.id);
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    }
+  }
+
+  async function removeSavedDrawing(drawingId: number) {
+    if (!productId || deletingId !== null) return;
+    setDeletingId(drawingId);
+    try {
+      await deleteDrawing(Number(productId), drawingId);
+      const drawings = (await listCurrentDrawings(Number(productId))).filter((item) => item.fileName.length > 0);
+      setSavedDrawings(drawings);
+      if (previewId === drawingId) setPreviewId(null);
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   const deviceNames = [...new Set([...devices.map((device) => device.name), modelName, ...extraDevices].filter(Boolean))].sort((left, right) => left.localeCompare(right, "ko"));
   if (editing && !ready) return <p>품목을 불러오는 중입니다.</p>;
 
@@ -326,7 +363,12 @@ function ProductEditor({ productId }: { productId?: string }) {
                 productDescription: description.trim(),
                 currentPrice: unitPrice,
               });
-            if (drawingFile) await uploadDrawing(saved.id, drawingFile);
+            if (pendingFiles.length > 0) {
+              await uploadDrawings(saved.id, pendingFiles);
+              const drawings = (await listCurrentDrawings(saved.id)).filter((item) => item.fileName.length > 0);
+              setSavedDrawings(drawings);
+              setPendingFiles([]);
+            }
             show("품목을 저장했습니다. 이미 들어간 수주 단가는 바뀌지 않습니다.");
             navigate("/products");
           } catch (error: unknown) {
@@ -415,7 +457,7 @@ function ProductEditor({ productId }: { productId?: string }) {
           </section>
           <section className="rounded-xl border border-line bg-white p-5">
             <h2 className="font-semibold">파일</h2>
-            <p className="mt-1 text-sm text-muted">생산에 사용할 파일 올려 주세요. 2MB 이하입니다.</p>
+            <p className="mt-1 text-sm text-muted">생산에 사용할 파일을 올려 주세요. 파일마다 2MB 이하이고, 여러 장을 한 번에 고를 수 있습니다.</p>
             <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-muted hover:border-primary hover:text-primary">
               <FileUp size={20} />
               <span className="mt-2 font-semibold text-ink">파일 선택</span>
@@ -423,35 +465,42 @@ function ProductEditor({ productId }: { productId?: string }) {
               <input
                 className="sr-only"
                 type="file"
+                multiple
                 onChange={(event) => {
-                  const file = event.target.files?.[0];
+                  const selected = [...(event.target.files ?? [])];
                   event.target.value = "";
-                  if (!file) return;
-                  if (file.size > MAX_DRAWING_BYTES) {
-                    setDrawingError("파일은 2MB 이하로 올려 주세요.");
-                    return;
-                  }
-                  setDrawingFile(file);
-                  setDrawingPdfName(file.name);
-                  setDrawingError("");
+                  if (selected.length === 0) return;
+                  const oversized = selected.filter((file) => file.size > MAX_DRAWING_BYTES);
+                  const accepted = selected.filter((file) => file.size <= MAX_DRAWING_BYTES);
+                  setPendingFiles((current) => [...current, ...accepted]);
+                  setDrawingError(oversized.length > 0 ? "2MB를 넘는 파일은 빼 두었습니다." : "");
                 }}
               />
             </label>
-            {drawingPdfName ? (
-              <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2 text-sm">
-                <span className="truncate">{drawingPdfName}</span>
-                <button
-                  type="button"
-                  className="shrink-0 text-muted"
-                  onClick={() => {
-                    setDrawingPdfName("");
-                    setDrawingFile(null);
-                    setDrawingError("");
-                  }}
-                >
-                  삭제
-                </button>
-              </div>
+            {pendingFiles.length > 0 ? (
+              <ul className="mt-3 space-y-2">
+                {pendingFiles.map((file, index) => (
+                  <li key={`${file.name}-${file.size}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2 text-sm">
+                    <span className="min-w-0 truncate">{file.name}</span>
+                    <button type="button" className="shrink-0 text-muted" onClick={() => setPendingFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}>빼기</button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {savedDrawings.length > 0 ? (
+              <ul className="mt-3 space-y-2">
+                {savedDrawings.map((drawing) => (
+                  <li key={drawing.id} className="rounded-lg border border-line px-3 py-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <button type="button" className="min-w-0 truncate text-left text-primary" onClick={() => void openSavedDrawing(drawing)}>
+                        {drawing.fileName}
+                      </button>
+                      <button type="button" className="shrink-0 text-muted disabled:opacity-40" disabled={deletingId === drawing.id} onClick={() => void removeSavedDrawing(drawing.id)}>삭제</button>
+                    </div>
+                    {previewId === drawing.id ? <DrawingPreview drawing={savedDrawings.find((item) => item.id === drawing.id) ?? drawing} /> : null}
+                  </li>
+                ))}
+              </ul>
             ) : null}
             {drawingError ? <p className="mt-2 text-xs text-danger">{drawingError}</p> : null}
           </section>
@@ -544,17 +593,68 @@ function ProductStatusMark({ status, canChange, onChange }: { status: ProductSta
   );
 }
 
-function ProductFileWindow({ names }: { names: string[] }) {
+function isImageFile(name: string): boolean {
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+}
+
+function previewStale(drawing: ProductDrawing | null): boolean {
+  if (!drawing?.previewUrl || !drawing.expiresAt) return true;
+  const expires = Date.parse(drawing.expiresAt);
+  return Number.isNaN(expires) || expires <= Date.now();
+}
+
+function DrawingPreview({ drawing }: { drawing: ProductDrawing }) {
+  if (!drawing.previewUrl) return <p className="mt-3 text-xs text-muted">파일을 열 수 없습니다.</p>;
+  return (
+    <div className="mt-3">
+      {isImageFile(drawing.fileName) ? (
+        <img src={drawing.previewUrl} alt={drawing.fileName} className="max-h-64 w-full rounded-lg border border-line object-contain" />
+      ) : (
+        <iframe title={drawing.fileName} src={drawing.previewUrl} className="h-64 w-full rounded-lg border border-line" />
+      )}
+      <a href={drawing.previewUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-primary">새 탭에서 열기</a>
+    </div>
+  );
+}
+
+function ProductFileWindow({ productId, drawings, onDrawings }: { productId: number; drawings: ProductDrawing[]; onDrawings: (items: ProductDrawing[]) => void }) {
+  const show = useToastStore((state) => state.show);
+  const [openId, setOpenId] = useState<number | null>(null);
+  const open = drawings.find((drawing) => drawing.id === openId) ?? null;
+
+  async function toggle(drawing: ProductDrawing) {
+    if (openId === drawing.id) {
+      setOpenId(null);
+      return;
+    }
+    if (!previewStale(drawing)) {
+      setOpenId(drawing.id);
+      return;
+    }
+    try {
+      const fresh = (await listCurrentDrawings(productId)).filter((item) => item.fileName.length > 0);
+      onDrawings(fresh);
+      setOpenId(drawing.id);
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    }
+  }
+
   return (
     <section className="flex h-full w-full flex-col rounded-xl border border-line bg-white p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold">관련 파일</p>
-          <p className="mt-1 text-xs text-muted">생산에 사용하는 파일입니다.</p>
+          <p className="mt-1 text-xs text-muted">파일 이름을 누르면 내용을 봅니다.</p>
         </div>
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary"><FileText size={16} /></span>
       </div>
-      {names.length === 0 ? <p className="mt-4 text-sm text-muted">올린 파일이 없습니다.</p> : names.map((name, index) => <p key={`${name}-${index}`} className="mt-4 truncate text-sm">{name}</p>)}
+      {drawings.length === 0 ? <p className="mt-4 text-sm text-muted">올린 파일이 없습니다.</p> : drawings.map((drawing) => (
+        <button key={drawing.id} type="button" className="mt-4 truncate text-left text-sm text-primary" onClick={() => void toggle(drawing)}>
+          {drawing.fileName}
+        </button>
+      ))}
+      {open ? <DrawingPreview drawing={open} /> : null}
     </section>
   );
 }
@@ -582,7 +682,7 @@ export function ProductDetailPage() {
   const role = useAuthStore((state) => state.user?.role);
   const recentOrders = useProductOrders(productId);
   const [product, setProduct] = useState<ReturnType<typeof toProductRow> | null>(null);
-  const [drawingNames, setDrawingNames] = useState<string[]>([]);
+  const [drawings, setDrawings] = useState<ProductDrawing[]>([]);
   const [missing, setMissing] = useState(false);
   const [loadError, setLoadError] = useState("");
   useEffect(() => {
@@ -595,7 +695,7 @@ export function ProductDetailPage() {
     Promise.all([getProduct(id), listCurrentDrawings(id)]).then(([item, drawings]) => {
       if (ignore) return;
       setProduct(toProductRow(item));
-      setDrawingNames(drawings.map((drawing) => drawing.fileName).filter((name) => name.length > 0));
+      setDrawings(drawings.filter((drawing) => drawing.fileName.length > 0));
       setLoadError("");
     }).catch((error: unknown) => {
       if (ignore) return;
@@ -643,7 +743,7 @@ export function ProductDetailPage() {
               <p className="mt-1">{product.description || "설명이 없습니다."}</p>
             </div>
             <div className="w-full max-w-xs shrink-0">
-              <ProductFileWindow names={drawingNames} />
+              <ProductFileWindow productId={Number(product.id)} drawings={drawings} onDrawings={setDrawings} />
             </div>
           </div>
           <div className="mt-5 grid gap-4 border-t border-line pt-4 sm:grid-cols-2">

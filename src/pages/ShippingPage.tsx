@@ -8,15 +8,15 @@ import { localDateTime } from "@/lib/dates.ts";
 import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } from "@/lib/labels.ts";
 import { formatWon } from "@/lib/money.ts";
 import { getOrderPayments, screenOrderStatus, screenPaymentStatus } from "@/lib/orderApi.ts";
-import { CARRIERS, completeShipment, listShipments, refreshShipmentTracking, registerShipment, type ShipmentList, type ShipmentListItem, type ShipmentTab } from "@/lib/shipmentApi.ts";
+import { completeShipment, listCarriers, listShipments, markReadyToShip, refreshShipmentTracking, registerShipment, type Carrier, type ShipmentList, type ShipmentListItem, type ShipmentTab } from "@/lib/shipmentApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
-const tabs: Array<{ id: ShipmentTab; label: string; hint: string }> = [
-  { id: "PACKING", label: "포장중", hint: "생산이 끝나 포장 중인 수주" },
-  { id: "READY_TO_SHIP", label: "출고대기", hint: "운송장 입력 후 출고" },
-  { id: "SHIPPING", label: "배송중", hint: "출고 후 거래처 도착 전" },
-  { id: "BALANCE", label: "잔금 대기", hint: "배송 완료 · 거래처 확인 후 잔금 입금 대기" },
+const tabs: Array<{ id: ShipmentTab; label: string; card: string; hint: string }> = [
+  { id: "PACKING", label: "포장중", card: "포장 완료", hint: "생산이 끝나 포장 완료인 수주" },
+  { id: "READY_TO_SHIP", label: "출고대기", card: "출고대기", hint: "운송장 입력 후 출고" },
+  { id: "SHIPPING", label: "배송중", card: "배송중", hint: "출고 후 거래처 도착 전" },
+  { id: "BALANCE", label: "잔금 대기", card: "잔금 대기", hint: "배송 완료 · 거래처 확인 후 잔금 입금 대기" },
 ];
 
 const emptyCounts = { packing: 0, readyToShip: 0, shipping: 0, balance: 0 };
@@ -41,10 +41,23 @@ export function ShippingPage() {
   const [balances, setBalances] = useState<Record<number, number | null>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [carrierOptions, setCarrierOptions] = useState<Carrier[]>([]);
   const [carriers, setCarriers] = useState<Record<number, string>>({});
   const [tracking, setTracking] = useState<Record<number, string>>({});
   const [busyId, setBusyId] = useState<number | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let ignore = false;
+    listCarriers().then((items) => {
+      if (!ignore) setCarrierOptions(items);
+    }).catch((reason: unknown) => {
+      if (!ignore) show(readApiErrorMessage(reason));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [show]);
 
   useEffect(() => {
     let ignore = false;
@@ -83,6 +96,7 @@ export function ShippingPage() {
   const counts = list?.counts ?? emptyCounts;
   const rows = list?.tab === tab ? list.items : [];
   const canShip = canManageOrders(user.role);
+  const defaultCarrier = carrierOptions[0]?.code ?? "";
 
   async function run(orderId: number, action: () => Promise<string>) {
     if (busyId !== null) return;
@@ -107,7 +121,7 @@ export function ShippingPage() {
       <div className="mt-4 grid gap-3 md:grid-cols-4">
         {tabs.map((item) => (
           <button key={item.id} type="button" className={cn("rounded-xl border bg-white p-4 text-left", tab === item.id ? "border-primary ring-1 ring-primary" : "border-line")} onClick={() => setTab(item.id)}>
-            <p className="text-sm text-muted">{item.label}</p>
+            <p className="text-sm text-muted">{item.card}</p>
             <p className="mt-2 text-2xl font-semibold">{countOf(item.id, counts)}건</p>
             <p className="mt-1 text-xs text-muted">{item.hint}</p>
           </button>
@@ -127,7 +141,7 @@ export function ShippingPage() {
                 <th className="py-3 font-medium">거래처 / 품목</th>
                 <th className="py-3 font-medium">배송지</th>
                 <th className="py-3 font-medium">납기</th>
-                <th className="py-3 font-medium">상태</th>
+                {tab === "PACKING" ? null : <th className="py-3 font-medium">상태</th>}
                 <th className="py-3 font-medium">{tab === "BALANCE" ? "잔금" : tab === "SHIPPING" ? "운송장" : "입금"}</th>
                 <th className="py-3 pr-5 font-medium">처리</th>
               </tr>
@@ -140,15 +154,23 @@ export function ShippingPage() {
                   tab={tab}
                   canShip={canShip}
                   busy={busyId === order.orderId}
-                  carrier={carriers[order.orderId] ?? CARRIERS[0].code}
+                  carrierOptions={carrierOptions}
+                  carrier={carriers[order.orderId] ?? defaultCarrier}
                   trackingNo={tracking[order.orderId] ?? ""}
                   balance={balances[order.orderId]}
                   onCarrier={(value) => setCarriers({ ...carriers, [order.orderId]: value })}
                   onTracking={(value) => setTracking({ ...tracking, [order.orderId]: value.replace(/[^0-9-]/g, "") })}
+                  onReady={() => void run(order.orderId, async () => {
+                    await markReadyToShip(order.orderId);
+                    setTab("READY_TO_SHIP");
+                    return "출고 대기로 변경했습니다.";
+                  })}
                   onShip={() => void run(order.orderId, async () => {
+                    const carrierCode = carriers[order.orderId] ?? defaultCarrier;
                     const number = (tracking[order.orderId] ?? "").trim();
+                    if (!carrierCode) throw new Error("택배사를 선택하세요.");
                     if (!number) throw new Error("운송장 번호를 입력하세요.");
-                    await registerShipment(order.orderId, carriers[order.orderId] ?? CARRIERS[0].code, number);
+                    await registerShipment(order.orderId, carrierCode, number);
                     return "출고했습니다.";
                   })}
                   onComplete={() => void run(order.orderId, async () => {
@@ -163,9 +185,9 @@ export function ShippingPage() {
                   })}
                 />
               ))}
-              {!loading && error && rows.length === 0 ? <tr><td colSpan={7} className="px-5 py-10 text-center text-danger">{error}</td></tr> : null}
-              {!loading && !error && rows.length === 0 ? <tr><td colSpan={7} className="px-5 py-10 text-center text-muted">처리할 수주가 없습니다.</td></tr> : null}
-              {loading && rows.length === 0 ? <tr><td colSpan={7} className="px-5 py-10 text-center text-muted">배송 목록을 불러오는 중입니다.</td></tr> : null}
+              {!loading && error && rows.length === 0 ? <tr><td colSpan={tab === "PACKING" ? 6 : 7} className="px-5 py-10 text-center text-danger">{error}</td></tr> : null}
+              {!loading && !error && rows.length === 0 ? <tr><td colSpan={tab === "PACKING" ? 6 : 7} className="px-5 py-10 text-center text-muted">처리할 수주가 없습니다.</td></tr> : null}
+              {loading && rows.length === 0 ? <tr><td colSpan={tab === "PACKING" ? 6 : 7} className="px-5 py-10 text-center text-muted">배송 목록을 불러오는 중입니다.</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -179,11 +201,13 @@ function ShipmentRow({
   tab,
   canShip,
   busy,
+  carrierOptions,
   carrier,
   trackingNo,
   balance,
   onCarrier,
   onTracking,
+  onReady,
   onShip,
   onComplete,
   onRefresh,
@@ -192,11 +216,13 @@ function ShipmentRow({
   tab: ShipmentTab;
   canShip: boolean;
   busy: boolean;
+  carrierOptions: Carrier[];
   carrier: string;
   trackingNo: string;
   balance: number | null | undefined;
   onCarrier: (value: string) => void;
   onTracking: (value: string) => void;
+  onReady: () => void;
   onShip: () => void;
   onComplete: () => void;
   onRefresh: () => void;
@@ -212,7 +238,7 @@ function ShipmentRow({
       </td>
       <td className="max-w-48 py-3 text-xs">{order.shippingAddress}</td>
       <td className="py-3">{dateText(order.estimatedDueDate)}</td>
-      <td className="py-3"><Badge className={orderStatusTone(status)}>{orderStatusLabel[status]}</Badge></td>
+      {tab === "PACKING" ? null : <td className="py-3"><Badge className={orderStatusTone(status)}>{orderStatusLabel[status]}</Badge></td>}
       <td className="py-3 text-xs">
         {tab === "SHIPPING" ? (
           <>
@@ -230,15 +256,21 @@ function ShipmentRow({
         )}
       </td>
       <td className="py-3 pr-5">
-        {tab === "PACKING" ? <span className="text-xs text-muted">포장중</span> : null}
+        {tab === "PACKING" ? (
+          canShip ? (
+            // 포장중 목록은 작업지시가 모두 포장완료인 수주만 온다. 행을 숨기지 않고 출고 대기 버튼을 켜 둔다.
+            <Button disabled={busy} onClick={onReady}>출고 대기</Button>
+          ) : <span className="text-xs text-muted">포장중</span>
+        ) : null}
         {tab === "READY_TO_SHIP" ? (
           canShip ? (
             <div className="flex flex-wrap items-center gap-2">
-              <select className="h-10 rounded-lg border border-line bg-white px-2" value={carrier} onChange={(event) => onCarrier(event.target.value)} aria-label="택배사">
-                {CARRIERS.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
+              <select className="h-10 rounded-lg border border-line bg-white px-2" value={carrier} onChange={(event) => onCarrier(event.target.value)} aria-label="택배사" disabled={carrierOptions.length === 0}>
+                {carrierOptions.length === 0 ? <option value="">택배사 없음</option> : null}
+                {carrierOptions.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
               </select>
               <input className="h-10 w-36 rounded-lg border border-line px-3" value={trackingNo} placeholder="운송장 번호" aria-label="운송장 번호" onChange={(event) => onTracking(event.target.value)} />
-              <Button disabled={busy} onClick={onShip}>출고</Button>
+              <Button disabled={busy || !carrier} onClick={onShip}>출고</Button>
             </div>
           ) : <span className="text-xs text-muted">수주 관리자가 처리</span>
         ) : null}
