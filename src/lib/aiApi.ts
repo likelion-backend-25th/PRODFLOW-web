@@ -56,6 +56,10 @@ export async function renameConversation(conversationId: number, title: string):
   await apiClient.patch(`/ai/conversations/${conversationId}/title`, { title });
 }
 
+export async function closeConversation(conversationId: number): Promise<void> {
+  await apiClient.patch(`/ai/conversations/${conversationId}/close`);
+}
+
 export async function askAi(conversationId: number, model: string, message: string): Promise<AiAnswer> {
   const { data } = await apiClient.post<AiAnswer>(`/ai/conversations/${conversationId}/messages`, { model, message });
   return data;
