@@ -31,6 +31,7 @@ export interface ShipmentListItem {
   trackingNumber: string | null;
   startedAt: string | null;
   deliveredAt: string | null;
+  readyToShipEligible: boolean;
 }
 
 export interface ShipmentList {
@@ -82,12 +83,23 @@ export interface ShipmentCompleted {
   deliveredAt: string | null;
 }
 
+export interface ReadyToShipResult {
+  orderId: number;
+  orderNo: string;
+  orderStatus: string;
+}
+
 export function listCarriers(): Promise<Carrier[]> {
   return apiClient.get<Carrier[]>("/carriers").then((response) => response.data);
 }
 
 export function listShipments(tab: ShipmentTab): Promise<ShipmentList> {
   return apiClient.get<ShipmentList>("/shipments", { params: { tab } }).then((response) => response.data);
+}
+
+export function markReadyToShip(orderId: number): Promise<ReadyToShipResult> {
+  // 포장중이고 작업지시가 모두 포장완료일 때만 출고 대기가 된다. 그 전에는 운송장을 등록하지 않는다.
+  return apiClient.post<ReadyToShipResult>(`/shipments/orders/${orderId}/ready-to-ship`).then((response) => response.data);
 }
 
 export function registerShipment(orderId: number, carrierCode: string, trackingNumber: string): Promise<ShipmentRegistered> {

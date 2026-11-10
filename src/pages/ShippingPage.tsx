@@ -8,15 +8,15 @@ import { localDateTime } from "@/lib/dates.ts";
 import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } from "@/lib/labels.ts";
 import { formatWon } from "@/lib/money.ts";
 import { getOrderPayments, screenOrderStatus, screenPaymentStatus } from "@/lib/orderApi.ts";
-import { completeShipment, listCarriers, listShipments, refreshShipmentTracking, registerShipment, type Carrier, type ShipmentList, type ShipmentListItem, type ShipmentTab } from "@/lib/shipmentApi.ts";
+import { completeShipment, listCarriers, listShipments, markReadyToShip, refreshShipmentTracking, registerShipment, type Carrier, type ShipmentList, type ShipmentListItem, type ShipmentTab } from "@/lib/shipmentApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
-const tabs: Array<{ id: ShipmentTab; label: string; hint: string }> = [
-  { id: "PACKING", label: "포장중", hint: "생산이 끝나 포장 중인 수주" },
-  { id: "READY_TO_SHIP", label: "출고대기", hint: "운송장 입력 후 출고" },
-  { id: "SHIPPING", label: "배송중", hint: "출고 후 거래처 도착 전" },
-  { id: "BALANCE", label: "잔금 대기", hint: "배송 완료 · 거래처 확인 후 잔금 입금 대기" },
+const tabs: Array<{ id: ShipmentTab; label: string; card: string; hint: string }> = [
+  { id: "PACKING", label: "포장중", card: "포장 완료", hint: "생산이 끝나 포장 완료인 수주" },
+  { id: "READY_TO_SHIP", label: "출고대기", card: "출고대기", hint: "운송장 입력 후 출고" },
+  { id: "SHIPPING", label: "배송중", card: "배송중", hint: "출고 후 거래처 도착 전" },
+  { id: "BALANCE", label: "잔금 대기", card: "잔금 대기", hint: "배송 완료 · 거래처 확인 후 잔금 입금 대기" },
 ];
 
 const emptyCounts = { packing: 0, readyToShip: 0, shipping: 0, balance: 0 };
@@ -121,7 +121,7 @@ export function ShippingPage() {
       <div className="mt-4 grid gap-3 md:grid-cols-4">
         {tabs.map((item) => (
           <button key={item.id} type="button" className={cn("rounded-xl border bg-white p-4 text-left", tab === item.id ? "border-primary ring-1 ring-primary" : "border-line")} onClick={() => setTab(item.id)}>
-            <p className="text-sm text-muted">{item.label}</p>
+            <p className="text-sm text-muted">{item.card}</p>
             <p className="mt-2 text-2xl font-semibold">{countOf(item.id, counts)}건</p>
             <p className="mt-1 text-xs text-muted">{item.hint}</p>
           </button>
@@ -141,7 +141,7 @@ export function ShippingPage() {
                 <th className="py-3 font-medium">거래처 / 품목</th>
                 <th className="py-3 font-medium">배송지</th>
                 <th className="py-3 font-medium">납기</th>
-                <th className="py-3 font-medium">상태</th>
+                {tab === "PACKING" ? null : <th className="py-3 font-medium">상태</th>}
                 <th className="py-3 font-medium">{tab === "BALANCE" ? "잔금" : tab === "SHIPPING" ? "운송장" : "입금"}</th>
                 <th className="py-3 pr-5 font-medium">처리</th>
               </tr>
@@ -160,6 +160,11 @@ export function ShippingPage() {
                   balance={balances[order.orderId]}
                   onCarrier={(value) => setCarriers({ ...carriers, [order.orderId]: value })}
                   onTracking={(value) => setTracking({ ...tracking, [order.orderId]: value.replace(/[^0-9-]/g, "") })}
+                  onReady={() => void run(order.orderId, async () => {
+                    await markReadyToShip(order.orderId);
+                    setTab("READY_TO_SHIP");
+                    return "출고 대기로 변경했습니다.";
+                  })}
                   onShip={() => void run(order.orderId, async () => {
                     const carrierCode = carriers[order.orderId] ?? defaultCarrier;
                     const number = (tracking[order.orderId] ?? "").trim();
@@ -180,9 +185,9 @@ export function ShippingPage() {
                   })}
                 />
               ))}
-              {!loading && error && rows.length === 0 ? <tr><td colSpan={7} className="px-5 py-10 text-center text-danger">{error}</td></tr> : null}
-              {!loading && !error && rows.length === 0 ? <tr><td colSpan={7} className="px-5 py-10 text-center text-muted">처리할 수주가 없습니다.</td></tr> : null}
-              {loading && rows.length === 0 ? <tr><td colSpan={7} className="px-5 py-10 text-center text-muted">배송 목록을 불러오는 중입니다.</td></tr> : null}
+              {!loading && error && rows.length === 0 ? <tr><td colSpan={tab === "PACKING" ? 6 : 7} className="px-5 py-10 text-center text-danger">{error}</td></tr> : null}
+              {!loading && !error && rows.length === 0 ? <tr><td colSpan={tab === "PACKING" ? 6 : 7} className="px-5 py-10 text-center text-muted">처리할 수주가 없습니다.</td></tr> : null}
+              {loading && rows.length === 0 ? <tr><td colSpan={tab === "PACKING" ? 6 : 7} className="px-5 py-10 text-center text-muted">배송 목록을 불러오는 중입니다.</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -202,6 +207,7 @@ function ShipmentRow({
   balance,
   onCarrier,
   onTracking,
+  onReady,
   onShip,
   onComplete,
   onRefresh,
@@ -216,6 +222,7 @@ function ShipmentRow({
   balance: number | null | undefined;
   onCarrier: (value: string) => void;
   onTracking: (value: string) => void;
+  onReady: () => void;
   onShip: () => void;
   onComplete: () => void;
   onRefresh: () => void;
@@ -231,7 +238,7 @@ function ShipmentRow({
       </td>
       <td className="max-w-48 py-3 text-xs">{order.shippingAddress}</td>
       <td className="py-3">{dateText(order.estimatedDueDate)}</td>
-      <td className="py-3"><Badge className={orderStatusTone(status)}>{orderStatusLabel[status]}</Badge></td>
+      {tab === "PACKING" ? null : <td className="py-3"><Badge className={orderStatusTone(status)}>{orderStatusLabel[status]}</Badge></td>}
       <td className="py-3 text-xs">
         {tab === "SHIPPING" ? (
           <>
@@ -249,7 +256,12 @@ function ShipmentRow({
         )}
       </td>
       <td className="py-3 pr-5">
-        {tab === "PACKING" ? <span className="text-xs text-muted">포장중</span> : null}
+        {tab === "PACKING" ? (
+          canShip ? (
+            // 포장중 목록은 작업지시가 모두 포장완료인 수주만 온다. 행을 숨기지 않고 출고 대기 버튼을 켜 둔다.
+            <Button disabled={busy} onClick={onReady}>출고 대기</Button>
+          ) : <span className="text-xs text-muted">포장중</span>
+        ) : null}
         {tab === "READY_TO_SHIP" ? (
           canShip ? (
             <div className="flex flex-wrap items-center gap-2">
