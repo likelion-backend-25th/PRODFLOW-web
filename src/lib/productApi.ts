@@ -28,12 +28,23 @@ export interface ProductDrawing {
   expiresAt?: string | null;
 }
 
-export function listProducts(status?: ProductStatus): Promise<ProductItem[]> {
-  return apiClient.get<ProductItem[]>("/products", { params: { status } }).then((response) => response.data);
+export interface ProductPage {
+  content: ProductItem[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
 }
 
-export function searchProducts(keyword: string, status?: ProductStatus): Promise<ProductItem[]> {
-  return apiClient.get<ProductItem[]>("/products/search", { params: { keyword: keyword || undefined, status } }).then((response) => response.data);
+const PRODUCT_PAGE_SIZE = 10;
+const PRODUCT_SORT = "id,asc";
+
+export function listProducts(status?: ProductStatus, page = 0, size = PRODUCT_PAGE_SIZE): Promise<ProductPage> {
+  return apiClient.get<ProductPage>("/products", { params: { status, page, size, sort: PRODUCT_SORT } }).then((response) => response.data);
+}
+
+export function searchProducts(keyword: string, status?: ProductStatus, page = 0, size = PRODUCT_PAGE_SIZE): Promise<ProductPage> {
+  return apiClient.get<ProductPage>("/products/search", { params: { keyword: keyword || undefined, status, page, size, sort: PRODUCT_SORT } }).then((response) => response.data);
 }
 
 export function getProduct(id: number): Promise<ProductItem> {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "react-router";
 import axios from "axios";
 import { Badge, Button } from "@/components/ui.tsx";
@@ -33,10 +34,21 @@ function dateText(value: string | null): string {
   return value.slice(0, 10);
 }
 
+const SHIPMENT_PAGE_SIZE = 10;
+
+function pageNumbers(page: number, totalPages: number): number[] {
+  if (totalPages <= 0) return [];
+  const current = Math.min(page + 1, totalPages);
+  const start = Math.max(1, current - 2);
+  const end = Math.min(totalPages, start + 4);
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+}
+
 export function ShippingPage() {
   const user = useAuthStore((state) => state.user);
   const show = useToastStore((state) => state.show);
   const [tab, setTab] = useState<ShipmentTab>("READY_TO_SHIP");
+  const [page, setPage] = useState(0);
   const [list, setList] = useState<ShipmentList | null>(null);
   const [balances, setBalances] = useState<Record<number, number | null>>({});
   const [loading, setLoading] = useState(true);
@@ -61,16 +73,23 @@ export function ShippingPage() {
 
   useEffect(() => {
     let ignore = false;
+    let accepted = false;
     setLoading(true);
-    listShipments(tab).then(async (result) => {
+    listShipments(tab, page).then(async (result) => {
       if (ignore) return;
+      const totalPages = result.page.totalPages;
+      if (page > 0 && page >= totalPages) {
+        setPage(Math.max(0, totalPages - 1));
+        return;
+      }
+      accepted = true;
       setList(result);
       setError("");
       if (tab !== "BALANCE") {
         setBalances({});
         return;
       }
-      const entries = await Promise.all(result.items.map(async (item) => {
+      const entries = await Promise.all(result.page.content.map(async (item) => {
         try {
           const payment = await getOrderPayments(item.orderId);
           return [item.orderId, payment.balanceAmount] as const;
@@ -81,20 +100,27 @@ export function ShippingPage() {
       if (!ignore) setBalances(Object.fromEntries(entries));
     }).catch((reason: unknown) => {
       if (ignore) return;
+      accepted = true;
       const message = readApiErrorMessage(reason);
       setError(message);
       show(message);
     }).finally(() => {
-      if (!ignore) setLoading(false);
+      if (!ignore && accepted) setLoading(false);
     });
     return () => {
       ignore = true;
     };
-  }, [tab, reloadKey, show]);
+  }, [page, tab, reloadKey, show]);
 
   if (!user) return null;
   const counts = list?.counts ?? emptyCounts;
-  const rows = list?.tab === tab ? list.items : [];
+  const currentPage = list?.tab === tab ? list.page : null;
+  const rows = currentPage?.content ?? [];
+  const totalElements = currentPage?.totalElements ?? 0;
+  const totalPages = currentPage?.totalPages ?? 0;
+  const numbers = pageNumbers(page, totalPages);
+  const rangeStart = totalElements === 0 ? 0 : page * SHIPMENT_PAGE_SIZE + 1;
+  const rangeEnd = Math.min(totalElements, page * SHIPMENT_PAGE_SIZE + rows.length);
   const canShip = canManageOrders(user.role);
   const defaultCarrier = carrierOptions[0]?.code ?? "";
 
@@ -120,7 +146,7 @@ export function ShippingPage() {
 
       <div className="mt-4 grid gap-3 md:grid-cols-4">
         {tabs.map((item) => (
-          <button key={item.id} type="button" className={cn("rounded-xl border bg-white p-4 text-left", tab === item.id ? "border-primary ring-1 ring-primary" : "border-line")} onClick={() => setTab(item.id)}>
+          <button key={item.id} type="button" className={cn("rounded-xl border bg-white p-4 text-left", tab === item.id ? "border-primary ring-1 ring-primary" : "border-line")} onClick={() => { setTab(item.id); setPage(0); }}>
             <p className="text-sm text-muted">{item.card}</p>
             <p className="mt-2 text-2xl font-semibold">{countOf(item.id, counts)}건</p>
             <p className="mt-1 text-xs text-muted">{item.hint}</p>
@@ -131,7 +157,7 @@ export function ShippingPage() {
       <section className="mt-4 overflow-hidden rounded-xl border border-line bg-white">
         <div className="flex items-center justify-between px-5 py-3">
           <h2 className="font-semibold">{tabs.find((item) => item.id === tab)?.label} 목록</h2>
-          <span className="text-sm text-muted">납기 빠른 순 · {loading ? "불러오는 중" : `${rows.length}건`}</span>
+          <span className="text-sm text-muted">납기 빠른 순 · {loading ? "불러오는 중" : `총 ${totalElements}건`}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[980px] text-left text-sm">
@@ -163,6 +189,7 @@ export function ShippingPage() {
                   onReady={() => void run(order.orderId, async () => {
                     await markReadyToShip(order.orderId);
                     setTab("READY_TO_SHIP");
+                    setPage(0);
                     return "출고 대기로 변경했습니다.";
                   })}
                   onShip={() => void run(order.orderId, async () => {
@@ -190,6 +217,22 @@ export function ShippingPage() {
               {loading && rows.length === 0 ? <tr><td colSpan={tab === "PACKING" ? 6 : 7} className="px-5 py-10 text-center text-muted">배송 목록을 불러오는 중입니다.</td></tr> : null}
             </tbody>
           </table>
+        </div>
+        <div className="flex items-center justify-between border-t border-line px-5 py-3 text-xs text-muted">
+          <span>총 {totalElements}건 중 {rangeStart === 0 ? 0 : `${rangeStart}–${rangeEnd}`}건 표시</span>
+          <span className="flex items-center gap-1">
+            <button type="button" className="grid size-7 place-items-center rounded-md disabled:opacity-30" disabled={page === 0 || loading} onClick={() => setPage((value) => value - 1)} aria-label="이전 페이지">
+              <ChevronLeft className="size-4" />
+            </button>
+            {numbers.map((number) => (
+              <button key={number} type="button" className={number === page + 1 ? "grid size-7 place-items-center rounded-md bg-primary-soft font-semibold text-primary" : "grid size-7 place-items-center rounded-md font-semibold text-ink"} onClick={() => setPage(number - 1)}>
+                {number}
+              </button>
+            ))}
+            <button type="button" className="grid size-7 place-items-center rounded-md disabled:opacity-30" disabled={loading || totalPages === 0 || page + 1 >= totalPages} onClick={() => setPage((value) => value + 1)} aria-label="다음 페이지">
+              <ChevronRight className="size-4" />
+            </button>
+          </span>
         </div>
       </section>
     </div>
