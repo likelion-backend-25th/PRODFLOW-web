@@ -76,7 +76,8 @@ export interface OrderHistory {
 export interface OrderVirtualAccount {
   virtualAccountId: number;
   paymentId: number;
-  bankCode: string;
+  bankCode?: string;
+  bank?: string;
   accountNumber: string;
   accountName: string;
   expiresAt: string | null;
@@ -344,4 +345,42 @@ export async function listOrderWorkOrders(orderId: number): Promise<WorkOrderRow
     page += 1;
   }
   return rows;
+}
+
+
+export interface PaymentNotificationResult {
+  requestId: string;
+  status: "PROCESSING" | "SENDING" | "SENT" | "FAILED" | "ISSUE_UNCERTAIN";
+  message: string;
+}
+
+export async function sendPaymentNotification(
+  order: OrderDetail,
+  payments: OrderPayments,
+  requestId: string,
+): Promise<PaymentNotificationResult> {
+  const { data } = await apiClient.post<PaymentNotificationResult>("/payments/orders/" + order.id + "/notifications", {
+    requestId,
+    recipient: order.client.email,
+    totalAmount: order.totalAmount,
+    supplyAmount: order.supplyAmount,
+    vatAmount: order.vatAmount,
+    depositAmount: payments.depositAmount,
+    vatIncluded: order.vatIncluded,
+    depositDueDate: order.depositDueDate,
+    items: order.items.map(({ id, productName, quantity, unitPrice, supplyAmount }) => ({
+      id,
+      productName,
+      quantity,
+      unitPrice,
+      supplyAmount,
+    })),
+  });
+  return data;
+}
+
+
+export async function cancelOrder(orderId: number, reason: string): Promise<OrderDetail> {
+  const { data } = await apiClient.patch<OrderDetail>("/orders/" + orderId + "/cancel", { reason });
+  return data;
 }

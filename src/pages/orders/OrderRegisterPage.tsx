@@ -115,7 +115,7 @@ export function OrderRegisterPage() {
   }, [registeredDetail, registeredRoad, registeredZip, useCompanyAddress]);
   const [receiverName, setReceiverName] = useState(client?.contactName ?? "");
   const [receiverPhone, setReceiverPhone] = useState(client?.contactMobile ?? "");
-  const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>("SMS");
+  const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>("EMAIL");
   const [memo, setMemo] = useState("");
   const depositDueDate = addDays(todayISO(), 3);
   const [quantities, setQuantities] = useState<Record<string, number>>({});

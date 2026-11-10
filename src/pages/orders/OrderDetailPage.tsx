@@ -11,6 +11,7 @@ import { depositTarget, formatWon, lineAmount, orderTotal } from "@/lib/money.ts
 import {
   getOrder,
   getOrderHistories,
+  cancelOrder,
   getOrderPayments,
   listOrderWorkOrders,
   recordManualDeposit,
@@ -25,6 +26,8 @@ import type { WorkOrderRow } from "@/lib/workOrdersApi.ts";
 import type { OrderStatus } from "@/types/domain.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
+
+import { PaymentNotificationModal } from "./PaymentNotificationModal.tsx";
 
 export function OrderDetailPage() {
   const { orderId = "" } = useParams();
@@ -48,26 +51,14 @@ export function OrderDetailPage() {
   const [trackingText, setTrackingText] = useState("");
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [shipping, setShipping] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [depositing, setDepositing] = useState(false);
   const [depositSaved, setDepositSaved] = useState(false);
   const [readying, setReadying] = useState(false);
-
-  useEffect(() => {
-    let ignore = false;
-    listCarriers().then((items) => {
-      if (ignore) return;
-      setCarrierOptions(items);
-      setCarrier((current) => current || items[0]?.code || "");
-    }).catch((error: unknown) => {
-      if (!ignore) show(readApiErrorMessage(error));
-    });
-    return () => {
-      ignore = true;
-    };
-  }, [show]);
+  const [notificationOpen, setNotificationOpen] = useState(false);
 
   useEffect(() => {
     let ignore = false;
@@ -155,7 +146,7 @@ export function OrderDetailPage() {
   const assigneeName = workOrders.find((item) => item.assignedName)?.assignedName || "미배정";
   const depositRows = (payments?.payments ?? []).filter((item) => item.status === "PAID" || item.paymentHistory);
   const account = payments?.payments.find((item) => item.virtualAccount)?.virtualAccount;
-  const virtualAccount = account ? `${account.bankCode} ${account.accountNumber}` : "-";
+  const virtualAccount = account ? `${bankLabel(account.bank ?? account.bankCode)} ${account.accountNumber}` : "-";
   const dueToday = (order.dueDate ?? "").slice(0, 10) === todayISO();
   const step = progressIndex(order.status);
   const depositLabel = paymentStatus === "PARTIAL" ? "계약금 입금" : paymentStatus === "PAID" ? "전액 입금" : "미입금";
@@ -274,6 +265,47 @@ export function OrderDetailPage() {
     }
   }
 
+  async function refreshAfterNotification() {
+    const [detail, paymentRows] = await Promise.all([
+      getOrder(currentOrder.id),
+      getOrderPayments(currentOrder.id),
+    ]);
+    setOrder(detail);
+    setPayments(paymentRows);
+  }
+
+  async function cancelCurrentOrder() {
+    if (cancelSubmitting) {
+      return;
+    }
+    const reason = cancelReason.trim();
+    if (!reason || reason.length > 255) {
+      show("취소 사유를 1~255자로 입력해주세요.");
+      return;
+    }
+    setCancelSubmitting(true);
+    let cancelled = false;
+    try {
+      const response = await cancelOrder(currentOrder.id, reason);
+      cancelled = true;
+      setOrder(response);
+      setCancelling(false);
+      setCancelReason("");
+      setEditingItems(false);
+      const loaded = await load(currentOrder.id);
+      setOrder(loaded.order);
+      setHistories(loaded.histories);
+      setPayments(loaded.payments);
+      setShipment(loaded.shipment);
+      setWorkOrders(loaded.workOrders);
+      show("수주와 원본 견적을 취소했습니다.");
+    } catch (error: unknown) {
+      show(cancelled ? "수주는 취소되었습니다. 상세 정보를 새로고침하지 못했습니다. 페이지를 새로고침해주세요." : readApiErrorMessage(error));
+    } finally {
+      setCancelSubmitting(false);
+    }
+  }
+
   async function refreshTracking() {
     if (!shipment || refreshing) return;
     setRefreshing(true);
@@ -295,6 +327,13 @@ export function OrderDetailPage() {
 
   return (
     <div className="space-y-4">
+      {notificationOpen ? (
+        <PaymentNotificationModal
+          orderId={order.id}
+          onClose={() => setNotificationOpen(false)}
+          onComplete={refreshAfterNotification}
+        />
+      ) : null}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">수주 상세</h1>
@@ -525,13 +564,13 @@ export function OrderDetailPage() {
           {canManageOrders(user.role) && order.status === "WAITING" && paidAmount === 0 ? (
             cancelling ? (
               <div className="space-y-2">
-                <TextField label="취소 사유" value={cancelReason} placeholder="거래처 확인 내용" onChange={(event) => setCancelReason(event.target.value)} />
+                <TextField label="취소 사유" maxLength={255} disabled={cancelSubmitting} value={cancelReason} placeholder="거래처 확인 내용" onChange={(event) => setCancelReason(event.target.value)} />
                 <div className="flex gap-2">
-                  <Button tone="ghost" onClick={() => setCancelling(false)}>닫기</Button>
-                  <Button tone="danger" onClick={() => unavailable("수주를 취소하는 API가 없습니다.")}>수주 취소</Button>
+                  <Button tone="ghost" disabled={cancelSubmitting} onClick={() => setCancelling(false)}>닫기</Button>
+                  <Button tone="danger" disabled={cancelSubmitting || !cancelReason.trim() || depositing || notificationOpen} onClick={() => void cancelCurrentOrder()}>{cancelSubmitting ? "취소 처리 중..." : "수주 취소"}</Button>
                 </div>
               </div>
-            ) : <Button tone="danger" onClick={() => { setCancelling(true); setCancelReason(""); }}>수주 취소</Button>
+            ) : <Button tone="danger" disabled={editing || depositing || notificationOpen} onClick={() => { setCancelling(true); setCancelReason(""); }}>수주 취소</Button>
           ) : null}
         </div>
       </Card>
@@ -566,13 +605,18 @@ export function OrderDetailPage() {
           <div className="flex justify-between gap-3"><dt className="text-muted">계약금 마감</dt><dd>{order.depositDueDate || "-"}</dd></div>
         </dl>
         <p className="text-sm">가상계좌 {virtualAccount}</p>
+        {canManageOrders(user.role) && order.status === "WAITING" && paymentStatus === "UNPAID" ? (
+          <Button className="h-auto min-h-10 w-full py-2" disabled={editing || depositing || cancelling || !order.depositDueDate || order.depositDueDate < todayISO()} onClick={() => setNotificationOpen(true)}>
+            가상계좌 발급 및 결제정보 발송
+          </Button>
+        ) : null}
         {paidAmount < shownTotal && order.status !== "WAITING" && order.status !== "CANCELLED" ? (
           <p className="text-sm text-warning">{order.status === "COMPLETED" ? "거래처 물건 확인 후 잔금 입금 대기" : "잔금은 배송 완료 후 입금"}</p>
         ) : null}
         {canManageOrders(user.role) && order.status === "WAITING" && paymentStatus === "UNPAID" && !depositSaved ? (
           <>
             <TextField label="입금 금액" type="number" value={amount || ""} onChange={(event) => setAmount(Number(event.target.value))} />
-            <Button className="w-full" disabled={depositing} onClick={() => void recordDeposit()}>입금 처리</Button>
+            <Button className="w-full" disabled={depositing || cancelSubmitting} onClick={() => void recordDeposit()}>입금 처리</Button>
           </>
         ) : null}
       </Card>
@@ -612,6 +656,27 @@ async function load(orderId: number): Promise<LoadedOrder> {
     listOrderWorkOrders(orderId),
   ]);
   return { order: detail, histories: historyRows, payments: paymentRows, shipment: shipmentRow, workOrders: works };
+}
+
+const bankLabels: Record<string, string> = {
+  KOOKMIN: "KB국민은행",
+  SHINHAN: "신한은행",
+  WOORI: "우리은행",
+  HANA: "하나은행",
+  NONGHYUP: "NH농협은행",
+  IBK: "IBK기업은행",
+  BUSAN: "부산은행",
+  KYONGNAM: "경남은행",
+  KWANGJU: "광주은행",
+  DAEGU: "iM뱅크(대구은행)",
+  SUHYUP: "Sh수협은행",
+  KFCC: "새마을금고",
+  POST: "우체국",
+};
+
+function bankLabel(code: string | undefined): string {
+  if (!code) return "";
+  return bankLabels[code] ?? code;
 }
 
 function statusText(value: string): string {
