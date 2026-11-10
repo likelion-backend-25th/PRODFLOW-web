@@ -104,6 +104,27 @@ export async function fetchUnreadCount(): Promise<number> {
   return line.data + order.data;
 }
 
+export interface SentOrderNotification {
+  orderId: number;
+  notificationType: OrderNotificationType;
+}
+
+export interface OrderDueNotificationResult {
+  orderId: number;
+  notificationType: OrderNotificationType;
+  created: boolean;
+}
+
+export async function fetchSentOrderNotifications(): Promise<SentOrderNotification[]> {
+  const { data } = await apiClient.get<SentOrderNotification[]>("/order-notifications/sent");
+  return data;
+}
+
+export async function sendOrderDueNotification(orderId: number): Promise<OrderDueNotificationResult> {
+  const { data } = await apiClient.post<OrderDueNotificationResult>(`/order-notifications/orders/${orderId}`);
+  return data;
+}
+
 export async function markNoticeRead(item: Pick<NoticeItem, "source" | "id">): Promise<void> {
   const path = item.source === "line"
     ? `/notifications/${item.id}/read`

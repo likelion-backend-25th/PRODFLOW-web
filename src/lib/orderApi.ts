@@ -191,6 +191,35 @@ export interface OrderListPageResult {
   totalPages: number;
 }
 
+export interface ClientOrderData {
+  id: number;
+  orderNo: string;
+  createdAt: string;
+  estimatedDueDate: string;
+  endDate: string | null;
+  statusCode: {
+    id: number;
+    code: string;
+    name: string;
+  };
+  confirmationStatus: ConfirmationStatus;
+  paymentStatus: string;
+  totalAmount: number;
+}
+
+export interface ClientOrder {
+  customerOrder: ClientOrderData;
+  productName: string;
+}
+
+export interface ClientOrderPage {
+  content: ClientOrder[];
+  totalElements: number;
+  totalPages: number;
+  number: number;
+  size: number;
+}
+
 export interface OrderSummary {
   waiting: number;
   making: number;
@@ -259,6 +288,18 @@ function orderListParams(query: OrderListQuery, paged: boolean) {
 
 export async function listOrders(query: OrderListQuery): Promise<OrderListPageResult> {
   const { data } = await apiClient.get<OrderListPageResult>("/orders", { params: orderListParams(query, true) });
+  return data;
+}
+
+export async function getRecentClientOrder(clientId: number): Promise<ClientOrder> {
+  const { data } = await apiClient.get<ClientOrder>(`/orders/clients/${clientId}/recent`);
+  return data;
+}
+
+export async function listClientOrders(clientId: number, page: number, size: number): Promise<ClientOrderPage> {
+  const { data } = await apiClient.get<ClientOrderPage>(`/orders/clients/${clientId}`, {
+    params: { page, size, sort: "createdAt,desc" },
+  });
   return data;
 }
 

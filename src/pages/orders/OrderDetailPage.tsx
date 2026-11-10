@@ -70,6 +70,20 @@ export function OrderDetailPage() {
   }, [show]);
 
   useEffect(() => {
+    let ignore = false;
+    listCarriers().then((items) => {
+      if (ignore) return;
+      setCarrierOptions(items);
+      setCarrier((current) => current || items[0]?.code || "");
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [show]);
+
+  useEffect(() => {
     const id = Number(orderId);
     if (!Number.isInteger(id) || id <= 0) {
       setLoading(false);
