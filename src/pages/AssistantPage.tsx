@@ -260,7 +260,7 @@ export function AssistantPage() {
         <form className="border-t border-line bg-white px-5 py-3" onSubmit={(event) => { event.preventDefault(); void send(draft); }}>
           <div className="mb-2 flex items-center gap-2">
             <label className="text-xs text-muted" htmlFor="ai-model">모델</label>
-            <select id="ai-model" className="h-9 rounded-lg border border-line bg-white px-2 text-sm" value={model} disabled={sending || closed} onChange={(event) => setModel(event.target.value as AiModelId)}>
+            <select id="ai-model" className="h-9 w-72 rounded-lg border border-line bg-white px-3 text-sm" value={model} disabled={sending || closed} onChange={(event) => setModel(event.target.value as AiModelId)}>
               {AI_MODELS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
           </div>

@@ -2,9 +2,13 @@ import { apiClient } from "@/lib/apiClient.ts";
 
 // 서버 AiModelService가 받는 모델 식별자다.
 export const AI_MODELS = [
+  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+  { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+  { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
   { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite" },
-  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
   { id: "openai/gpt-oss-20b", label: "Groq GPT-OSS 20B" },
+  { id: "openai/gpt-oss-120b", label: "Groq GPT-OSS 120B" },
 ] as const;
 
 export type AiModelId = (typeof AI_MODELS)[number]["id"];
