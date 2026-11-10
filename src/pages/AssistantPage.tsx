@@ -1,9 +1,12 @@
 import { Bot, MoreVertical, Plus, Search, Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import {
   AI_MODELS,
   askAi,
+  closeConversation,
   createConversation,
   fetchConversation,
   fetchConversations,
@@ -160,6 +163,18 @@ export function AssistantPage() {
     }
   }
 
+  async function closeChat(chat: AiConversation) {
+    if (chat.isClosed) return;
+    try {
+      await closeConversation(chat.conversationId);
+      setChats((list) => list.map((item) => item.conversationId === chat.conversationId ? { ...item, isClosed: true } : item));
+      if (activeId === chat.conversationId) setClosed(true);
+      show("대화를 종료했습니다.");
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    }
+  }
+
   function startRename(chat: AiConversation, place: "header" | "list") {
     if (chat.isClosed) {
       show("종료된 대화방의 제목은 바꿀 수 없습니다.");
@@ -186,9 +201,9 @@ export function AssistantPage() {
         <div className="flex-1 space-y-4 overflow-y-auto px-3 pb-4">
           {!listReady ? <p className="px-2 text-sm text-muted">대화를 불러오는 중입니다.</p> : null}
           {listReady && visible.length === 0 ? <p className="px-2 text-sm text-muted">대화가 없습니다.</p> : null}
-          <ChatGroup label="오늘" chats={visible.filter((chat) => dayKey(chat.createdAt) === today)} activeId={activeId} editingId={editPlace === "list" ? editingId : null} titleDraft={titleDraft} onTitleDraft={setTitleDraft} onCommitTitle={() => void commitTitle()} onCancelTitle={() => { skipTitleCommit.current = true; setEditingId(null); setEditPlace(null); }} onSelect={setActiveId} onRename={startRename} />
-          <ChatGroup label="지난 7일" chats={visible.filter((chat) => dayKey(chat.createdAt) !== today && ageDays(chat.createdAt) < 7)} activeId={activeId} editingId={editPlace === "list" ? editingId : null} titleDraft={titleDraft} onTitleDraft={setTitleDraft} onCommitTitle={() => void commitTitle()} onCancelTitle={() => { skipTitleCommit.current = true; setEditingId(null); setEditPlace(null); }} onSelect={setActiveId} onRename={startRename} />
-          <ChatGroup label="이전" chats={visible.filter((chat) => ageDays(chat.createdAt) >= 7)} activeId={activeId} editingId={editPlace === "list" ? editingId : null} titleDraft={titleDraft} onTitleDraft={setTitleDraft} onCommitTitle={() => void commitTitle()} onCancelTitle={() => { skipTitleCommit.current = true; setEditingId(null); setEditPlace(null); }} onSelect={setActiveId} onRename={startRename} />
+          <ChatGroup label="오늘" chats={visible.filter((chat) => dayKey(chat.createdAt) === today)} activeId={activeId} editingId={editPlace === "list" ? editingId : null} titleDraft={titleDraft} onTitleDraft={setTitleDraft} onCommitTitle={() => void commitTitle()} onCancelTitle={() => { skipTitleCommit.current = true; setEditingId(null); setEditPlace(null); }} onSelect={setActiveId} onRename={startRename} onClose={(chat) => void closeChat(chat)} />
+          <ChatGroup label="지난 7일" chats={visible.filter((chat) => dayKey(chat.createdAt) !== today && ageDays(chat.createdAt) < 7)} activeId={activeId} editingId={editPlace === "list" ? editingId : null} titleDraft={titleDraft} onTitleDraft={setTitleDraft} onCommitTitle={() => void commitTitle()} onCancelTitle={() => { skipTitleCommit.current = true; setEditingId(null); setEditPlace(null); }} onSelect={setActiveId} onRename={startRename} onClose={(chat) => void closeChat(chat)} />
+          <ChatGroup label="이전" chats={visible.filter((chat) => ageDays(chat.createdAt) >= 7)} activeId={activeId} editingId={editPlace === "list" ? editingId : null} titleDraft={titleDraft} onTitleDraft={setTitleDraft} onCommitTitle={() => void commitTitle()} onCancelTitle={() => { skipTitleCommit.current = true; setEditingId(null); setEditPlace(null); }} onSelect={setActiveId} onRename={startRename} onClose={(chat) => void closeChat(chat)} />
         </div>
       </aside>
 
@@ -216,7 +231,7 @@ export function AssistantPage() {
               }}
             />
           ) : <h1 className="truncate font-semibold">{active?.title || "새 대화"}</h1>}
-          {active ? <ChatMenu onRename={() => startRename(active, "header")} /> : null}
+          {active ? <ChatMenu closed={active.isClosed} onRename={() => startRename(active, "header")} onClose={() => void closeChat(active)} /> : null}
         </div>
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
           {activeId == null ? <p className="text-sm text-muted">새 대화를 만들거나 목록에서 대화를 선택하세요.</p> : null}
@@ -234,7 +249,7 @@ export function AssistantPage() {
               <div key={message.messageId} className="flex items-start gap-2">
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary text-white"><Bot size={16} /></span>
                 <div className="min-w-0 flex-1 rounded-xl border border-line bg-white p-4">
-                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                  <MarkdownAnswer text={message.content} />
                   <p className="mt-2 text-xs text-muted">{clock(message.createdAt)}</p>
                 </div>
               </div>
@@ -259,6 +274,14 @@ export function AssistantPage() {
   );
 }
 
+function MarkdownAnswer({ text }: { text: string }) {
+  return (
+    <div className="text-sm leading-6 text-ink [&_a]:text-primary [&_blockquote]:border-l-2 [&_blockquote]:border-line [&_blockquote]:pl-3 [&_blockquote]:text-muted [&_code]:rounded [&_code]:bg-canvas [&_code]:px-1 [&_h1]:mt-3 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:text-sm [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-canvas [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border-b [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_th]:border-b [&_th]:border-line [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+}
+
 function ChatGroup({
   label,
   chats,
@@ -270,6 +293,7 @@ function ChatGroup({
   onCancelTitle,
   onSelect,
   onRename,
+  onClose,
 }: {
   label: string;
   chats: AiConversation[];
@@ -281,6 +305,7 @@ function ChatGroup({
   onCancelTitle: () => void;
   onSelect: (id: number) => void;
   onRename: (chat: AiConversation, place: "list") => void;
+  onClose: (chat: AiConversation) => void;
 }) {
   if (chats.length === 0) return null;
   return (
@@ -312,7 +337,7 @@ function ChatGroup({
                 <span className="text-xs text-muted">{clock(chat.createdAt)}{chat.isClosed ? " · 종료" : ""}</span>
               </button>
             )}
-            <ChatMenu onRename={() => onRename(chat, "list")} />
+            <ChatMenu closed={chat.isClosed} onRename={() => onRename(chat, "list")} onClose={() => onClose(chat)} />
           </li>
         ))}
       </ul>
@@ -320,7 +345,7 @@ function ChatGroup({
   );
 }
 
-function ChatMenu({ onRename }: { onRename: () => void }) {
+function ChatMenu({ closed, onRename, onClose }: { closed: boolean; onRename: () => void; onClose: () => void }) {
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   return (
     <>
@@ -342,6 +367,7 @@ function ChatMenu({ onRename }: { onRename: () => void }) {
           <button type="button" className="fixed inset-0 z-20 cursor-default" aria-label="메뉴 닫기" onClick={() => setPosition(null)} />
           <div className="fixed z-30 w-36 rounded-lg border border-line bg-white py-1 shadow-lg" style={{ top: position.top, left: position.left }} role="menu">
             <button type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-canvas" role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => { setPosition(null); onRename(); }}>제목 수정</button>
+            {closed ? null : <button type="button" className="block w-full px-3 py-2 text-left text-sm text-danger hover:bg-canvas" role="menuitem" onMouseDown={(event) => event.preventDefault()} onClick={() => { setPosition(null); onClose(); }}>대화 종료</button>}
           </div>
         </>
       ) : null}
