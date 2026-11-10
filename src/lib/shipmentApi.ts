@@ -34,10 +34,18 @@ export interface ShipmentListItem {
   readyToShipEligible: boolean;
 }
 
+export interface ShipmentPage {
+  content: ShipmentListItem[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+}
+
 export interface ShipmentList {
   tab: string;
   counts: ShipmentTabCounts;
-  items: ShipmentListItem[];
+  page: ShipmentPage;
 }
 
 export interface OrderShipment {
@@ -93,8 +101,11 @@ export function listCarriers(): Promise<Carrier[]> {
   return apiClient.get<Carrier[]>("/carriers").then((response) => response.data);
 }
 
-export function listShipments(tab: ShipmentTab): Promise<ShipmentList> {
-  return apiClient.get<ShipmentList>("/shipments", { params: { tab } }).then((response) => response.data);
+const SHIPMENT_PAGE_SIZE = 10;
+const SHIPMENT_SORT = "estimatedDueDate,asc";
+
+export function listShipments(tab: ShipmentTab, page = 0, size = SHIPMENT_PAGE_SIZE): Promise<ShipmentList> {
+  return apiClient.get<ShipmentList>("/shipments", { params: { tab, page, size, sort: SHIPMENT_SORT } }).then((response) => response.data);
 }
 
 export function markReadyToShip(orderId: number): Promise<ReadyToShipResult> {

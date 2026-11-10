@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Banknote, Check, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, X } from "lucide-react";
+import { ArrowLeft, Banknote, Check, ChevronLeft, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, X } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Badge, Button } from "@/components/ui.tsx";
 import { localDate } from "@/lib/dates.ts";
 import { apiStatus, readApiErrorMessage } from "@/lib/apiClient.ts";
 import { formatWon } from "@/lib/money.ts";
-import { checkModelCode, createProduct, deleteDrawing, getProduct, listCurrentDrawings, listDevices, listProductOrders, listProducts, searchProducts, updateProduct, updateProductStatus, uploadDrawings, type DeviceCode, type ProductDrawing, type ProductItem, type ProductOrderHistory } from "@/lib/productApi.ts";
+import { checkModelCode, createProduct, deleteDrawing, getProduct, listCurrentDrawings, listDevices, listProductOrders, listProducts, searchProducts, updateProduct, updateProductStatus, uploadDrawings, type DeviceCode, type ProductDrawing, type ProductItem, type ProductOrderHistory, type ProductPage } from "@/lib/productApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { ProductStatus } from "@/types/domain.ts";
@@ -56,51 +56,88 @@ function useProductOrders(productId: string) {
   return { rows, loading, error };
 }
 
+const PRODUCT_PAGE_SIZE = 10;
+
+function loadProductPage(keyword: string, status: "AVAILABLE" | "DISCONTINUED", page: number, size = PRODUCT_PAGE_SIZE): Promise<ProductPage> {
+  return keyword.trim() ? searchProducts(keyword.trim(), status, page, size) : listProducts(status, page, size);
+}
+
+function pageNumbers(page: number, totalPages: number): number[] {
+  if (totalPages <= 0) return [];
+  const current = Math.min(page + 1, totalPages);
+  const start = Math.max(1, current - 2);
+  const end = Math.min(totalPages, start + 4);
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+}
+
 export function ProductListPage() {
   const role = useAuthStore((state) => state.user?.role);
   const show = useToastStore((state) => state.show);
   const canWrite = canManageOrders(role);
   const [keyword, setKeyword] = useState("");
   const [tab, setTab] = useState<"available" | "stopped">("available");
-  const [available, setAvailable] = useState<ReturnType<typeof toProductRow>[]>([]);
-  const [stopped, setStopped] = useState<ReturnType<typeof toProductRow>[]>([]);
+  const [page, setPage] = useState(0);
+  const [rows, setRows] = useState<ReturnType<typeof toProductRow>[]>([]);
+  const [availableTotal, setAvailableTotal] = useState(0);
+  const [stoppedTotal, setStoppedTotal] = useState(0);
+  const [totalElements, setTotalElements] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
-  const rows = tab === "available" ? available : stopped;
   const [selectedId, setSelectedId] = useState("");
   const selected = rows.find((product) => product.id === selectedId) ?? rows[0];
   const recentOrders = useProductOrders(selected?.id ?? "");
   useEffect(() => {
     let ignore = false;
+    let accepted = false;
     setLoading(true);
-    const load = (status: "AVAILABLE" | "DISCONTINUED") => keyword.trim() ? searchProducts(keyword.trim(), status) : listProducts(status);
-    Promise.all([load("AVAILABLE"), load("DISCONTINUED")]).then(([nextAvailable, nextStopped]) => {
+    const status = tab === "available" ? "AVAILABLE" : "DISCONTINUED";
+    const other = status === "AVAILABLE" ? "DISCONTINUED" : "AVAILABLE";
+    Promise.all([loadProductPage(keyword, status, page), loadProductPage(keyword, other, 0, 1)]).then(([current, rest]) => {
       if (ignore) return;
-      setAvailable(nextAvailable.map(toProductRow));
-      setStopped(nextStopped.map(toProductRow));
+      if (page > 0 && page >= current.totalPages) {
+        setPage(Math.max(0, current.totalPages - 1));
+        return;
+      }
+      accepted = true;
+      setRows(current.content.map(toProductRow));
+      setTotalElements(current.totalElements);
+      setTotalPages(current.totalPages);
+      setAvailableTotal(status === "AVAILABLE" ? current.totalElements : rest.totalElements);
+      setStoppedTotal(status === "DISCONTINUED" ? current.totalElements : rest.totalElements);
       setLoadError("");
     }).catch((error: unknown) => {
       if (ignore) return;
+      accepted = true;
+      setRows([]);
+      setTotalElements(0);
+      setTotalPages(0);
+      setAvailableTotal(0);
+      setStoppedTotal(0);
       const message = readApiErrorMessage(error);
       setLoadError(message);
       show(message);
     }).finally(() => {
-      if (!ignore) setLoading(false);
+      if (!ignore && accepted) setLoading(false);
     });
     return () => {
       ignore = true;
     };
-  }, [keyword, reloadKey, show]);
+  }, [keyword, page, reloadKey, show, tab]);
   function moveProduct(id: string, status: "AVAILABLE" | "DISCONTINUED") {
     const next = status === "DISCONTINUED" ? "AVAILABLE" : "DISCONTINUED";
     void updateProductStatus(Number(id), next).then(() => {
       setSelectedId(id);
       setTab(next === "DISCONTINUED" ? "stopped" : "available");
+      setPage(0);
       setReloadKey((value) => value + 1);
       show(next === "DISCONTINUED" ? "생산 중단으로 바꿨습니다. 이미 발행한 견적과 수주는 그대로입니다." : "생산 가능으로 바꿨습니다.");
     }).catch((error: unknown) => show(readApiErrorMessage(error)));
   }
+  const numbers = pageNumbers(page, totalPages);
+  const rangeStart = totalElements === 0 ? 0 : page * PRODUCT_PAGE_SIZE + 1;
+  const rangeEnd = Math.min(totalElements, page * PRODUCT_PAGE_SIZE + rows.length);
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -111,19 +148,19 @@ export function ProductListPage() {
         {canManageOrders(role) ? <Link to="/products/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 품목 등록</Link> : null}
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 등록 품목</p><p className="mt-2 text-2xl font-semibold">{available.length + stopped.length}종</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">생산 가능</p><p className="mt-2 text-2xl font-semibold">{available.length}종</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">생산 중단</p><p className="mt-2 text-2xl font-semibold">{stopped.length}종</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 등록 품목</p><p className="mt-2 text-2xl font-semibold">{availableTotal + stoppedTotal}종</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">생산 가능</p><p className="mt-2 text-2xl font-semibold">{availableTotal}종</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">생산 중단</p><p className="mt-2 text-2xl font-semibold">{stoppedTotal}종</p></section>
       </div>
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <section className="overflow-hidden rounded-xl border border-line bg-white">
           <div className="flex items-end justify-between gap-3 border-b border-line px-5 pt-4">
             <div className="flex gap-4 text-sm">
-              <button type="button" className={tab === "available" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => setTab("available")}>등록된 생산품목 {available.length}</button>
-              <button type="button" className={tab === "stopped" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => setTab("stopped")}>생산 중단 품목 {stopped.length}</button>
+              <button type="button" className={tab === "available" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => { setTab("available"); setPage(0); }}>등록된 생산품목 {availableTotal}</button>
+              <button type="button" className={tab === "stopped" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => { setTab("stopped"); setPage(0); }}>생산 중단 품목 {stoppedTotal}</button>
             </div>
           </div>
-          <div className="px-5 py-3"><input className="h-10 w-full rounded-lg border border-line px-3" value={keyword} placeholder="모델코드, 품목명, 기종명, 설명 검색" onChange={(event) => setKeyword(event.target.value)} /></div>
+          <div className="px-5 py-3"><input className="h-10 w-full rounded-lg border border-line px-3" value={keyword} placeholder="모델코드, 품목명, 기종명, 설명 검색" onChange={(event) => { setKeyword(event.target.value); setPage(0); }} /></div>
           <table className="w-full text-left text-sm">
             <thead className="bg-primary-soft/40 text-muted"><tr><th className="px-5 py-3 font-medium">모델코드</th><th className="py-3 font-medium">품목명</th><th className="py-3 font-medium">기종명</th><th className="py-3 font-medium">설명</th><th className="py-3 font-medium">단가</th><th className="py-3 font-medium">최근 수정</th><th className="py-3 font-medium">상태</th><th className="w-12 py-3 pr-3 font-medium"><span className="sr-only">상세</span></th></tr></thead>
             <tbody>
@@ -153,6 +190,22 @@ export function ProductListPage() {
               )) : null}
             </tbody>
           </table>
+          <div className="flex items-center justify-between border-t border-line px-5 py-3 text-xs text-muted">
+            <span>총 {totalElements}종 중 {rangeStart === 0 ? 0 : `${rangeStart}–${rangeEnd}`}종 표시</span>
+            <span className="flex items-center gap-1">
+              <button type="button" className="grid size-7 place-items-center rounded-md disabled:opacity-30" disabled={page === 0 || loading} onClick={() => setPage((value) => value - 1)} aria-label="이전 페이지">
+                <ChevronLeft className="size-4" />
+              </button>
+              {numbers.map((number) => (
+                <button key={number} type="button" className={number === page + 1 ? "grid size-7 place-items-center rounded-md bg-primary-soft font-semibold text-primary" : "grid size-7 place-items-center rounded-md font-semibold text-ink"} onClick={() => setPage(number - 1)}>
+                  {number}
+                </button>
+              ))}
+              <button type="button" className="grid size-7 place-items-center rounded-md disabled:opacity-30" disabled={loading || totalPages === 0 || page + 1 >= totalPages} onClick={() => setPage((value) => value + 1)} aria-label="다음 페이지">
+                <ChevronRight className="size-4" />
+              </button>
+            </span>
+          </div>
         </section>
         {selected ? (
           <aside className="space-y-3">

@@ -247,7 +247,7 @@ export function QuoteFormPage() {
       return;
     }
     const timer = window.setTimeout(() => {
-      searchProducts(query, "AVAILABLE").then((items) => setProductMatches(items.slice(0, 6).map((item) => ({
+      searchProducts(query, "AVAILABLE", 0, 6).then((result) => setProductMatches(result.content.map((item) => ({
         id: String(item.id),
         productName: item.productName,
         modelName: item.deviceName,
