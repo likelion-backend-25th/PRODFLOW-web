@@ -478,7 +478,7 @@ export function OrderDetailPage() {
             <tbody>
               {depositRows.length > 0 ? depositRows.map((item) => (
                 <tr key={item.paymentId} className="border-b border-line">
-                  <td className="py-2">{localDateTime(item.paymentHistory?.receivedAt || item.paymentHistory?.createdAt || item.createdAt)}</td>
+                  <td className="py-2">{item.paymentHistory?.paidAt ? localDateTime(item.paymentHistory.paidAt) : "-"}</td>
                   <td className="py-2">{item.paymentType === "DEPOSIT" ? "계약금" : "잔금"} {formatWon(item.amount)}</td>
                   <td className="py-2 text-muted">{item.paymentHistory?.transactionId || paymentResultLabel(item.status)}</td>
                 </tr>

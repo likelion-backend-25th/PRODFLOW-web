@@ -88,7 +88,7 @@ export interface OrderPaymentHistory {
   paymentId: number;
   virtualAccountId: number | null;
   transactionId: string | null;
-  receivedAt: string | null;
+  paidAt: string | null;
   createdAt: string;
 }
 
@@ -146,7 +146,7 @@ export interface ManualDepositResult {
   orderId: number;
   amount: number;
   paymentMethod: "VA" | "MD";
-  receivedAt: string;
+  paidAt: string;
   orderStatus: string;
   confirmationStatus: ConfirmationStatus;
   paymentStatus: string;
