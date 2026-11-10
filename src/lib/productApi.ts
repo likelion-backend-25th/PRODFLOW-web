@@ -24,14 +24,27 @@ export interface ProductDrawing {
   id: number;
   fileName: string;
   createdAt: string;
+  previewUrl?: string | null;
+  expiresAt?: string | null;
 }
 
-export function listProducts(status?: ProductStatus): Promise<ProductItem[]> {
-  return apiClient.get<ProductItem[]>("/products", { params: { status } }).then((response) => response.data);
+export interface ProductPage {
+  content: ProductItem[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
 }
 
-export function searchProducts(keyword: string, status?: ProductStatus): Promise<ProductItem[]> {
-  return apiClient.get<ProductItem[]>("/products/search", { params: { keyword: keyword || undefined, status } }).then((response) => response.data);
+const PRODUCT_PAGE_SIZE = 10;
+const PRODUCT_SORT = "id,asc";
+
+export function listProducts(status?: ProductStatus, page = 0, size = PRODUCT_PAGE_SIZE): Promise<ProductPage> {
+  return apiClient.get<ProductPage>("/products", { params: { status, page, size, sort: PRODUCT_SORT } }).then((response) => response.data);
+}
+
+export function searchProducts(keyword: string, status?: ProductStatus, page = 0, size = PRODUCT_PAGE_SIZE): Promise<ProductPage> {
+  return apiClient.get<ProductPage>("/products/search", { params: { keyword: keyword || undefined, status, page, size, sort: PRODUCT_SORT } }).then((response) => response.data);
 }
 
 export function getProduct(id: number): Promise<ProductItem> {
@@ -92,8 +105,16 @@ export function listCurrentDrawings(productId: number): Promise<ProductDrawing[]
   return apiClient.get<ProductDrawing[]>(`/products/${productId}/drawings/current`).then((response) => response.data);
 }
 
-export function uploadDrawing(productId: number, file: File): Promise<ProductDrawing> {
+export function uploadDrawings(productId: number, files: File[]): Promise<ProductDrawing[]> {
   const body = new FormData();
-  body.append("file", file);
-  return apiClient.post<ProductDrawing>(`/products/${productId}/drawings`, body).then((response) => response.data);
+  for (const file of files) body.append("files", file);
+  return apiClient.post<ProductDrawing[]>(`/products/${productId}/drawings`, body).then((response) => response.data);
+}
+
+export function uploadDrawing(productId: number, file: File): Promise<ProductDrawing> {
+  return uploadDrawings(productId, [file]).then((drawings) => drawings[0]);
+}
+
+export function deleteDrawing(productId: number, drawingId: number): Promise<void> {
+  return apiClient.delete(`/products/${productId}/drawings/${drawingId}`).then(() => undefined);
 }

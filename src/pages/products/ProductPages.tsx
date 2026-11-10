@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Banknote, Check, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, X } from "lucide-react";
+import { ArrowLeft, Banknote, Check, ChevronLeft, ChevronRight, ClipboardList, FileText, FileUp, Info, Package, Pencil, X } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Badge, Button } from "@/components/ui.tsx";
 import { localDate } from "@/lib/dates.ts";
 import { apiStatus, readApiErrorMessage } from "@/lib/apiClient.ts";
 import { formatWon } from "@/lib/money.ts";
-import { checkModelCode, createProduct, getProduct, listCurrentDrawings, listDevices, listProductOrders, listProducts, searchProducts, updateProduct, updateProductStatus, uploadDrawing, type DeviceCode, type ProductItem, type ProductOrderHistory } from "@/lib/productApi.ts";
+import { checkModelCode, createProduct, deleteDrawing, getProduct, listCurrentDrawings, listDevices, listProductOrders, listProducts, searchProducts, updateProduct, updateProductStatus, uploadDrawings, type DeviceCode, type ProductDrawing, type ProductItem, type ProductOrderHistory, type ProductPage } from "@/lib/productApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { ProductStatus } from "@/types/domain.ts";
@@ -56,51 +56,88 @@ function useProductOrders(productId: string) {
   return { rows, loading, error };
 }
 
+const PRODUCT_PAGE_SIZE = 10;
+
+function loadProductPage(keyword: string, status: "AVAILABLE" | "DISCONTINUED", page: number, size = PRODUCT_PAGE_SIZE): Promise<ProductPage> {
+  return keyword.trim() ? searchProducts(keyword.trim(), status, page, size) : listProducts(status, page, size);
+}
+
+function pageNumbers(page: number, totalPages: number): number[] {
+  if (totalPages <= 0) return [];
+  const current = Math.min(page + 1, totalPages);
+  const start = Math.max(1, current - 2);
+  const end = Math.min(totalPages, start + 4);
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+}
+
 export function ProductListPage() {
   const role = useAuthStore((state) => state.user?.role);
   const show = useToastStore((state) => state.show);
   const canWrite = canManageOrders(role);
   const [keyword, setKeyword] = useState("");
   const [tab, setTab] = useState<"available" | "stopped">("available");
-  const [available, setAvailable] = useState<ReturnType<typeof toProductRow>[]>([]);
-  const [stopped, setStopped] = useState<ReturnType<typeof toProductRow>[]>([]);
+  const [page, setPage] = useState(0);
+  const [rows, setRows] = useState<ReturnType<typeof toProductRow>[]>([]);
+  const [availableTotal, setAvailableTotal] = useState(0);
+  const [stoppedTotal, setStoppedTotal] = useState(0);
+  const [totalElements, setTotalElements] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
-  const rows = tab === "available" ? available : stopped;
   const [selectedId, setSelectedId] = useState("");
   const selected = rows.find((product) => product.id === selectedId) ?? rows[0];
   const recentOrders = useProductOrders(selected?.id ?? "");
   useEffect(() => {
     let ignore = false;
+    let accepted = false;
     setLoading(true);
-    const load = (status: "AVAILABLE" | "DISCONTINUED") => keyword.trim() ? searchProducts(keyword.trim(), status) : listProducts(status);
-    Promise.all([load("AVAILABLE"), load("DISCONTINUED")]).then(([nextAvailable, nextStopped]) => {
+    const status = tab === "available" ? "AVAILABLE" : "DISCONTINUED";
+    const other = status === "AVAILABLE" ? "DISCONTINUED" : "AVAILABLE";
+    Promise.all([loadProductPage(keyword, status, page), loadProductPage(keyword, other, 0, 1)]).then(([current, rest]) => {
       if (ignore) return;
-      setAvailable(nextAvailable.map(toProductRow));
-      setStopped(nextStopped.map(toProductRow));
+      if (page > 0 && page >= current.totalPages) {
+        setPage(Math.max(0, current.totalPages - 1));
+        return;
+      }
+      accepted = true;
+      setRows(current.content.map(toProductRow));
+      setTotalElements(current.totalElements);
+      setTotalPages(current.totalPages);
+      setAvailableTotal(status === "AVAILABLE" ? current.totalElements : rest.totalElements);
+      setStoppedTotal(status === "DISCONTINUED" ? current.totalElements : rest.totalElements);
       setLoadError("");
     }).catch((error: unknown) => {
       if (ignore) return;
+      accepted = true;
+      setRows([]);
+      setTotalElements(0);
+      setTotalPages(0);
+      setAvailableTotal(0);
+      setStoppedTotal(0);
       const message = readApiErrorMessage(error);
       setLoadError(message);
       show(message);
     }).finally(() => {
-      if (!ignore) setLoading(false);
+      if (!ignore && accepted) setLoading(false);
     });
     return () => {
       ignore = true;
     };
-  }, [keyword, reloadKey, show]);
+  }, [keyword, page, reloadKey, show, tab]);
   function moveProduct(id: string, status: "AVAILABLE" | "DISCONTINUED") {
     const next = status === "DISCONTINUED" ? "AVAILABLE" : "DISCONTINUED";
     void updateProductStatus(Number(id), next).then(() => {
       setSelectedId(id);
       setTab(next === "DISCONTINUED" ? "stopped" : "available");
+      setPage(0);
       setReloadKey((value) => value + 1);
       show(next === "DISCONTINUED" ? "생산 중단으로 바꿨습니다. 이미 발행한 견적과 수주는 그대로입니다." : "생산 가능으로 바꿨습니다.");
     }).catch((error: unknown) => show(readApiErrorMessage(error)));
   }
+  const numbers = pageNumbers(page, totalPages);
+  const rangeStart = totalElements === 0 ? 0 : page * PRODUCT_PAGE_SIZE + 1;
+  const rangeEnd = Math.min(totalElements, page * PRODUCT_PAGE_SIZE + rows.length);
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -111,19 +148,19 @@ export function ProductListPage() {
         {canManageOrders(role) ? <Link to="/products/new" className="inline-flex h-10 items-center rounded-lg bg-primary px-4 font-semibold text-white">+ 품목 등록</Link> : null}
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 등록 품목</p><p className="mt-2 text-2xl font-semibold">{available.length + stopped.length}종</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">생산 가능</p><p className="mt-2 text-2xl font-semibold">{available.length}종</p></section>
-        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">생산 중단</p><p className="mt-2 text-2xl font-semibold">{stopped.length}종</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">전체 등록 품목</p><p className="mt-2 text-2xl font-semibold">{availableTotal + stoppedTotal}종</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">생산 가능</p><p className="mt-2 text-2xl font-semibold">{availableTotal}종</p></section>
+        <section className="rounded-xl border border-line bg-white p-4"><p className="text-sm text-muted">생산 중단</p><p className="mt-2 text-2xl font-semibold">{stoppedTotal}종</p></section>
       </div>
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <section className="overflow-hidden rounded-xl border border-line bg-white">
           <div className="flex items-end justify-between gap-3 border-b border-line px-5 pt-4">
             <div className="flex gap-4 text-sm">
-              <button type="button" className={tab === "available" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => setTab("available")}>등록된 생산품목 {available.length}</button>
-              <button type="button" className={tab === "stopped" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => setTab("stopped")}>생산 중단 품목 {stopped.length}</button>
+              <button type="button" className={tab === "available" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => { setTab("available"); setPage(0); }}>등록된 생산품목 {availableTotal}</button>
+              <button type="button" className={tab === "stopped" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => { setTab("stopped"); setPage(0); }}>생산 중단 품목 {stoppedTotal}</button>
             </div>
           </div>
-          <div className="px-5 py-3"><input className="h-10 w-full rounded-lg border border-line px-3" value={keyword} placeholder="모델코드, 품목명, 기종명, 설명 검색" onChange={(event) => setKeyword(event.target.value)} /></div>
+          <div className="px-5 py-3"><input className="h-10 w-full rounded-lg border border-line px-3" value={keyword} placeholder="모델코드, 품목명, 기종명, 설명 검색" onChange={(event) => { setKeyword(event.target.value); setPage(0); }} /></div>
           <table className="w-full text-left text-sm">
             <thead className="bg-primary-soft/40 text-muted"><tr><th className="px-5 py-3 font-medium">모델코드</th><th className="py-3 font-medium">품목명</th><th className="py-3 font-medium">기종명</th><th className="py-3 font-medium">설명</th><th className="py-3 font-medium">단가</th><th className="py-3 font-medium">최근 수정</th><th className="py-3 font-medium">상태</th><th className="w-12 py-3 pr-3 font-medium"><span className="sr-only">상세</span></th></tr></thead>
             <tbody>
@@ -153,6 +190,22 @@ export function ProductListPage() {
               )) : null}
             </tbody>
           </table>
+          <div className="flex items-center justify-between border-t border-line px-5 py-3 text-xs text-muted">
+            <span>총 {totalElements}종 중 {rangeStart === 0 ? 0 : `${rangeStart}–${rangeEnd}`}종 표시</span>
+            <span className="flex items-center gap-1">
+              <button type="button" className="grid size-7 place-items-center rounded-md disabled:opacity-30" disabled={page === 0 || loading} onClick={() => setPage((value) => value - 1)} aria-label="이전 페이지">
+                <ChevronLeft className="size-4" />
+              </button>
+              {numbers.map((number) => (
+                <button key={number} type="button" className={number === page + 1 ? "grid size-7 place-items-center rounded-md bg-primary-soft font-semibold text-primary" : "grid size-7 place-items-center rounded-md font-semibold text-ink"} onClick={() => setPage(number - 1)}>
+                  {number}
+                </button>
+              ))}
+              <button type="button" className="grid size-7 place-items-center rounded-md disabled:opacity-30" disabled={loading || totalPages === 0 || page + 1 >= totalPages} onClick={() => setPage((value) => value + 1)} aria-label="다음 페이지">
+                <ChevronRight className="size-4" />
+              </button>
+            </span>
+          </div>
         </section>
         {selected ? (
           <aside className="space-y-3">
@@ -202,8 +255,10 @@ function ProductEditor({ productId }: { productId?: string }) {
   const [description, setDescription] = useState("");
   const [priceText, setPriceText] = useState("");
   const [codeCheck, setCodeCheck] = useState("");
-  const [drawingFile, setDrawingFile] = useState<File | null>(null);
-  const [drawingPdfName, setDrawingPdfName] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [savedDrawings, setSavedDrawings] = useState<ProductDrawing[]>([]);
+  const [previewId, setPreviewId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [drawingError, setDrawingError] = useState("");
   const [deviceModal, setDeviceModal] = useState(false);
   const [deviceDraft, setDeviceDraft] = useState("");
@@ -226,13 +281,48 @@ function ProductEditor({ productId }: { productId?: string }) {
       setModelName(product.deviceName);
       setDescription(product.productDescription ?? "");
       setPriceText(formatPriceInput(String(product.currentPrice)));
-      setDrawingPdfName(drawings[0]?.fileName ?? "");
+      setSavedDrawings(drawings.filter((drawing) => drawing.fileName.length > 0));
       setReady(true);
     }).catch((error: unknown) => {
       if (!ignore) show(readApiErrorMessage(error));
     });
     return () => { ignore = true; };
   }, [productId, show]);
+
+  async function openSavedDrawing(drawing: ProductDrawing) {
+    if (!productId) return;
+    if (previewId === drawing.id) {
+      setPreviewId(null);
+      return;
+    }
+    if (!previewStale(drawing)) {
+      setPreviewId(drawing.id);
+      return;
+    }
+    try {
+      const drawings = (await listCurrentDrawings(Number(productId))).filter((item) => item.fileName.length > 0);
+      setSavedDrawings(drawings);
+      setPreviewId(drawing.id);
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    }
+  }
+
+  async function removeSavedDrawing(drawingId: number) {
+    if (!productId || deletingId !== null) return;
+    setDeletingId(drawingId);
+    try {
+      await deleteDrawing(Number(productId), drawingId);
+      const drawings = (await listCurrentDrawings(Number(productId))).filter((item) => item.fileName.length > 0);
+      setSavedDrawings(drawings);
+      if (previewId === drawingId) setPreviewId(null);
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   const deviceNames = [...new Set([...devices.map((device) => device.name), modelName, ...extraDevices].filter(Boolean))].sort((left, right) => left.localeCompare(right, "ko"));
   if (editing && !ready) return <p>품목을 불러오는 중입니다.</p>;
 
@@ -326,7 +416,12 @@ function ProductEditor({ productId }: { productId?: string }) {
                 productDescription: description.trim(),
                 currentPrice: unitPrice,
               });
-            if (drawingFile) await uploadDrawing(saved.id, drawingFile);
+            if (pendingFiles.length > 0) {
+              await uploadDrawings(saved.id, pendingFiles);
+              const drawings = (await listCurrentDrawings(saved.id)).filter((item) => item.fileName.length > 0);
+              setSavedDrawings(drawings);
+              setPendingFiles([]);
+            }
             show("품목을 저장했습니다. 이미 들어간 수주 단가는 바뀌지 않습니다.");
             navigate("/products");
           } catch (error: unknown) {
@@ -415,7 +510,7 @@ function ProductEditor({ productId }: { productId?: string }) {
           </section>
           <section className="rounded-xl border border-line bg-white p-5">
             <h2 className="font-semibold">파일</h2>
-            <p className="mt-1 text-sm text-muted">생산에 사용할 파일 올려 주세요. 2MB 이하입니다.</p>
+            <p className="mt-1 text-sm text-muted">생산에 사용할 파일을 올려 주세요. 파일마다 2MB 이하이고, 여러 장을 한 번에 고를 수 있습니다.</p>
             <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-muted hover:border-primary hover:text-primary">
               <FileUp size={20} />
               <span className="mt-2 font-semibold text-ink">파일 선택</span>
@@ -423,35 +518,42 @@ function ProductEditor({ productId }: { productId?: string }) {
               <input
                 className="sr-only"
                 type="file"
+                multiple
                 onChange={(event) => {
-                  const file = event.target.files?.[0];
+                  const selected = [...(event.target.files ?? [])];
                   event.target.value = "";
-                  if (!file) return;
-                  if (file.size > MAX_DRAWING_BYTES) {
-                    setDrawingError("파일은 2MB 이하로 올려 주세요.");
-                    return;
-                  }
-                  setDrawingFile(file);
-                  setDrawingPdfName(file.name);
-                  setDrawingError("");
+                  if (selected.length === 0) return;
+                  const oversized = selected.filter((file) => file.size > MAX_DRAWING_BYTES);
+                  const accepted = selected.filter((file) => file.size <= MAX_DRAWING_BYTES);
+                  setPendingFiles((current) => [...current, ...accepted]);
+                  setDrawingError(oversized.length > 0 ? "2MB를 넘는 파일은 빼 두었습니다." : "");
                 }}
               />
             </label>
-            {drawingPdfName ? (
-              <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2 text-sm">
-                <span className="truncate">{drawingPdfName}</span>
-                <button
-                  type="button"
-                  className="shrink-0 text-muted"
-                  onClick={() => {
-                    setDrawingPdfName("");
-                    setDrawingFile(null);
-                    setDrawingError("");
-                  }}
-                >
-                  삭제
-                </button>
-              </div>
+            {pendingFiles.length > 0 ? (
+              <ul className="mt-3 space-y-2">
+                {pendingFiles.map((file, index) => (
+                  <li key={`${file.name}-${file.size}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2 text-sm">
+                    <span className="min-w-0 truncate">{file.name}</span>
+                    <button type="button" className="shrink-0 text-muted" onClick={() => setPendingFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}>빼기</button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {savedDrawings.length > 0 ? (
+              <ul className="mt-3 space-y-2">
+                {savedDrawings.map((drawing) => (
+                  <li key={drawing.id} className="rounded-lg border border-line px-3 py-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <button type="button" className="min-w-0 truncate text-left text-primary" onClick={() => void openSavedDrawing(drawing)}>
+                        {drawing.fileName}
+                      </button>
+                      <button type="button" className="shrink-0 text-muted disabled:opacity-40" disabled={deletingId === drawing.id} onClick={() => void removeSavedDrawing(drawing.id)}>삭제</button>
+                    </div>
+                    {previewId === drawing.id ? <DrawingPreview drawing={savedDrawings.find((item) => item.id === drawing.id) ?? drawing} /> : null}
+                  </li>
+                ))}
+              </ul>
             ) : null}
             {drawingError ? <p className="mt-2 text-xs text-danger">{drawingError}</p> : null}
           </section>
@@ -544,17 +646,68 @@ function ProductStatusMark({ status, canChange, onChange }: { status: ProductSta
   );
 }
 
-function ProductFileWindow({ names }: { names: string[] }) {
+function isImageFile(name: string): boolean {
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+}
+
+function previewStale(drawing: ProductDrawing | null): boolean {
+  if (!drawing?.previewUrl || !drawing.expiresAt) return true;
+  const expires = Date.parse(drawing.expiresAt);
+  return Number.isNaN(expires) || expires <= Date.now();
+}
+
+function DrawingPreview({ drawing }: { drawing: ProductDrawing }) {
+  if (!drawing.previewUrl) return <p className="mt-3 text-xs text-muted">파일을 열 수 없습니다.</p>;
+  return (
+    <div className="mt-3">
+      {isImageFile(drawing.fileName) ? (
+        <img src={drawing.previewUrl} alt={drawing.fileName} className="max-h-64 w-full rounded-lg border border-line object-contain" />
+      ) : (
+        <iframe title={drawing.fileName} src={drawing.previewUrl} className="h-64 w-full rounded-lg border border-line" />
+      )}
+      <a href={drawing.previewUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-primary">새 탭에서 열기</a>
+    </div>
+  );
+}
+
+function ProductFileWindow({ productId, drawings, onDrawings }: { productId: number; drawings: ProductDrawing[]; onDrawings: (items: ProductDrawing[]) => void }) {
+  const show = useToastStore((state) => state.show);
+  const [openId, setOpenId] = useState<number | null>(null);
+  const open = drawings.find((drawing) => drawing.id === openId) ?? null;
+
+  async function toggle(drawing: ProductDrawing) {
+    if (openId === drawing.id) {
+      setOpenId(null);
+      return;
+    }
+    if (!previewStale(drawing)) {
+      setOpenId(drawing.id);
+      return;
+    }
+    try {
+      const fresh = (await listCurrentDrawings(productId)).filter((item) => item.fileName.length > 0);
+      onDrawings(fresh);
+      setOpenId(drawing.id);
+    } catch (error: unknown) {
+      show(readApiErrorMessage(error));
+    }
+  }
+
   return (
     <section className="flex h-full w-full flex-col rounded-xl border border-line bg-white p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold">관련 파일</p>
-          <p className="mt-1 text-xs text-muted">생산에 사용하는 파일입니다.</p>
+          <p className="mt-1 text-xs text-muted">파일 이름을 누르면 내용을 봅니다.</p>
         </div>
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary"><FileText size={16} /></span>
       </div>
-      {names.length === 0 ? <p className="mt-4 text-sm text-muted">올린 파일이 없습니다.</p> : names.map((name, index) => <p key={`${name}-${index}`} className="mt-4 truncate text-sm">{name}</p>)}
+      {drawings.length === 0 ? <p className="mt-4 text-sm text-muted">올린 파일이 없습니다.</p> : drawings.map((drawing) => (
+        <button key={drawing.id} type="button" className="mt-4 truncate text-left text-sm text-primary" onClick={() => void toggle(drawing)}>
+          {drawing.fileName}
+        </button>
+      ))}
+      {open ? <DrawingPreview drawing={open} /> : null}
     </section>
   );
 }
@@ -582,7 +735,7 @@ export function ProductDetailPage() {
   const role = useAuthStore((state) => state.user?.role);
   const recentOrders = useProductOrders(productId);
   const [product, setProduct] = useState<ReturnType<typeof toProductRow> | null>(null);
-  const [drawingNames, setDrawingNames] = useState<string[]>([]);
+  const [drawings, setDrawings] = useState<ProductDrawing[]>([]);
   const [missing, setMissing] = useState(false);
   const [loadError, setLoadError] = useState("");
   useEffect(() => {
@@ -595,7 +748,7 @@ export function ProductDetailPage() {
     Promise.all([getProduct(id), listCurrentDrawings(id)]).then(([item, drawings]) => {
       if (ignore) return;
       setProduct(toProductRow(item));
-      setDrawingNames(drawings.map((drawing) => drawing.fileName).filter((name) => name.length > 0));
+      setDrawings(drawings.filter((drawing) => drawing.fileName.length > 0));
       setLoadError("");
     }).catch((error: unknown) => {
       if (ignore) return;
@@ -643,7 +796,7 @@ export function ProductDetailPage() {
               <p className="mt-1">{product.description || "설명이 없습니다."}</p>
             </div>
             <div className="w-full max-w-xs shrink-0">
-              <ProductFileWindow names={drawingNames} />
+              <ProductFileWindow productId={Number(product.id)} drawings={drawings} onDrawings={setDrawings} />
             </div>
           </div>
           <div className="mt-5 grid gap-4 border-t border-line pt-4 sm:grid-cols-2">

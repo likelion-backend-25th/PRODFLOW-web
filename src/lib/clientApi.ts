@@ -19,6 +19,11 @@ export interface ClientPage {
   size: number;
 }
 
+export interface ClientRecentMonthCounts {
+  countByOrder: number;
+  countByCreatedAt: number;
+}
+
 export interface ClientDetail {
   id: number;
   company: string;
@@ -26,6 +31,9 @@ export interface ClientDetail {
   email: string;
   phone: string;
   address: string;
+  zipcode: string;
+  roadAddress: string;
+  detailAddress: string;
   userName: string;
   userPhone: string;
   totalOrder: number;
@@ -61,12 +69,16 @@ export function getClient(id: number): Promise<ClientDetail> {
   return apiClient.get<ClientDetail>(`/clients/${id}`).then((response) => response.data);
 }
 
+export function getClientRecentMonthCounts(): Promise<ClientRecentMonthCounts> {
+  return apiClient.get<ClientRecentMonthCounts>("/clients/counts").then((response) => response.data);
+}
+
 export function createClient(input: ClientInput): Promise<ClientDetail> {
   return apiClient.post<ClientDetail>("/clients", input).then((response) => response.data);
 }
 
 export function updateClient(id: number, input: ClientInput): Promise<ClientDetail> {
-  return apiClient.post<ClientDetail>(`/clients/${id}`, input).then((response) => response.data);
+  return apiClient.put<ClientDetail>(`/clients/${id}`, input).then((response) => response.data);
 }
 
 export function importClientsFile(file: File): Promise<Array<{ id: number; company: string }>> {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { DueDateCalendar } from "@/components/DueDateCalendar.tsx";
 import { Button, Card } from "@/components/ui.tsx";
@@ -7,8 +7,10 @@ import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { addDays, todayISO } from "@/lib/dates.ts";
 import { useDb } from "@/lib/db.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount, orderTotal } from "@/lib/money.ts";
-import { getQuotation, type QuotationDetail } from "@/lib/quotationApi.ts";
-import { clientFullAddress, createOrder, previewDuePlan, previewSchedule } from "@/lib/workflow.ts";
+import { getClient } from "@/lib/clientApi.ts";
+import { createCustomerOrder } from "@/lib/orderApi.ts";
+import { getQuotation, previewQuotationSchedule, type QuotationDetail, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
+import { clientFullAddress, createOrder } from "@/lib/workflow.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 import type { NotifyChannel, Quotation } from "@/types/domain.ts";
@@ -23,6 +25,7 @@ export function OrderRegisterPage() {
   const localQuote = db.quotations.find((item) => item.id === quotationKey);
   const [remote, setRemote] = useState<QuotationDetail | null>(null);
   const [remoteError, setRemoteError] = useState("");
+  const [companyParts, setCompanyParts] = useState<{ zipcode: string; roadAddress: string; detailAddress: string } | null>(null);
   useEffect(() => {
     if (!quotationKey || localQuote) return;
     const id = Number(quotationKey);
@@ -37,6 +40,19 @@ export function OrderRegisterPage() {
       ignore = true;
     };
   }, [localQuote, quotationKey]);
+  useEffect(() => {
+    const clientId = remote?.clientId;
+    if (!clientId) return;
+    let ignore = false;
+    getClient(clientId).then((detail) => {
+      if (!ignore) setCompanyParts({ zipcode: detail.zipcode ?? "", roadAddress: detail.roadAddress ?? "", detailAddress: detail.detailAddress ?? "" });
+    }).catch(() => {
+      if (!ignore) setCompanyParts(null);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [remote?.clientId]);
   const quote: Quotation | null = localQuote ?? (remote?.status === "APPROVED" ? {
     id: String(remote.id),
     quotationNo: remote.quotationNo,
@@ -59,15 +75,18 @@ export function OrderRegisterPage() {
     updatedAt: remote.updatedAt,
   } : null);
   const localClient = db.clients.find((item) => item.id === quote?.clientId);
+  const registeredAddress = localClient
+    ? { zipcode: localClient.zipcode, roadAddress: localClient.roadAddress, detailAddress: localClient.detailAddress }
+    : companyParts;
   const client = localClient ?? (remote && quote ? {
     companyName: remote.clientCompany,
     contactName: remote.clientName,
     contactMobile: remote.clientPhone,
-    zipcode: "",
-    roadAddress: remote.clientAddress,
-    detailAddress: "",
+    zipcode: registeredAddress?.zipcode ?? "",
+    roadAddress: registeredAddress?.roadAddress ?? "",
+    detailAddress: registeredAddress?.detailAddress ?? "",
   } : undefined);
-  const companyAddress = localClient ? clientFullAddress(localClient) : (remote?.clientAddress ?? "");
+  const companyAddress = registeredAddress ? clientFullAddress(registeredAddress) : "";
   useEffect(() => {
     if (!remote || localClient) return;
     setReceiverName((current) => current || remote.clientName || "");
@@ -84,9 +103,19 @@ export function OrderRegisterPage() {
   const [roadAddress, setRoadAddress] = useState("");
   const [addressDetail, setAddressDetail] = useState("");
   const [shippingAddress, setShippingAddress] = useState("");
+  const registeredZip = registeredAddress?.zipcode ?? "";
+  const registeredRoad = registeredAddress?.roadAddress ?? "";
+  const registeredDetail = registeredAddress?.detailAddress ?? "";
+  useEffect(() => {
+    if (!useCompanyAddress || (!registeredZip && !registeredRoad && !registeredDetail)) return;
+    setPostalCode(registeredZip);
+    setRoadAddress(registeredRoad);
+    setAddressDetail(registeredDetail);
+    setShippingAddress(clientFullAddress({ zipcode: registeredZip, roadAddress: registeredRoad, detailAddress: registeredDetail }));
+  }, [registeredDetail, registeredRoad, registeredZip, useCompanyAddress]);
   const [receiverName, setReceiverName] = useState(client?.contactName ?? "");
   const [receiverPhone, setReceiverPhone] = useState(client?.contactMobile ?? "");
-  const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>("SMS");
+  const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>("EMAIL");
   const [memo, setMemo] = useState("");
   const depositDueDate = addDays(todayISO(), 3);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -94,29 +123,80 @@ export function OrderRegisterPage() {
   const [dueOpen, setDueOpen] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState("");
-  const quantity = quote?.lines.reduce((sum, line) => sum + (quantities[line.id] ?? line.quantity), 0) ?? 0;
-  const current = useMemo(() => {
-    if (!quote || quote.status !== "APPROVED" || quantity <= 0) return null;
-    try {
-      return previewSchedule(quantity, undefined, depositDueDate || undefined);
-    } catch (reason: unknown) {
-      return reason instanceof Error ? reason.message : "납기를 계산하지 못했습니다.";
-    }
-  }, [db, depositDueDate, quantity, quote]);
-  const selection = useMemo(() => {
-    if (!quote || !current || typeof current === "string") return null;
-    const slipped = quote.estimatedDueDate < current.earliestDueDate;
-    const registerDue = slipped ? (chosenDue >= current.earliestDueDate ? chosenDue : current.earliestDueDate) : quote.estimatedDueDate;
-    if (registerDue <= current.earliestDueDate) {
-      return { slipped, registerDue, earliest: current.earliestDueDate, plannedStartDate: current.plannedStartDate, plannedEndDate: current.plannedEndDate };
-    }
-    try {
-      const plan = previewDuePlan(quantity, registerDue, depositDueDate || undefined);
-      return { slipped, registerDue, earliest: current.earliestDueDate, plannedStartDate: plan.plannedStartDate, plannedEndDate: plan.plannedEndDate };
-    } catch {
-      return { slipped, registerDue: current.earliestDueDate, earliest: current.earliestDueDate, plannedStartDate: current.plannedStartDate, plannedEndDate: current.plannedEndDate };
-    }
-  }, [chosenDue, current, db, depositDueDate, quantity, quote]);
+  const [saving, setSaving] = useState(false);
+  const [preview, setPreview] = useState<{
+    key: string;
+    result: QuotationSchedulePreview | null;
+    error: string;
+  } | null>(null);
+  // 같은 조건의 응답만 사용해 수량·납기 변경 직후 이전 일정으로 등록하지 않는다.
+  const previewKey = quote?.status === "APPROVED" ? JSON.stringify({
+    quotationId: quote.id,
+    estimatedDueDate: quote.estimatedDueDate,
+    chosenDue,
+    depositDueDate,
+    items: quote.lines.map((line) => ({
+      productId: Number(line.productId),
+      quantity: quantities[line.id] ?? line.quantity,
+    })),
+  }) : "";
+  const scheduleLoading = Boolean(previewKey) && preview?.key !== previewKey;
+  const scheduleError = preview?.key === previewKey ? preview.error : "";
+  const schedule = preview?.key === previewKey ? preview.result : null;
+
+  useEffect(() => {
+    if (!previewKey) return;
+    const input: {
+      estimatedDueDate: string;
+      chosenDue: string;
+      items: Array<{ productId: number; quantity: number }>;
+    } = JSON.parse(previewKey);
+    let ignore = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        if (input.items.some((item) => !Number.isInteger(item.productId) || item.productId <= 0
+          || !Number.isInteger(item.quantity) || item.quantity < 100)) {
+          throw new Error("서버에 등록된 품목과 품목별 100개 이상의 수량으로 납기를 계산할 수 있습니다.");
+        }
+        const initial = await previewQuotationSchedule({
+          items: input.items,
+          requestedDueDate: input.estimatedDueDate,
+        });
+        if (ignore) return;
+        let result = initial;
+        if (input.estimatedDueDate < initial.earliestDueDate) {
+          result = await previewQuotationSchedule({
+            items: input.items,
+            requestedDueDate: input.chosenDue >= initial.earliestDueDate
+              ? input.chosenDue : initial.earliestDueDate,
+          });
+        }
+        if (ignore) return;
+        if (!result.feasible || !result.plannedStartDate || !result.plannedEndDate) {
+          throw new Error(`선택한 납기를 지킬 수 없습니다. 가능한 가장 빠른 납기일: ${result.earliestDueDate}`);
+        }
+        setPreview({ key: previewKey, result, error: "" });
+      } catch (reason: unknown) {
+        if (!ignore) setPreview({
+          key: previewKey,
+          result: null,
+          error: reason instanceof Error && !("isAxiosError" in reason)
+            ? reason.message : readApiErrorMessage(reason),
+        });
+      }
+    }, 250);
+    return () => {
+      ignore = true;
+      window.clearTimeout(timer);
+    };
+  }, [previewKey]);
+
+  const selection = quote && schedule ? {
+    slipped: quote.estimatedDueDate < schedule.earliestDueDate,
+    registerDue: schedule.requestedDueDate ?? schedule.earliestDueDate,
+    plannedStartDate: schedule.plannedStartDate,
+    plannedEndDate: schedule.plannedEndDate,
+  } : null;
 
   if (!quote && quotationKey && !localQuote && !remote && !remoteError) return <p>수주 등록 화면을 불러오는 중입니다.</p>;
   if (!quote || quote.status !== "APPROVED") {
@@ -129,14 +209,16 @@ export function OrderRegisterPage() {
     );
   }
 
-  const schedule = current && typeof current !== "string" ? current : null;
   const slipped = selection?.slipped ?? false;
   const registerDue = selection?.registerDue ?? "";
   const orderLines = quote.lines.map((line) => ({ ...line, quantity: quantities[line.id] ?? line.quantity }));
   const reduced = orderLines.some((line) => line.quantity < (quote.lines.find((item) => item.id === line.id)?.quantity ?? line.quantity));
   const orderAmount = orderTotal(orderLines, quote.vatIncluded);
   const needsConsent = reduced || slipped;
-  const existing = db.orders.find((order) => order.quotationId === quote.id && order.status !== "CANCELLED");
+  const existing = db.orders.find((order) => order.quotationId === quote.id && order.status !== "CANCELLED")
+    ?? (remote?.customerOrderId != null && remote.orderNo && remote.orderNo !== "-"
+      ? { id: String(remote.customerOrderId), orderNo: remote.orderNo }
+      : undefined);
   if (existing) {
     return (
       <Card>
@@ -146,13 +228,17 @@ export function OrderRegisterPage() {
     );
   }
 
-  function register() {
-    if (!actor || !quote) return;
+  async function register() {
+    if (!actor || !quote || saving) return;
     if (useCompanyAddress && !companyAddress) {
       setError("등록된 회사 주소가 없습니다. 체크를 해제하고 배송지를 직접 입력하세요.");
       return;
     }
-    if (!shippingAddress.trim()) {
+    if (!useCompanyAddress && (!postalCode.trim() || !roadAddress.trim() || !addressDetail.trim())) {
+      setError("배송지를 입력하세요.");
+      return;
+    }
+    if (useCompanyAddress && !shippingAddress.trim()) {
       setError("배송지를 입력하세요.");
       return;
     }
@@ -165,34 +251,60 @@ export function OrderRegisterPage() {
       return;
     }
     if (!schedule || !registerDue) {
-      setError(typeof current === "string" ? current : "납기를 계산하지 못했습니다.");
+      setError(scheduleLoading ? "납기를 계산 중입니다. 잠시 기다려 주세요." : scheduleError || "납기를 계산하지 못했습니다.");
       return;
     }
     if (needsConsent && !agreed) {
       setError("변경된 수량이나 납기에 거래처가 동의한 뒤에 등록합니다.");
       return;
     }
+    const quotationId = Number(quote.id);
+    const items = orderLines.map((line) => ({ quotationItemId: Number(line.id), quantity: line.quantity }));
+    const serverQuote = Number.isInteger(quotationId) && quotationId > 0 && items.every((item) => Number.isInteger(item.quotationItemId) && item.quotationItemId > 0);
+    if (!serverQuote) {
+      try {
+        const order = createOrder({
+          quotationId: quote.id,
+          clientId: quote.clientId,
+          lines: orderLines.map(({ productId, quantity: lineQuantity, unitPrice }) => ({ productId, quantity: lineQuantity, unitPrice })),
+          requestedDueDate: quote.requestedDueDate,
+          dueDate: registerDue,
+          depositDueDate,
+          plannedStartDate: selection?.plannedStartDate ?? undefined,
+          plannedEndDate: selection?.plannedEndDate ?? undefined,
+          shippingAddress,
+          receiverName,
+          receiverPhone,
+          notifyChannel,
+          memo,
+          actor,
+        });
+        show(`${order.orderNo} 수주를 등록했습니다. 확정은 예정, 진행은 대기입니다.`);
+        navigate(`/orders/${order.id}`);
+      } catch (reason: unknown) {
+        setError(reason instanceof Error ? reason.message : "등록하지 못했습니다.");
+      }
+      return;
+    }
+    setSaving(true);
     try {
-      const order = createOrder({
-        quotationId: quote.id,
-        clientId: quote.clientId,
-        lines: orderLines.map(({ productId, quantity: lineQuantity, unitPrice }) => ({ productId, quantity: lineQuantity, unitPrice })),
-        requestedDueDate: quote.requestedDueDate,
+      const order = await createCustomerOrder({
+        quotationId,
+        items,
         dueDate: registerDue,
-        depositDueDate,
-        plannedStartDate: selection?.plannedStartDate,
-        plannedEndDate: selection?.plannedEndDate,
-        shippingAddress,
-        receiverName,
-        receiverPhone,
+        useCompanyAddress,
+        shippingAddress: { zipcode: postalCode.trim(), roadAddress: roadAddress.trim(), detailAddress: addressDetail.trim() },
+        receiverName: receiverName.trim(),
+        receiverPhone: receiverPhone.trim(),
         notifyChannel,
         memo,
-        actor,
       });
       show(`${order.orderNo} 수주를 등록했습니다. 확정은 예정, 진행은 대기입니다.`);
       navigate(`/orders/${order.id}`);
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "등록하지 못했습니다.");
+      setError(readApiErrorMessage(reason));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -257,8 +369,10 @@ export function OrderRegisterPage() {
           </div>
           <p className="mt-3 text-xs text-muted">품목을 빼거나 단가를 바꾸려면 견적을 새로 작성합니다. 화면을 닫으면 수주는 만들어지지 않습니다.</p>
           <div className={`mt-3 rounded-lg px-3 py-2 text-sm leading-5 ${needsConsent ? "bg-warning-soft text-warning" : "bg-primary-soft text-primary"}`}>
-            {typeof current === "string" ? (
-              current
+            {scheduleLoading ? (
+              "서버에서 생산 일정과 납기를 계산하고 있습니다."
+            ) : scheduleError ? (
+              scheduleError
             ) : reduced && !slipped ? (
               <>수량을 줄이면 견적 예상 납기 {quote.estimatedDueDate}이 가능합니다. 거래처가 이 수량에 동의한 뒤에 등록합니다.</>
             ) : slipped ? (
@@ -330,7 +444,7 @@ export function OrderRegisterPage() {
           </label>
           <div className="space-y-2">
             <div className="flex gap-2">
-              <input readOnly value={postalCode} placeholder="우편번호" className="h-10 w-28 rounded-lg border border-line bg-white px-3 text-sm" />
+              <input readOnly value={postalCode} placeholder="우편번호" className={`h-10 w-28 rounded-lg border border-line px-3 text-sm ${useCompanyAddress ? "bg-canvas" : "bg-white"}`} />
               <Button
                 tone="ghost"
                 className="shrink-0"
@@ -355,12 +469,12 @@ export function OrderRegisterPage() {
                 우편번호 찾기
               </Button>
             </div>
-            <input readOnly value={roadAddress} placeholder="우편번호 찾기로 도로명 주소를 선택하세요" className="h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" />
+            <input readOnly value={roadAddress} placeholder="우편번호 찾기로 도로명 주소를 선택하세요" className={`h-10 w-full rounded-lg border border-line px-3 text-sm ${useCompanyAddress ? "bg-canvas" : "bg-white"}`} />
             <input
               readOnly={useCompanyAddress}
               value={addressDetail}
               placeholder="건물명, 층, 호수 등 상세 주소"
-              className="h-10 w-full rounded-lg border border-line px-3 text-sm read-only:bg-canvas"
+              className={`h-10 w-full rounded-lg border border-line px-3 text-sm ${useCompanyAddress ? "bg-canvas" : "bg-white"}`}
               onChange={(event) => {
                 const detail = event.target.value;
                 setAddressDetail(detail);
@@ -420,7 +534,7 @@ export function OrderRegisterPage() {
           </label>
         ) : null}
         {error ? <p className="text-sm text-danger">{error}</p> : null}
-        <Button className="w-full" disabled={needsConsent && !agreed} onClick={register}>수주 등록</Button>
+        <Button className="w-full" disabled={!schedule || scheduleLoading || (needsConsent && !agreed) || saving} onClick={() => void register()}>수주 등록</Button>
       </Card>
       </div>
     </div>

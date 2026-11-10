@@ -45,6 +45,8 @@ export interface DailyPlanRow {
   assignedId: number;
   assignedName: string;
   status: WorkOrderStatus;
+  plannedStartDate: string;
+  plannedEndDate: string;
 }
 
 export interface WorkOrderPage {
@@ -56,6 +58,7 @@ export interface WorkOrderPage {
 }
 
 export interface WorkOrderQuery {
+  orderId?: number;
   keyword?: string;
   from?: string;
   to?: string;
@@ -72,6 +75,19 @@ export async function fetchWorkOrders(query: WorkOrderQuery): Promise<WorkOrderP
 
 export async function fetchWorkOrder(workOrderId: number): Promise<WorkOrderDetail> {
   const { data } = await apiClient.get<WorkOrderDetail>(`/work-orders/${workOrderId}`);
+  return data;
+}
+
+export interface WorkOrderChangeHistory {
+  previousLineName: string;
+  newLineName: string;
+  previousUserName: string;
+  newUserName: string;
+  changedByName: string;
+}
+
+export async function fetchWorkOrderHistory(workOrderId: number): Promise<WorkOrderChangeHistory[]> {
+  const { data } = await apiClient.get<WorkOrderChangeHistory[]>(`/work-orders/${workOrderId}/history`);
   return data;
 }
 
@@ -99,6 +115,8 @@ export async function fetchDailyPlans(): Promise<DailyPlanRow[]> {
     assignedId: detail.assignedId,
     assignedName: detail.assignedName,
     status: detail.status,
+    plannedStartDate: detail.plannedStartDate,
+    plannedEndDate: detail.plannedEndDate,
   })));
 }
 

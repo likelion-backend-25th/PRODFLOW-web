@@ -1,11 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Ellipsis, FileSpreadsheet, Info, MapPin, Pencil, Plus, Search } from "lucide-react";
-import { Button } from "@/components/ui.tsx";
+import { Badge, Button } from "@/components/ui.tsx";
 import { cn } from "@/lib/cn.ts";
 import { digitsOnly } from "@/lib/money.ts";
 import { readApiErrorMessage } from "@/lib/apiClient.ts";
-import { createClient, getClient, importClientsFile, listClients, updateClient, type ClientDetail, type ClientListItem, type ClientPage } from "@/lib/clientApi.ts";
+import { createClient, getClient, getClientRecentMonthCounts, importClientsFile, listClients, updateClient, type ClientDetail, type ClientListItem, type ClientPage, type ClientRecentMonthCounts } from "@/lib/clientApi.ts";
+import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } from "@/lib/labels.ts";
+import { getRecentClientOrder, listClientOrders, screenOrderStatus, screenPaymentStatus, type ClientOrder, type ClientOrderPage } from "@/lib/orderApi.ts";
+import { getOrderManagers, type OrderManagerResponse } from "@/lib/userApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
@@ -24,6 +27,13 @@ interface ClientRow {
 }
 
 const emptyClientPage: ClientPage = { content: [], totalElements: 0, totalPages: 0, number: 0, size: PAGE_SIZE };
+const emptyRecentMonthCounts: ClientRecentMonthCounts = { countByOrder: 0, countByCreatedAt: 0 };
+
+function formatDate(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("ko-KR");
+}
 
 export function ClientListPage() {
   const role = useAuthStore((state) => state.user?.role);
@@ -36,6 +46,8 @@ export function ClientListPage() {
   const [list, setList] = useState<ClientPage>(emptyClientPage);
   const [loadError, setLoadError] = useState("");
   const [details, setDetails] = useState<Record<number, ClientDetail>>({});
+  const [recentOrders, setRecentOrders] = useState<Record<number, ClientOrder | null>>({});
+  const [recentMonthCounts, setRecentMonthCounts] = useState<ClientRecentMonthCounts>(emptyRecentMonthCounts);
   const [reloadKey, setReloadKey] = useState(0);
   const canWrite = canManageOrders(role);
   useEffect(() => {
@@ -58,6 +70,17 @@ export function ClientListPage() {
       ignore = true;
     };
   }, [keyword, page, reloadKey, sort]);
+  useEffect(() => {
+    let ignore = false;
+    getClientRecentMonthCounts().then((counts) => {
+      if (!ignore) setRecentMonthCounts(counts);
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [reloadKey, show]);
   const pageRows: ClientRow[] = list.content.map((item) => ({ item, detail: details[item.id] ?? null }));
   const selected = pageRows.find((row) => String(row.item.id) === selectedId) ?? pageRows[0];
   useEffect(() => {
@@ -71,6 +94,20 @@ export function ClientListPage() {
       ignore = true;
     };
   }, [details, selected]);
+  useEffect(() => {
+    const id = selected?.item.id;
+    if (!id || Object.hasOwn(recentOrders, id)) return;
+    let ignore = false;
+    getRecentClientOrder(id).then((order) => {
+      if (!ignore) setRecentOrders((current) => ({ ...current, [id]: order }));
+    }).catch(() => {
+      if (!ignore) setRecentOrders((current) => ({ ...current, [id]: null }));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [recentOrders, selected]);
+  const selectedRecentOrder = selected ? recentOrders[selected.item.id] : undefined;
 
   return (
     <div className="space-y-6">
@@ -111,8 +148,8 @@ export function ClientListPage() {
 
       <div className="grid gap-4 md:grid-cols-3">
         <Metric label="전체 거래처" value={list.totalElements} icon={<Building2 size={23} className="text-primary" />} />
-        <Metric label="이 페이지" value={pageRows.length} />
-        <Metric label="검색 결과" value={loadError ? 0 : list.totalElements} />
+        <Metric label="최근 한달간 수주한 거래처" value={recentMonthCounts.countByOrder} />
+        <Metric label="최근 한달간 등록한 거래처" value={recentMonthCounts.countByCreatedAt} />
       </div>
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_316px]">
@@ -182,7 +219,7 @@ export function ClientListPage() {
                         <td className="text-[10px] text-muted">{item.email}</td>
                         <td className="text-xs">{item.totalOrder}건</td>
                         <td className="text-right text-xs">₩{item.totalAmount.toLocaleString("ko-KR")}</td>
-                        <td className="text-center text-[10px] text-muted">-</td>
+                        <td className="text-center text-[10px] text-muted">{formatDate(item.recentOrderedAt)}</td>
                         <td className="pr-[14px]">
                           <Link to={`/clients/${item.id}`} aria-label={`${item.company} 상세`} className="flex text-muted" onClick={(event) => event.stopPropagation()}>
                             <ChevronRight size={14} />
@@ -201,18 +238,6 @@ export function ClientListPage() {
             <Pager total={list.totalElements} page={page} pageSize={PAGE_SIZE} unit="개사" onChange={setPage} />
           </section>
 
-          {canWrite ? (
-            <section className="flex items-start gap-[14px] rounded-[10px] border border-line bg-white p-[18px]">
-              <span className="size-[42px] shrink-0 rounded-[10px] bg-primary-soft" />
-              <div className="min-w-0 flex-1 space-y-1">
-                <p className="text-xs font-bold">여러 거래처를 한 번에 등록하세요</p>
-                <div className="text-[10px] text-muted">
-                  <p>첫 줄은 company, employee, email, phone, zipcode, road_address, detail_address, user_id, created_at, updated_at, created_by, updated_by 입니다.</p>
-                  <p>지원 형식 .xlsx, .xls</p>
-                </div>
-              </div>
-            </section>
-          ) : null}
         </div>
 
         {selected ? (
@@ -259,17 +284,35 @@ export function ClientListPage() {
             </section>
 
             <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
-              <h2 className="text-base font-bold">진행 중 수주</h2>
-              <p className="text-xs text-muted">{selected.detail ? `${selected.detail.ongoingOrders}건` : "불러오는 중입니다."}</p>
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-bold">최근 수주</h2>
+                <Link to={`/orders?keyword=${encodeURIComponent(selected.item.company)}`} className="text-[11px] font-medium text-primary">전체 →</Link>
+              </div>
+              {selectedRecentOrder ? (
+                <div className="space-y-3">
+                  <InfoRow
+                    label="수주번호"
+                    value={selectedRecentOrder.customerOrder.orderNo}
+                  />
+                  <InfoRow label="품목 요약" value={selectedRecentOrder.productName} />
+                  <div className="grid grid-cols-2 gap-3">
+                    <InfoRow label="납기일" value={selectedRecentOrder.customerOrder.estimatedDueDate} />
+                    <InfoRow label="금액" value={`₩${selectedRecentOrder.customerOrder.totalAmount.toLocaleString("ko-KR")}`} />
+                  </div>
+                  <div className="space-y-[5px]">
+                    <p className="text-[10px] text-muted">진행 상태</p>
+                    <Badge className={orderStatusTone(screenOrderStatus(selectedRecentOrder.customerOrder.statusCode.code))}>
+                      {selectedRecentOrder.customerOrder.statusCode.name || orderStatusLabel[screenOrderStatus(selectedRecentOrder.customerOrder.statusCode.code)]}
+                    </Badge>
+                  </div>
+                </div>
+              ) : selectedRecentOrder === null ? (
+                <p className="text-xs text-muted">등록된 수주가 없습니다.</p>
+              ) : (
+                <p className="text-xs text-muted">최근 수주를 불러오는 중입니다.</p>
+              )}
             </section>
 
-            <section className="flex items-center gap-3 rounded-lg bg-primary-soft p-[15px]">
-              <Info size={18} className="shrink-0 text-primary" />
-              <div className="space-y-[3px]">
-                <p className="text-xs font-medium text-primary">수주와 연결되는 거래처 정보</p>
-                <p className="text-[11px] text-muted">견적 작성 시 회사명을 검색하면 연락처와 주소가 자동으로 입력됩니다.</p>
-              </div>
-            </section>
           </aside>
         ) : null}
       </div>
@@ -333,7 +376,7 @@ function InfoRow({ label, value, muted = false }: { label: string; value: string
   );
 }
 
-const emptyClient = { companyName: "", representative: "", zipcode: "", roadAddress: "", detailAddress: "", phone: "", contactName: "", contactMobile: "", taxEmail: "" };
+const emptyClient = { companyName: "", representative: "", zipcode: "", roadAddress: "", detailAddress: "", phone: "", taxEmail: "" };
 
 export function ClientFormPage() {
   const { clientId } = useParams();
@@ -343,25 +386,45 @@ export function ClientFormPage() {
   const [form, setForm] = useState(emptyClient);
   const [checked, setChecked] = useState(false);
   const [duplicates, setDuplicates] = useState<ClientListItem[]>([]);
+  const [orderManagers, setOrderManagers] = useState<OrderManagerResponse[]>([]);
+  const [selectedManagerId, setSelectedManagerId] = useState("");
+  const [managerLoadError, setManagerLoadError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const editing = Boolean(clientId);
   useEffect(() => {
-    if (!clientId) return;
-    const id = Number(clientId);
-    if (!Number.isInteger(id)) return;
-    getClient(id).then((detail) => {
+    let ignore = false;
+    const managersRequest = getOrderManagers();
+    const clientIdNumber = Number(clientId);
+    const clientRequest = clientId && Number.isInteger(clientIdNumber) ? getClient(clientIdNumber) : Promise.resolve(null);
+    Promise.all([managersRequest, clientRequest]).then(([managers, detail]) => {
+      if (ignore) return;
+      setOrderManagers(managers);
+      setManagerLoadError("");
+      const assignableManagers = managers.filter((item) => item.status === "ACTIVE");
+      const selectedManager = detail
+        ? managers.find((item) => item.name === detail.userName)
+        : assignableManagers.find((item) => String(item.id) === manager?.id);
+      setSelectedManagerId(String(selectedManager?.id ?? assignableManagers[0]?.id ?? ""));
+      if (!detail) return;
       setForm({
         companyName: detail.company,
         representative: detail.employee,
-        zipcode: "",
-        roadAddress: detail.address,
-        detailAddress: "",
+        zipcode: detail.zipcode,
+        roadAddress: detail.roadAddress,
+        detailAddress: detail.detailAddress,
         phone: detail.phone,
-        contactName: detail.userName,
-        contactMobile: detail.userPhone,
         taxEmail: detail.email,
       });
-    }).catch((error: unknown) => show(readApiErrorMessage(error)));
-  }, [clientId, show]);
+    }).catch((error: unknown) => {
+      if (ignore) return;
+      const message = readApiErrorMessage(error);
+      setManagerLoadError(message);
+      show(message);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [clientId, manager?.id, show]);
   const patch = (next: Partial<typeof form>) => {
     setForm({ ...form, ...next });
     setChecked(false);
@@ -405,15 +468,15 @@ export function ClientFormPage() {
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
         <form
           className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
             if (!checked) {
               show("등록 전에 중복 확인을 눌러 주세요.");
               return;
             }
-            const userId = Number(manager?.id);
+            const userId = Number(selectedManagerId);
             if (!Number.isInteger(userId) || userId <= 0) {
-              show("로그인한 계정으로만 거래처를 저장할 수 있습니다.");
+              show("담당 직원을 선택해 주세요.");
               return;
             }
             const input = {
@@ -424,11 +487,16 @@ export function ClientFormPage() {
               userId,
               address: { zipcode: form.zipcode.trim(), roadAddress: form.roadAddress.trim(), detailAddress: form.detailAddress.trim() },
             };
-            const request = editing && clientId ? updateClient(Number(clientId), input) : createClient(input);
-            void request.then(() => {
+            setIsSubmitting(true);
+            try {
+              await (editing && clientId ? updateClient(Number(clientId), input) : createClient(input));
               show(editing ? "거래처를 수정했습니다." : "거래처를 등록했습니다.");
               navigate("/clients");
-            }).catch((error: unknown) => show(readApiErrorMessage(error)));
+            } catch (error: unknown) {
+              show(readApiErrorMessage(error));
+            } finally {
+              setIsSubmitting(false);
+            }
           }}
         >
           <div className="flex items-center justify-between gap-3">
@@ -474,17 +542,24 @@ export function ClientFormPage() {
             <FormField label="연락처 *">
               <input required placeholder="예: 02-1234-5678" value={form.phone} className={inputClass} onChange={(event) => patch({ phone: event.target.value })} />
             </FormField>
-            <FormField label="이메일">
-              <input type="email" placeholder="예: user1234@company.com" value={form.taxEmail} className={inputClass} onChange={(event) => patch({ taxEmail: event.target.value })} />
+            <FormField label="이메일 *">
+              <input required type="email" placeholder="예: user1234@company.com" value={form.taxEmail} className={inputClass} onChange={(event) => patch({ taxEmail: event.target.value })} />
             </FormField>
-            <FormField label="담당 직원">
+            <FormField label="담당 직원 *">
               <span className="relative block">
                 <select
+                  required
                   className={`${inputClass} appearance-none pr-9`}
-                  value={manager?.id ?? ""}
-                  onChange={() => undefined}
+                  value={selectedManagerId}
+                  disabled={orderManagers.length === 0}
+                  onChange={(event) => setSelectedManagerId(event.target.value)}
                 >
-                  <option value={manager?.id ?? ""}>{manager ? `${manager.name} · 로그인한 계정` : "로그인 필요"}</option>
+                  <option value="">{managerLoadError ? "담당 직원 조회 실패" : "담당 직원을 선택하세요"}</option>
+                  {orderManagers.filter((item) => item.status !== "DELETED").map((item) => (
+                    <option key={item.id} value={item.id} disabled={item.status !== "ACTIVE"}>
+                      {item.name} · {item.email}{item.status !== "ACTIVE" ? " · 비활성" : ""}
+                    </option>
+                  ))}
                 </select>
                 <ChevronDown size={14} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
               </span>
@@ -526,9 +601,9 @@ export function ClientFormPage() {
             <p className="text-[11px] text-muted">입력 내용을 확인한 후 등록해 주세요.</p>
             <div className="flex gap-2">
               <Button tone="ghost" className="text-[13px] font-medium" onClick={() => navigate("/clients")}>취소</Button>
-              <Button type="submit" className="gap-2 text-[13px] font-medium">
+              <Button type="submit" disabled={isSubmitting} className="gap-2 text-[13px] font-medium">
                 <Check size={16} />
-                {editing ? "수정 저장" : "거래처 등록"}
+                {isSubmitting ? "저장 중…" : editing ? "수정 저장" : "거래처 등록"}
               </Button>
             </div>
           </div>
@@ -591,13 +666,13 @@ function CompanyAddress({
     <div className="space-y-[7px]">
       <p className="text-xs font-medium">회사 주소 *</p>
       <div className="flex items-center gap-2">
-        <input readOnly value={zipcode} placeholder="우편번호" className={inputClass} />
+        <input required readOnly value={zipcode} placeholder="우편번호" className={inputClass} />
         <button type="button" className="h-[41px] shrink-0 rounded-[7px] border border-line bg-white px-4 text-[13px] font-medium" onClick={onSearch}>
           우편번호 찾기
         </button>
       </div>
       <span className="relative block">
-        <input readOnly value={road} placeholder="도로명 주소를 입력하세요" className={`${inputClass} pr-9`} />
+        <input required readOnly value={road} placeholder="도로명 주소를 입력하세요" className={`${inputClass} pr-9`} />
         <MapPin size={15} className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-muted" />
       </span>
       <input placeholder="건물명, 층, 호수 등 상세 주소를 입력하세요" value={detail} className={inputClass} onChange={(event) => onDetail(event.target.value)} />
@@ -629,14 +704,16 @@ export function ClientDetailPage() {
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<ClientDetail | null>(null);
   const [loadError, setLoadError] = useState("");
+  const [recentOrder, setRecentOrder] = useState<ClientOrder | null>(null);
+  const [recentError, setRecentError] = useState("");
+  const [history, setHistory] = useState<ClientOrderPage | null>(null);
+  const [historyError, setHistoryError] = useState("");
+  const numericClientId = Number(clientId);
+  const validClientId = Number.isInteger(numericClientId) && numericClientId > 0;
   useEffect(() => {
-    const id = Number(clientId);
-    if (!Number.isInteger(id) || id <= 0) {
-      setLoadError("거래처를 찾을 수 없습니다.");
-      return;
-    }
+    if (!validClientId) return;
     let ignore = false;
-    getClient(id).then((response) => {
+    getClient(numericClientId).then((response) => {
       if (!ignore) setDetail(response);
     }).catch((error: unknown) => {
       if (!ignore) setLoadError(readApiErrorMessage(error));
@@ -644,7 +721,36 @@ export function ClientDetailPage() {
     return () => {
       ignore = true;
     };
-  }, [clientId]);
+  }, [numericClientId, validClientId]);
+  useEffect(() => {
+    if (!validClientId) return;
+    let ignore = false;
+    getRecentClientOrder(numericClientId).then((response) => {
+      if (ignore) return;
+      setRecentOrder(response);
+      setRecentError("");
+    }).catch((error: unknown) => {
+      if (!ignore) setRecentError(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [numericClientId, validClientId]);
+  useEffect(() => {
+    if (!validClientId) return;
+    let ignore = false;
+    listClientOrders(numericClientId, page - 1, HISTORY_PAGE_SIZE).then((response) => {
+      if (ignore) return;
+      setHistory(response);
+      setHistoryError("");
+    }).catch((error: unknown) => {
+      if (!ignore) setHistoryError(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [numericClientId, page, validClientId]);
+  if (!validClientId) return <p>거래처를 찾을 수 없습니다.</p>;
   if (loadError) return <p>{loadError}</p>;
   if (!detail) return <p>거래처를 불러오는 중입니다.</p>;
   const client = {
@@ -657,9 +763,8 @@ export function ClientDetailPage() {
     taxEmail: detail.email,
   };
   const canWrite = canManageOrders(role);
-  const history: never[] = [];
   const breakdown = `진행 중 ${detail.ongoingOrders}건`;
-  const currentPage = Math.min(page, pageCountOf(history.length, HISTORY_PAGE_SIZE));
+  const historyRows = history?.content ?? [];
 
   return (
     <div className="space-y-6">
@@ -730,11 +835,29 @@ export function ClientDetailPage() {
         <aside className="space-y-4">
           <section className="space-y-[18px] rounded-xl border border-line bg-white p-[22px]">
             <h2 className="text-base font-bold">최근 수주</h2>
-            <p className="text-xs text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</p>
-          </section>
-          <section className="flex items-start justify-between rounded-[10px] border border-line bg-white p-[18px] text-xs">
-            <span className="text-muted">진행 중인 수주</span>
-            <span className="font-bold text-primary">{detail.ongoingOrders}건</span>
+            {recentOrder ? (
+              <>
+                <div className="space-y-1">
+                  <Link to={`/orders/${recentOrder.customerOrder.id}`} className="text-sm font-bold text-primary">{recentOrder.customerOrder.orderNo}</Link>
+                  <p className="text-[10px] text-muted">{formatDate(recentOrder.customerOrder.createdAt)} 등록</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge className={orderStatusTone(screenOrderStatus(recentOrder.customerOrder.statusCode.code))}>
+                    {recentOrder.customerOrder.statusCode.name || orderStatusLabel[screenOrderStatus(recentOrder.customerOrder.statusCode.code)]}
+                  </Badge>
+                  <Badge className={paymentTone(screenPaymentStatus(recentOrder.customerOrder.paymentStatus))}>
+                    {paymentStatusLabel[screenPaymentStatus(recentOrder.customerOrder.paymentStatus)]}
+                  </Badge>
+                </div>
+                <InfoRow label="생산 품목" value={recentOrder.productName} />
+                <InfoRow label="수주 금액" value={`₩${recentOrder.customerOrder.totalAmount.toLocaleString("ko-KR")}`} />
+                <InfoRow label="납기일" value={recentOrder.customerOrder.estimatedDueDate} />
+              </>
+            ) : recentError ? (
+              <p className="text-xs text-danger">{recentError}</p>
+            ) : (
+              <p className="text-xs text-muted">최근 수주를 불러오는 중입니다.</p>
+            )}
           </section>
         </aside>
       </div>
@@ -743,34 +866,61 @@ export function ClientDetailPage() {
         <div className="flex items-center justify-between gap-3">
           <div className="space-y-[3px]">
             <h2 className="text-base font-bold">수주 이력</h2>
-            <p className="text-[11px] text-muted">{client.companyName}의 전체 수주 {history.length}건 · 최근 등록순</p>
+            <p className="text-[11px] text-muted">{client.companyName}의 전체 수주 {history?.totalElements ?? 0}건 · 최근 등록순</p>
           </div>
           <span className="text-[11px] text-muted">금액은 VAT 포함</span>
         </div>
         <div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-left [&_td]:pr-4 [&_th]:pr-4">
+            <table className="w-full min-w-[860px] table-fixed text-left [&_td]:pr-4 [&_th]:pr-4">
+              <colgroup>
+                {Array.from({ length: 6 }, (_, index) => <col key={index} className="w-[16%]" />)}
+                <col className="w-[4%]" />
+              </colgroup>
               <thead className="border-y border-line bg-canvas/60 text-[11px] text-muted">
                 <tr className="h-10 whitespace-nowrap [&_th]:font-normal">
-                  <th className="w-[173px] pl-[14px]">수주번호 / 등록일</th>
+                  <th className="pl-[14px]">수주번호 / 등록일</th>
                   <th>생산 품목</th>
-                  <th>총 생산 수량</th>
-                  <th className="w-[145px]">수주 금액</th>
-                  <th className="w-[125px]">납기일</th>
-                  <th className="w-[100px]">진행 상태</th>
-                  <th className="w-[105px]">입금 확인</th>
-                  <th className="w-[34px] pr-[14px]"><span className="sr-only">상세</span></th>
+                  <th>수주 금액</th>
+                  <th>납기일</th>
+                  <th>진행 상태</th>
+                  <th>입금 확인</th>
+                  <th className="pr-[14px]"><span className="sr-only">상세</span></th>
                 </tr>
               </thead>
               <tbody>
-                {history.length === 0 ? (
-                  <tr><td colSpan={8} className="py-10 text-center text-xs text-muted">수주 이력은 수주 API에 연결되면 여기에 표시됩니다.</td></tr>
+                {historyRows.map(({ customerOrder: order, productName }) => {
+                  const status = screenOrderStatus(order.statusCode.code);
+                  const payment = screenPaymentStatus(order.paymentStatus);
+                  return (
+                    <tr key={order.id} className="h-[61px] border-b border-line">
+                      <td className="pl-[14px]">
+                        <Link to={`/orders/${order.id}`} className="text-xs font-bold text-primary">{order.orderNo}</Link>
+                        <p className="mt-0.5 text-[10px] text-muted">{formatDate(order.createdAt)}</p>
+                      </td>
+                      <td className="text-xs">{productName}</td>
+                      <td className="text-xs font-medium">₩{order.totalAmount.toLocaleString("ko-KR")}</td>
+                      <td className="text-xs">{order.estimatedDueDate}</td>
+                      <td><Badge className={orderStatusTone(status)}>{order.statusCode.name || orderStatusLabel[status]}</Badge></td>
+                      <td><Badge className={paymentTone(payment)}>{paymentStatusLabel[payment]}</Badge></td>
+                      <td className="pr-[14px]">
+                        <Link to={`/orders/${order.id}`} aria-label={`${order.orderNo} 상세`} className="flex text-muted">
+                          <ChevronRight size={14} />
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {historyError ? <tr><td colSpan={7} className="py-10 text-center text-xs text-danger">{historyError}</td></tr> : null}
+                {!historyError && history && historyRows.length === 0 ? (
+                  <tr><td colSpan={7} className="py-10 text-center text-xs text-muted">등록된 수주 이력이 없습니다.</td></tr>
                 ) : null}
+                {!historyError && !history ? <tr><td colSpan={7} className="py-10 text-center text-xs text-muted">수주 이력을 불러오는 중입니다.</td></tr> : null}
               </tbody>
             </table>
           </div>
           <div className="pt-4">
-            <Pager total={history.length} page={currentPage} pageSize={HISTORY_PAGE_SIZE} unit="건" onChange={setPage} />
+            <Pager total={history?.totalElements ?? 0} page={page} pageSize={HISTORY_PAGE_SIZE} unit="건" onChange={setPage} />
           </div>
         </div>
       </section>
