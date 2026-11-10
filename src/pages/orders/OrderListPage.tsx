@@ -9,7 +9,7 @@ import { formatWon } from "@/lib/money.ts";
 import { exportOrders, getOrderStatuses, getOrderSummary, listOrders, screenOrderStatus, screenPaymentStatus, type OrderListItem, type OrderListQuery, type OrderStatusOption, type OrderSummary } from "@/lib/orderApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
-import type { PaymentStatus } from "@/types/domain.ts";
+import type { ConfirmationStatus, PaymentStatus } from "@/types/domain.ts";
 
 const emptySummary: OrderSummary = { waiting: 0, making: 0, shipping: 0, doneThisMonth: 0, openCount: 0, doneCount: 0 };
 
@@ -19,7 +19,7 @@ export function OrderListPage() {
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<"open" | "done">("open");
   const [statusCodeId, setStatusCodeId] = useState("");
-  const [registration, setRegistration] = useState<"" | "PENDING" | "CONFIRMED">("");
+  const [registration, setRegistration] = useState<ConfirmationStatus | "">("");
   const [payment, setPayment] = useState<PaymentStatus | "">("");
   const [keyword, setKeyword] = useState(() => searchParams.get("keyword") ?? "");
   const [page, setPage] = useState(0);
@@ -46,7 +46,7 @@ export function OrderListPage() {
     }).catch((error: unknown) => {
       if (!ignore) show(readApiErrorMessage(error));
     });
-    listOrders({ tab: "DONE", sortType: "COMPLETED_AT", page: 0, size: 3 }).then((result) => {
+    listOrders({ tab: "DONE", confirmationStatus: "CONFIRMED", sortType: "COMPLETED_AT", page: 0, size: 3 }).then((result) => {
       if (!ignore) setRecent(result.content);
     }).catch((error: unknown) => {
       if (!ignore) show(readApiErrorMessage(error));
@@ -73,6 +73,13 @@ export function OrderListPage() {
     };
   }, [query, show]);
 
+  function changeTab(nextTab: "open" | "done") {
+    setTab(nextTab);
+    setStatusCodeId("");
+    setRegistration("");
+    setPage(0);
+  }
+
   async function downloadCsv() {
     if (exporting) return;
     setExporting(true);
@@ -91,6 +98,9 @@ export function OrderListPage() {
     }
   }
 
+  const visibleStatuses = statuses.filter((item) => tab === "done"
+    ? item.code === "COMPLETED" || item.code === "CANCELLED"
+    : item.code !== "COMPLETED" && item.code !== "CANCELLED");
   const from = total === 0 ? 0 : page * 8 + 1;
   const to = Math.min(total, page * 8 + 8);
 
@@ -99,7 +109,7 @@ export function OrderListPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">수주 관리</h1>
-          <p className="mt-1 text-muted">생산 예정부터 완료 기록까지, 모든 수주의 흐름을 한곳에서 관리합니다.</p>
+          <p className="mt-1 text-muted">생산 예정부터 완료·취소까지, 모든 수주의 흐름을 한곳에서 관리합니다.</p>
         </div>
         <div className="flex gap-2">
           <Button tone="ghost" onClick={() => void downloadCsv()}>엑셀 내보내기</Button>
@@ -114,19 +124,20 @@ export function OrderListPage() {
       </div>
       <section className="mt-4 overflow-hidden rounded-xl border border-line bg-white">
         <div className="flex gap-4 border-b border-line px-5 pt-4 text-sm">
-          <button type="button" className={tab === "open" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => { setTab("open"); setPage(0); }}>생산 예정 · {summary.openCount}</button>
-          <button type="button" className={tab === "done" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => { setTab("done"); setPage(0); }}>과거 생산기록 {summary.doneCount}</button>
+          <button type="button" className={tab === "open" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => changeTab("open")}>생산 예정 · {summary.openCount}</button>
+          <button type="button" className={tab === "done" ? "border-b-2 border-primary pb-3 font-semibold text-primary" : "pb-3 text-muted"} onClick={() => changeTab("done")}>종료 수주 · {summary.doneCount}</button>
         </div>
         <div className="flex flex-wrap gap-2 p-4">
           <input className="h-10 min-w-56 flex-1 rounded-lg border border-line px-3" value={keyword} placeholder="수주번호, 클라이언트, 품목 검색" onChange={(event) => { setKeyword(event.target.value); setPage(0); }} />
-          <select className="h-10 rounded-lg border border-line bg-white px-3" value={registration} onChange={(event) => { setRegistration(event.target.value as "" | "PENDING" | "CONFIRMED"); setPage(0); }}>
+          <select className="h-10 rounded-lg border border-line bg-white px-3" value={registration} onChange={(event) => { setRegistration(event.target.value as ConfirmationStatus | ""); setPage(0); }}>
             <option value="">등록 전체</option>
-            <option value="PENDING">예정</option>
+            {tab === "open" ? <option value="PENDING">예정</option> : null}
             <option value="CONFIRMED">확정</option>
+            {tab === "done" ? <option value="CANCELLED">취소</option> : null}
           </select>
           <select className="h-10 rounded-lg border border-line bg-white px-3" value={statusCodeId} onChange={(event) => { setStatusCodeId(event.target.value); setPage(0); }}>
             <option value="">작업 전체</option>
-            {statuses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            {visibleStatuses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
           <select className="h-10 rounded-lg border border-line bg-white px-3" value={payment} onChange={(event) => { setPayment(event.target.value as PaymentStatus | ""); setPage(0); }}>
             <option value="">입금 전체</option>
@@ -194,7 +205,7 @@ export function OrderListPage() {
       </section>
       <section className="mt-4 overflow-hidden rounded-xl border border-line bg-white">
         <h2 className="px-5 pt-5 font-semibold">최근 완료 기록</h2>
-        <p className="px-5 text-sm text-muted">완료된 수주는 과거 생산기록에 보관됩니다.</p>
+        <p className="px-5 text-sm text-muted">완료·취소 수주는 종료 수주에서 조회할 수 있습니다. 아래에는 완료된 수주만 표시합니다.</p>
         <table className="mt-3 w-full text-left">
           <thead className="bg-primary-soft/40 text-muted">
             <tr><th className="px-5 py-3 font-medium">수주번호</th><th className="py-3 font-medium">클라이언트 / 품목</th><th className="py-3 font-medium">생산량</th><th className="py-3 font-medium">완료일</th><th className="py-3 pr-5 font-medium">입금</th></tr>
@@ -219,7 +230,7 @@ export function OrderListPage() {
   );
 }
 
-function listQuery(tab: "open" | "done", keyword: string, registration: "" | "PENDING" | "CONFIRMED", statusCodeId: string, payment: PaymentStatus | "", page: number): OrderListQuery {
+function listQuery(tab: "open" | "done", keyword: string, registration: ConfirmationStatus | "", statusCodeId: string, payment: PaymentStatus | "", page: number): OrderListQuery {
   return {
     tab: tab === "done" ? "DONE" : "OPEN",
     keyword,
