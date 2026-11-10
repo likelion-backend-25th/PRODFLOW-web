@@ -5,7 +5,7 @@ import { Badge, Button } from "@/components/ui.tsx";
 import { cn } from "@/lib/cn.ts";
 import { digitsOnly } from "@/lib/money.ts";
 import { readApiErrorMessage } from "@/lib/apiClient.ts";
-import { createClient, getClient, importClientsFile, listClients, updateClient, type ClientDetail, type ClientListItem, type ClientPage } from "@/lib/clientApi.ts";
+import { createClient, getClient, getClientRecentMonthCounts, importClientsFile, listClients, updateClient, type ClientDetail, type ClientListItem, type ClientPage, type ClientRecentMonthCounts } from "@/lib/clientApi.ts";
 import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } from "@/lib/labels.ts";
 import { getRecentClientOrder, listClientOrders, screenOrderStatus, screenPaymentStatus, type ClientOrder, type ClientOrderPage } from "@/lib/orderApi.ts";
 import { getOrderManagers, type OrderManagerResponse } from "@/lib/userApi.ts";
@@ -27,6 +27,7 @@ interface ClientRow {
 }
 
 const emptyClientPage: ClientPage = { content: [], totalElements: 0, totalPages: 0, number: 0, size: PAGE_SIZE };
+const emptyRecentMonthCounts: ClientRecentMonthCounts = { countByOrder: 0, countByCreatedAt: 0 };
 
 function formatDate(value: string | null): string {
   if (!value) return "-";
@@ -46,6 +47,7 @@ export function ClientListPage() {
   const [loadError, setLoadError] = useState("");
   const [details, setDetails] = useState<Record<number, ClientDetail>>({});
   const [recentOrders, setRecentOrders] = useState<Record<number, ClientOrder | null>>({});
+  const [recentMonthCounts, setRecentMonthCounts] = useState<ClientRecentMonthCounts>(emptyRecentMonthCounts);
   const [reloadKey, setReloadKey] = useState(0);
   const canWrite = canManageOrders(role);
   useEffect(() => {
@@ -68,6 +70,17 @@ export function ClientListPage() {
       ignore = true;
     };
   }, [keyword, page, reloadKey, sort]);
+  useEffect(() => {
+    let ignore = false;
+    getClientRecentMonthCounts().then((counts) => {
+      if (!ignore) setRecentMonthCounts(counts);
+    }).catch((error: unknown) => {
+      if (!ignore) show(readApiErrorMessage(error));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [reloadKey, show]);
   const pageRows: ClientRow[] = list.content.map((item) => ({ item, detail: details[item.id] ?? null }));
   const selected = pageRows.find((row) => String(row.item.id) === selectedId) ?? pageRows[0];
   useEffect(() => {
@@ -135,8 +148,8 @@ export function ClientListPage() {
 
       <div className="grid gap-4 md:grid-cols-3">
         <Metric label="전체 거래처" value={list.totalElements} icon={<Building2 size={23} className="text-primary" />} />
-        <Metric label="이 페이지" value={pageRows.length} />
-        <Metric label="검색 결과" value={loadError ? 0 : list.totalElements} />
+        <Metric label="최근 한달간 수주한 거래처" value={recentMonthCounts.countByOrder} />
+        <Metric label="최근 한달간 등록한 거래처" value={recentMonthCounts.countByCreatedAt} />
       </div>
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_316px]">

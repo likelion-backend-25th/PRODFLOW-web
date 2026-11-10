@@ -19,6 +19,11 @@ export interface ClientPage {
   size: number;
 }
 
+export interface ClientRecentMonthCounts {
+  countByOrder: number;
+  countByCreatedAt: number;
+}
+
 export interface ClientDetail {
   id: number;
   company: string;
@@ -62,6 +67,10 @@ export function listClients(query: { keyword?: string; page: number; size?: numb
 
 export function getClient(id: number): Promise<ClientDetail> {
   return apiClient.get<ClientDetail>(`/clients/${id}`).then((response) => response.data);
+}
+
+export function getClientRecentMonthCounts(): Promise<ClientRecentMonthCounts> {
+  return apiClient.get<ClientRecentMonthCounts>("/clients/counts").then((response) => response.data);
 }
 
 export function createClient(input: ClientInput): Promise<ClientDetail> {
