@@ -56,6 +56,7 @@ export function ShippingPage() {
   const [carrierOptions, setCarrierOptions] = useState<Carrier[]>([]);
   const [carriers, setCarriers] = useState<Record<number, string>>({});
   const [tracking, setTracking] = useState<Record<number, string>>({});
+  const [actionErrors, setActionErrors] = useState<Record<number, string>>({});
   const [busyId, setBusyId] = useState<number | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -127,11 +128,15 @@ export function ShippingPage() {
   async function run(orderId: number, action: () => Promise<string>) {
     if (busyId !== null) return;
     setBusyId(orderId);
+    setActionErrors((current) => ({ ...current, [orderId]: "" }));
     try {
       show(await action());
       setReloadKey((value) => value + 1);
     } catch (reason: unknown) {
-      show(reason instanceof Error && !axios.isAxiosError(reason) ? reason.message : readApiErrorMessage(reason));
+      const message = reason instanceof Error && !axios.isAxiosError(reason) ? reason.message : readApiErrorMessage(reason);
+      setActionErrors((current) => ({ ...current, [orderId]: message }));
+      show(message);
+      setReloadKey((value) => value + 1);
     } finally {
       setBusyId(null);
     }
@@ -180,9 +185,11 @@ export function ShippingPage() {
                   tab={tab}
                   canShip={canShip}
                   busy={busyId === order.orderId}
+                  blocked={busyId !== null}
+                  actionError={actionErrors[order.orderId]}
                   carrierOptions={carrierOptions}
-                  carrier={carriers[order.orderId] ?? defaultCarrier}
-                  trackingNo={tracking[order.orderId] ?? ""}
+                  carrier={order.carrierCode ?? carriers[order.orderId] ?? defaultCarrier}
+                  trackingNo={order.trackingNumber ?? tracking[order.orderId] ?? ""}
                   balance={balances[order.orderId]}
                   onCarrier={(value) => setCarriers({ ...carriers, [order.orderId]: value })}
                   onTracking={(value) => setTracking({ ...tracking, [order.orderId]: value.replace(/[^0-9-]/g, "") })}
@@ -193,8 +200,8 @@ export function ShippingPage() {
                     return "출고 대기로 변경했습니다.";
                   })}
                   onShip={() => void run(order.orderId, async () => {
-                    const carrierCode = carriers[order.orderId] ?? defaultCarrier;
-                    const number = (tracking[order.orderId] ?? "").trim();
+                    const carrierCode = order.carrierCode ?? carriers[order.orderId] ?? defaultCarrier;
+                    const number = (order.trackingNumber ?? tracking[order.orderId] ?? "").trim();
                     if (!carrierCode) throw new Error("택배사를 선택하세요.");
                     if (!number) throw new Error("운송장 번호를 입력하세요.");
                     await registerShipment(order.orderId, carrierCode, number);
@@ -244,10 +251,12 @@ function ShipmentRow({
   tab,
   canShip,
   busy,
+  blocked,
   carrierOptions,
   carrier,
   trackingNo,
   balance,
+  actionError,
   onCarrier,
   onTracking,
   onReady,
@@ -259,10 +268,12 @@ function ShipmentRow({
   tab: ShipmentTab;
   canShip: boolean;
   busy: boolean;
+  blocked: boolean;
   carrierOptions: Carrier[];
   carrier: string;
   trackingNo: string;
   balance: number | null | undefined;
+  actionError?: string;
   onCarrier: (value: string) => void;
   onTracking: (value: string) => void;
   onReady: () => void;
@@ -302,29 +313,31 @@ function ShipmentRow({
         {tab === "PACKING" ? (
           canShip ? (
             // 포장중 목록은 작업지시가 모두 포장완료인 수주만 온다. 행을 숨기지 않고 출고 대기 버튼을 켜 둔다.
-            <Button disabled={busy} onClick={onReady}>출고 대기</Button>
+            <Button disabled={blocked} onClick={onReady}>출고 대기</Button>
           ) : <span className="text-xs text-muted">포장중</span>
         ) : null}
         {tab === "READY_TO_SHIP" ? (
           canShip ? (
             <div className="flex flex-wrap items-center gap-2">
-              <select className="h-10 rounded-lg border border-line bg-white px-2" value={carrier} onChange={(event) => onCarrier(event.target.value)} aria-label="택배사" disabled={carrierOptions.length === 0}>
+              <select className="h-10 rounded-lg border border-line bg-white px-2" value={carrier} onChange={(event) => onCarrier(event.target.value)} aria-label="택배사" disabled={blocked || order.shipmentId != null || carrierOptions.length === 0}>
                 {carrierOptions.length === 0 ? <option value="">택배사 없음</option> : null}
                 {carrierOptions.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
               </select>
-              <input className="h-10 w-36 rounded-lg border border-line px-3" value={trackingNo} placeholder="운송장 번호" aria-label="운송장 번호" onChange={(event) => onTracking(event.target.value)} />
-              <Button disabled={busy || !carrier} onClick={onShip}>출고</Button>
+              <input className="h-10 w-36 rounded-lg border border-line px-3" value={trackingNo} placeholder="운송장 번호" aria-label="운송장 번호" disabled={blocked || order.shipmentId != null} onChange={(event) => onTracking(event.target.value)} />
+              <Button disabled={blocked || !carrier} onClick={onShip}>{busy ? "출고 처리 중…" : "출고"}</Button>
             </div>
           ) : <span className="text-xs text-muted">수주 관리자가 처리</span>
         ) : null}
         {tab === "SHIPPING" ? (
           canShip ? (
             <div className="flex flex-wrap gap-2">
-              <Button tone="ghost" disabled={busy || order.shipmentId == null} onClick={onRefresh}>상태 갱신</Button>
-              <Button disabled={busy || order.shipmentId == null} onClick={onComplete}>배송 완료</Button>
+              <Button tone="ghost" disabled={blocked || order.shipmentId == null} onClick={onRefresh}>상태 갱신</Button>
+              <Button disabled={blocked || order.shipmentId == null} onClick={onComplete}>배송 완료</Button>
             </div>
           ) : <span className="text-xs text-muted">수주 관리자가 처리</span>
         ) : null}
+        {actionError ? <p role="alert" className="mt-2 max-w-80 text-xs text-danger">{actionError}</p> : null}
+        {tab === "READY_TO_SHIP" && order.shipmentId != null ? <p className="mt-2 max-w-80 text-xs text-muted">저장된 운송장으로 이어서 처리합니다. 계좌 준비와 이메일 전송 완료 후 배송중으로 변경됩니다.</p> : null}
         {tab === "BALANCE" ? <span className="text-xs text-muted">잔금은 수주 상세의 결제 내역에서 확인합니다.</span> : null}
       </td>
     </tr>

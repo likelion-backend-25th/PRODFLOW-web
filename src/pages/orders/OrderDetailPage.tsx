@@ -110,7 +110,7 @@ export function OrderDetailPage() {
   }, [orderId]);
 
   useEffect(() => {
-    if (!trackingOpen || !shipment) return;
+    if (!trackingOpen || !shipment?.startedAt) return;
     let ignore = false;
     setTrackingText("배송 정보를 조회하는 중입니다.");
     trackShipment(shipment.carrierCode, shipment.trackingNumber).then((info) => {
@@ -218,17 +218,17 @@ export function OrderDetailPage() {
 
   async function ship() {
     if (shipping) return;
-    if (!carrier) {
+    if (!(shipment?.carrierCode ?? carrier)) {
       show("택배사를 선택하세요.");
       return;
     }
-    if (!trackingNo.trim()) {
+    if (!(shipment?.trackingNumber ?? trackingNo).trim()) {
       show("운송장 번호를 입력하세요.");
       return;
     }
     setShipping(true);
     try {
-      await registerShipment(currentOrder.id, carrier, trackingNo);
+      await registerShipment(currentOrder.id, shipment?.carrierCode ?? carrier, shipment?.trackingNumber ?? trackingNo);
       const loaded = await load(currentOrder.id);
       setOrder(loaded.order);
       setHistories(loaded.histories);
@@ -240,6 +240,15 @@ export function OrderDetailPage() {
       show("운송장을 등록하고 배송중으로 변경했습니다.");
     } catch (error: unknown) {
       show(readApiErrorMessage(error));
+      // 실패 시에도 준비된 운송장은 보존된다. 다시 조회해 같은 정보로 이어서 처리한다.
+      try {
+        const loaded = await load(currentOrder.id);
+        setOrder(loaded.order);
+        setPayments(loaded.payments);
+        setShipment(loaded.shipment);
+      } catch {
+        // 원래 출고 오류를 유지하고 다음 요청에서 서버 상태를 다시 확인한다.
+      }
     } finally {
       setShipping(false);
     }
@@ -541,7 +550,7 @@ export function OrderDetailPage() {
           <Field label="운송장" value={shipment?.trackingNumber || "-"} />
         </dl>
         {shipment?.trackingNumber ? null : <p className="mt-3 text-sm text-muted">운송장이 등록되지 않았습니다.</p>}
-        {shipment?.trackingNumber ? (
+        {shipment?.startedAt ? (
           <div className="mt-3 flex flex-wrap gap-2">
             <Button tone="ghost" onClick={() => setTrackingOpen((open) => !open)}>배송조회</Button>
             <Button tone="ghost" disabled={refreshing} onClick={() => void refreshTracking()}>상태 갱신</Button>
@@ -552,12 +561,12 @@ export function OrderDetailPage() {
           {canManageOrders(user.role) && order.status === "PACKING" ? <Button disabled={readying} onClick={() => void moveToReady()}>출고 대기</Button> : null}
           {canManageOrders(user.role) && order.status === "READY_TO_SHIP" ? (
             <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
-              <SelectField label="택배사" value={carrier} onChange={(event) => setCarrier(event.target.value)} disabled={carrierOptions.length === 0}>
+              <SelectField label="택배사" value={shipment?.carrierCode ?? carrier} onChange={(event) => setCarrier(event.target.value)} disabled={shipping || shipment != null || carrierOptions.length === 0}>
                 {carrierOptions.length === 0 ? <option value="">택배사 없음</option> : null}
                 {carrierOptions.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
               </SelectField>
-              <TextField label="운송장" value={trackingNo} onChange={(event) => setTrackingNo(event.target.value.replace(/[^0-9-]/g, ""))} />
-              <Button disabled={shipping || !carrier} onClick={() => void ship()}>출고</Button>
+              <TextField label="운송장" disabled={shipping || shipment != null} value={shipment?.trackingNumber ?? trackingNo} onChange={(event) => setTrackingNo(event.target.value.replace(/[^0-9-]/g, ""))} />
+              <Button disabled={shipping || !(shipment?.carrierCode ?? carrier)} onClick={() => void ship()}>출고</Button>
             </div>
           ) : null}
           {canManageOrders(user.role) && order.status === "SHIPPING" && shipment ? <Button disabled={completing} onClick={() => void finishDelivery()}>배송 완료</Button> : null}
