@@ -100,13 +100,14 @@ function downloadCsv(rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
-function queryOf(filters: Filters, page: number, size: number) {
+function queryOf(filters: Filters, page: number, size: number, assignedId?: number) {
   return {
     from: filters.from || undefined,
     to: filters.to || undefined,
     status: filters.status === "all" ? undefined : filters.status,
     lineId: filters.line === "all" ? undefined : Number(filters.line),
     keyword: filters.keyword.trim() || undefined,
+    assignedId,
     page,
     size,
   };
@@ -143,12 +144,10 @@ export function WorkOrderListPage() {
   useEffect(() => {
     let ignore = false;
     setLoading(true);
-    void fetchWorkOrders(queryOf(applied, page - 1, PAGE_SIZE)).then((data) => {
+    const assignedId = user?.role === "PRODUCTION_MANAGER" ? Number(user.id) : undefined;
+    void fetchWorkOrders(queryOf(applied, page - 1, PAGE_SIZE, assignedId)).then((data) => {
       if (ignore) return;
-      const next = user?.role === "PRODUCTION_MANAGER"
-        ? data.content.filter((row) => row.assignedName === user.name)
-        : data.content;
-      setRows(next);
+      setRows(data.content);
       setTotal(data.totalElements);
       setPageCount(Math.max(1, data.totalPages));
       setLoading(false);
@@ -161,7 +160,7 @@ export function WorkOrderListPage() {
     return () => {
       ignore = true;
     };
-  }, [applied, page, reloadKey, show, user?.name, user?.role]);
+  }, [applied, page, reloadKey, show, user?.id, user?.role]);
 
   useEffect(() => {
     if (rows.length === 0) {
@@ -175,7 +174,8 @@ export function WorkOrderListPage() {
 
   async function exportRows() {
     try {
-      const data = await fetchWorkOrders(queryOf(applied, 0, 100));
+      const assignedId = user?.role === "PRODUCTION_MANAGER" ? Number(user.id) : undefined;
+      const data = await fetchWorkOrders(queryOf(applied, 0, 100, assignedId));
       const header = ["작업지시번호", "수주번호", "거래처명", "제품명", "수량", "생산라인", "담당자", "지시일", "완료예정일", "상태"];
       const body = data.content.map((item) => {
         const overdue = item.plannedEndDate < today && !workProductionDone(item.status);
@@ -203,7 +203,7 @@ export function WorkOrderListPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">작업지시 관리</h1>
-          <p className="mt-1 text-sm text-muted">작업지시 목록과 상세는 서버에서 가져옵니다. 한 장은 품목 하나와 라인 하나입니다.</p>
+          <p className="mt-1 text-sm text-muted">미완료 작업이 앞에 나오고, 포장 완료는 뒤로 갑니다. 같은 묶음에서는 완료 예정일이 빠른 순입니다.</p>
         </div>
         <Button tone="ghost" onClick={() => void exportRows()}><Download size={16} className="mr-1" />엑셀 다운로드</Button>
       </div>

@@ -43,7 +43,7 @@ export function LoginPage() {
   });
 
   if (user?.mustChangePassword) return <Navigate to="/change-password" replace />;
-  if (user) return <Navigate to="/dashboard" replace />;
+  if (user) return <Navigate to="/assistant" replace />;
 
   return (
     <div className="grid min-h-screen grid-cols-1 bg-white lg:grid-cols-[45%_55%]">
