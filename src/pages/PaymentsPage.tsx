@@ -235,7 +235,7 @@ export function PaymentsPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1460px] text-left text-sm">
+            <table className="w-full min-w-[1320px] text-left text-sm">
               <thead className="bg-canvas text-xs text-muted">
                 <tr>
                   <TableHead className="pl-4">수주번호</TableHead>
@@ -245,7 +245,6 @@ export function PaymentsPage() {
                   <TableHead>결제상태</TableHead>
                   <TableHead>입금방식</TableHead>
                   <TableHead>가상계좌 은행</TableHead>
-                  <TableHead>가상계좌번호</TableHead>
                   <TableHead>입금기한</TableHead>
                   <TableHead>입금완료일</TableHead>
                   <TableHead className="pr-4 text-center">상세보기</TableHead>
@@ -265,7 +264,6 @@ export function PaymentsPage() {
                     <TableCell><Badge className={paymentStatusTone(row.paymentStatus)}>{paymentStatusLabel(row.paymentStatus)}</Badge></TableCell>
                     <TableCell><Badge className="bg-primary-soft text-primary">{row.paymentMethod} · {paymentMethodLabel(row.paymentMethod)}</Badge></TableCell>
                     <TableCell>{bankLabel(row.bankName)}</TableCell>
-                    <TableCell>{row.accountNumber ?? "-"}</TableCell>
                     <TableCell>{formatLocalDateTime(row.expiresAt)}</TableCell>
                     <TableCell>{formatLocalDateTime(row.receivedAt)}</TableCell>
                     <TableCell className="pr-4 text-center">
@@ -277,7 +275,7 @@ export function PaymentsPage() {
                 ))}
                 {listLoading && !pageData ? <LoadingRows /> : null}
                 {!listLoading && pageData?.content.length === 0 ? (
-                  <tr><td className="px-4 py-14 text-center text-muted" colSpan={11}>조건에 맞는 입금 내역이 없습니다.</td></tr>
+                  <tr><td className="px-4 py-14 text-center text-muted" colSpan={10}>조건에 맞는 입금 내역이 없습니다.</td></tr>
                 ) : null}
               </tbody>
             </table>
@@ -388,7 +386,7 @@ function LoadingRows() {
     <>
       {Array.from({ length: 6 }, (_, index) => (
         <tr key={index}>
-          <td colSpan={11} className="px-4 py-2">
+          <td colSpan={10} className="px-4 py-2">
             <div className="h-7 animate-pulse rounded bg-canvas" />
           </td>
         </tr>
