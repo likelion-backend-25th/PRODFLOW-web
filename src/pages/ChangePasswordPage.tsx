@@ -38,7 +38,7 @@ export function ChangePasswordPage() {
   const passwordsMatch = confirmPassword.length > 0 && newPassword === confirmPassword;
 
   if (!user) return <Navigate to="/login" replace />;
-  if (!user.mustChangePassword) return <Navigate to="/dashboard" replace />;
+  if (!user.mustChangePassword) return <Navigate to="/assistant" replace />;
 
   return (
     <div className="grid min-h-screen grid-cols-1 bg-white lg:grid-cols-[45%_55%]">

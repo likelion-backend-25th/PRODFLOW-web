@@ -41,6 +41,7 @@ export function Sidebar() {
       </div>
       <p className="mt-5 px-3 text-[11px] font-semibold tracking-wide text-muted">WORKSPACE</p>
       <nav className="mt-2 flex flex-1 flex-col gap-1">
+        <Item to="/assistant" icon={Sparkles} label="AI 챗봇" />
         <Item to="/dashboard" end icon={LayoutGrid} label="대시보드" />
         <Item to="/quotations" icon={FileText} label="견적 관리" active={location.pathname.startsWith("/quotations")} />
         <Item to="/orders" icon={ClipboardList} label="수주 및 생산기록" badge={orders} active={location.pathname.startsWith("/work-orders") || location.pathname.startsWith("/shipping") || location.pathname.startsWith("/orders/schedule") || location.pathname.startsWith("/production-plans")} />
@@ -53,7 +54,6 @@ export function Sidebar() {
         <Item to="/lines" icon={Factory} label="생산라인" />
         <Item to="/payments" icon={Wallet} label="입금 관리" />
         {user?.role === "SUPER_ADMIN" ? <Item to="/admin" icon={UsersRound} label="계정 관리" /> : null}
-        <Item to="/assistant" icon={Sparkles} label="AI 챗봇" />
       </nav>
       <div className="space-y-2 px-1 pb-3 text-xs text-muted">
         <div className="rounded-xl bg-canvas p-3">

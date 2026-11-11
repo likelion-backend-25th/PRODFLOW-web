@@ -64,6 +64,7 @@ export interface WorkOrderQuery {
   to?: string;
   status?: string;
   lineId?: number;
+  assignedId?: number;
   page: number;
   size: number;
 }
