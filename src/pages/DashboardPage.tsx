@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
-import { Bell, Calendar, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { Bell, Calendar, ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import { Badge } from "@/components/ui.tsx";
 import { apiStatus, readApiErrorMessage } from "@/lib/apiClient.ts";
 import { fetchDashboard } from "@/lib/dashboardApi.ts";
@@ -8,8 +8,9 @@ import { addDays, parseISO, toISO, todayISO } from "@/lib/dates.ts";
 import { paymentStatusLabel, paymentTone, workOrderStatusLabel, workOrderTone } from "@/lib/labels.ts";
 import { formatWon } from "@/lib/money.ts";
 import { fetchSentOrderNotifications, notifyNotificationsChanged, sendOrderDueNotification, type OrderNotificationType } from "@/lib/notificationApi.ts";
-import { listOrderWorkOrders } from "@/lib/orderApi.ts";
+import { listOrders, listOrderWorkOrders } from "@/lib/orderApi.ts";
 import { asWorkOrderStatus, fetchProductionCalender, schedulesOnDate, type ProductionSchedule } from "@/lib/productionCalenderApi.ts";
+import { fetchWorkOrder, type WorkOrderDetail } from "@/lib/workOrdersApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import type { DashboardOrderStatusStatistics, DashboardPaymentStatus, DashboardResponse, DashboardRiskType } from "@/types/dashboard.ts";
 import type { PaymentStatus, WorkOrderStatus } from "@/types/domain.ts";
@@ -89,7 +90,7 @@ function daysUntilDue(due: string, today: string): number {
 function riskReasonText(due: string, statusCode: string | undefined, today: string): string {
   const days = daysUntilDue(due, today);
   const overdue = days < 0;
-  const head = overdue ? `납기 ${Math.abs(days)}일 초과` : `D-${days}`;
+  const head = overdue ? `지연 ${Math.abs(days)}일` : "납기 임박";
   const phase = statusCode ? riskPhaseOf[statusCode] : undefined;
   const detail = phase ? riskDetail[phase][overdue ? "late" : "soon"] : undefined;
   return detail ? `${head} · ${detail}` : head;
@@ -112,10 +113,10 @@ function orderDetailPath(orderId: number): string {
   return `/orders/${orderId}`;
 }
 
-function ScheduleJobLink({ job }: { job: ProductionSchedule }) {
+function ScheduleJobLink({ job, selected, onOpen }: { job: ProductionSchedule; selected: boolean; onOpen: (job: ProductionSchedule) => void }) {
   const status = asWorkOrderStatus(job.status);
   return (
-    <Link to={`/work-orders/${job.workOrderId}`} className="flex w-full items-center gap-2 rounded-lg bg-white p-2 text-left hover:ring-1 hover:ring-primary">
+    <button type="button" data-schedule-job="" aria-pressed={selected} className={`flex w-full items-center gap-2 rounded-lg p-2 text-left ${selected ? "bg-primary-soft ring-2 ring-primary" : "bg-white hover:ring-1 hover:ring-primary"}`} onClick={() => onOpen(job)}>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold text-primary">{job.workNo}</span>
         <span className="block truncate text-xs text-muted">{job.orderNo} · {job.productName}</span>
@@ -125,7 +126,7 @@ function ScheduleJobLink({ job }: { job: ProductionSchedule }) {
         <span className="block text-xs font-semibold">{job.quantity.toLocaleString("ko-KR")}개</span>
         {status ? <Badge className={workOrderTone(status)}>{workOrderStatusLabel[status]}</Badge> : <Badge>{job.status}</Badge>}
       </span>
-    </Link>
+    </button>
   );
 }
 
@@ -137,6 +138,8 @@ export function DashboardPage() {
   const today = todayISO();
   const [selectedDate, setSelectedDate] = useState(today);
   const [moreDate, setMoreDate] = useState<string | null>(null);
+  const [scheduleJob, setScheduleJob] = useState<ProductionSchedule | null>(null);
+  const [scheduleDate, setScheduleDate] = useState<string | null>(null);
   const [shareExpanded, setShareExpanded] = useState(false);
   const [riskPageIndex, setRiskPageIndex] = useState(0);
   const scheduleRef = useRef<HTMLElement>(null);
@@ -482,7 +485,7 @@ export function DashboardPage() {
                   <ul className="mt-2 space-y-1.5">
                     {jobs.slice(0, shownCount).map((job) => (
                       <li key={job.workOrderId}>
-                        <ScheduleJobLink job={job} />
+                        <ScheduleJobLink job={job} selected={scheduleJob?.workOrderId === job.workOrderId && scheduleDate === iso} onOpen={(item) => { setMoreDate(null); setScheduleJob(item); setScheduleDate(iso); }} />
                       </li>
                     ))}
                   </ul>
@@ -496,7 +499,7 @@ export function DashboardPage() {
                   <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-48 space-y-1 overflow-auto rounded-lg border border-line bg-white p-2 shadow-lg">
                     {jobs.slice(shownCount).map((job) => (
                       <li key={job.workOrderId}>
-                        <ScheduleJobLink job={job} />
+                        <ScheduleJobLink job={job} selected={scheduleJob?.workOrderId === job.workOrderId && scheduleDate === iso} onOpen={(item) => { setMoreDate(null); setScheduleJob(item); setScheduleDate(iso); }} />
                       </li>
                     ))}
                   </ul>
@@ -511,7 +514,7 @@ export function DashboardPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-5">
             <div>
               <h2 className="font-semibold">납기 위험 수주</h2>
-              <p className="text-sm text-muted">납기일이 지났거나 3일 이내인 수주</p>
+              <p className="mt-1 text-xs text-muted">납기 초과 또는 3일 이내 도래하는 수주</p>
             </div>
             <Link to="/orders" className="text-sm font-semibold text-primary">수주 목록으로 →</Link>
           </div>
@@ -557,12 +560,13 @@ export function DashboardPage() {
                       <td className="px-5 py-3 align-middle"><Badge className={paymentTone(toPaymentStatus(item.paymentStatus))}>{paymentStatusLabel[toPaymentStatus(item.paymentStatus)]}</Badge></td>
                       <td className="px-5 py-3 align-middle">
                         {sentNoticeKeys?.has(noticeKey(item.orderId, dueNotificationType(item.requestedDueDate, today))) ? (
-                          <span className="text-xs font-semibold whitespace-nowrap text-primary">전송 완료</span>
+                          <span className="text-xs font-semibold whitespace-nowrap text-primary" title="전송 완료">전송 완료</span>
                         ) : (
                           <button
                             type="button"
                             className="grid h-9 w-9 place-items-center rounded-lg text-primary hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label={`${item.orderNo} 알림 전송`}
+                            title={sendingOrderId === item.orderId ? "전송 중" : sentNoticeKeys == null ? "전송 상태 확인 중" : "미전송"}
                             aria-busy={sendingOrderId === item.orderId}
                             disabled={sentNoticeKeys == null || sendingOrderId === item.orderId}
                             onClick={() => void sendNotice(item.orderId)}
@@ -596,6 +600,172 @@ export function DashboardPage() {
           ) : null}
         </section>
       ) : null}
+      {scheduleJob ? <ScheduleDetailDrawer job={scheduleJob} today={today} onClose={() => { setScheduleJob(null); setScheduleDate(null); }} /> : null}
+    </div>
+  );
+}
+
+function ScheduleDetailDrawer({ job, today, onClose }: { job: ProductionSchedule; today: string; onClose: () => void }) {
+  const [closingId, setClosingId] = useState<number | null>(null);
+  const closing = closingId === job.workOrderId;
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
+  useEffect(() => {
+    if (!closing) return;
+    const timer = window.setTimeout(() => onCloseRef.current(), 180);
+    return () => window.clearTimeout(timer);
+  }, [closing]);
+
+  function requestClose() {
+    setClosingId(job.workOrderId);
+  }
+
+  useEffect(() => {
+    function keepOpen(target: EventTarget | null) {
+      return target instanceof Element && (target.closest("[data-schedule-panel]") != null || target.closest("[data-schedule-job]") != null);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") requestClose();
+    }
+    function onPointerDown(event: MouseEvent) {
+      if (keepOpen(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      requestClose();
+    }
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onPointerDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onPointerDown, true);
+    };
+  }, [job.workOrderId]);
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-40">
+      <style>{`@keyframes prodflow-drawer-in { from { transform: translateX(100%); } to { transform: translateX(0); } } @keyframes prodflow-drawer-out { from { transform: translateX(0); } to { transform: translateX(100%); } } @keyframes prodflow-overlay-in { from { opacity: 0; } to { opacity: 1; } } @keyframes prodflow-overlay-out { from { opacity: 1; } to { opacity: 0; } }`}</style>
+      <div aria-hidden="true" className="absolute inset-0 bg-black/30" style={{ animation: closing ? "prodflow-overlay-out 180ms ease-out forwards" : "prodflow-overlay-in 180ms ease-out" }} />
+      <aside role="dialog" aria-modal="true" aria-labelledby="schedule-detail-title" data-schedule-panel="" className="pointer-events-auto absolute inset-y-0 right-0 flex w-full flex-col border-l border-line bg-white shadow-[-12px_0_28px_rgba(28,31,35,0.08)] sm:w-[420px] lg:w-[460px]" style={{ animation: closing ? "prodflow-drawer-out 180ms ease-out forwards" : "prodflow-drawer-in 180ms ease-out" }} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="flex shrink-0 items-center justify-between border-b border-line px-5 py-4">
+          <h2 id="schedule-detail-title" className="text-lg font-semibold">생산 일정 상세</h2>
+          <button type="button" className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-canvas" aria-label="닫기" onClick={requestClose}>
+            <X size={18} />
+          </button>
+        </div>
+        <ScheduleDetailBody key={job.workOrderId} job={job} today={today} />
+      </aside>
+    </div>
+  );
+}
+
+function ScheduleDetailBody({ job, today }: { job: ProductionSchedule; today: string }) {
+  const [detail, setDetail] = useState<WorkOrderDetail | null>(null);
+  const [orderId, setOrderId] = useState<number | null>(null);
+  const [orderStatusName, setOrderStatusName] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let ignore = false;
+    void fetchWorkOrder(job.workOrderId).then(async (row) => {
+      if (ignore) return;
+      setDetail(row);
+      try {
+        const [openOrders, doneOrders] = await Promise.all([
+          listOrders({ tab: "OPEN", keyword: row.orderNo, page: 0, size: 20 }),
+          listOrders({ tab: "DONE", keyword: row.orderNo, page: 0, size: 20 }),
+        ]);
+        if (ignore) return;
+        const matched = [...openOrders.content, ...doneOrders.content].find((item) => item.orderNo === row.orderNo);
+        setOrderId(matched?.id ?? null);
+        setOrderStatusName(matched?.statusName ?? null);
+      } catch (reason: unknown) {
+        if (ignore || apiStatus(reason) === 401) return;
+        setOrderStatusName(null);
+      }
+    }).catch((reason: unknown) => {
+      if (ignore) return;
+      if (apiStatus(reason) === 401) return;
+      setLoadError(readApiErrorMessage(reason));
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [job.workOrderId]);
+
+  const status = detail ? asWorkOrderStatus(detail.status) : asWorkOrderStatus(job.status);
+  const due = detail?.estimatedDueDate ?? "";
+  const dueDays = due ? daysUntilDue(due, today) : null;
+  const dueNotice = dueDays == null || dueDays > 3 ? "" : dueDays < 0 ? `납기일이 ${Math.abs(dueDays)}일 지났습니다.` : dueDays === 0 ? "납기일이 오늘입니다." : `납기일까지 ${dueDays}일 남았습니다.`;
+  const headline = detail?.clientName || detail?.productName || "-";
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-2">
+        {loadError ? <p className="py-4 text-sm text-danger">{loadError}</p> : null}
+        {!detail && !loadError ? <p className="py-6 text-sm text-muted">생산 일정을 불러오는 중입니다.</p> : null}
+        {detail ? (
+          <div className="pb-2">
+            <div className="flex items-center justify-between gap-3 pt-4">
+              <p className="text-xs text-muted">{detail.workNo}</p>
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-muted">작업 지시 상태</span>
+                {status ? <Badge className={workOrderTone(status)}>{workOrderStatusLabel[status]}</Badge> : <Badge>{detail.status}</Badge>}
+              </span>
+            </div>
+            <h3 className="mt-3 text-xl font-semibold leading-snug">{headline}</h3>
+            <p className="mt-1.5 text-sm text-muted">{detail.clientName ? `${detail.productName || "-"} · ` : ""}{detail.quantity.toLocaleString("ko-KR")}개</p>
+            <div className="mt-6 border-t border-line">
+              <DetailRow label="수주번호" value={detail.orderNo || "-"} />
+              <DetailRow label="거래처명" value={detail.clientName || "-"} strong />
+              <DetailRow label="생산 시작일" value={detail.plannedStartDate ? dotDate(detail.plannedStartDate) : "-"} />
+              <DetailRow label="납기일" value={due ? dotDate(due) : "-"} strong extra={dueDays == null ? null : <Badge className={dueDayTone(dueDays)}>{dueDayLabel(dueDays)}</Badge>} />
+              {/* 상단 배지는 작업지시 상태다. 이 행은 수주 진행 상태라 같은 값으로 합치지 않는다. */}
+              <DetailRow label="수주 진행 상태" value={orderStatusName ?? "-"} />
+              <DetailRow label="담당자" value={detail.assignedName || "-"} />
+            </div>
+            <div className="mt-5">
+              <p className="text-sm font-semibold">비고</p>
+              <p className={`mt-2 whitespace-pre-wrap break-words rounded-lg bg-canvas px-3 py-3 text-sm ${detail.note?.trim() ? "" : "text-muted"}`}>{detail.note?.trim() ? detail.note : "비고가 없습니다."}</p>
+            </div>
+            {dueNotice ? <p className="mt-5 rounded-lg bg-warning-soft px-3 py-3 text-sm text-warning">{dueNotice}</p> : null}
+          </div>
+        ) : null}
+      </div>
+      <div className="shrink-0 border-t border-line px-5 py-4">
+        {orderId != null ? (
+          <Link to={orderDetailPath(orderId)} className="flex h-11 w-full items-center justify-center rounded-lg bg-primary text-sm font-semibold text-white">수주 상세보기</Link>
+        ) : (
+          <button type="button" className="flex h-11 w-full items-center justify-center rounded-lg bg-primary text-sm font-semibold text-white disabled:opacity-40" disabled>수주 상세보기</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function dueDayLabel(days: number): string {
+  if (days === 0) return "D-Day";
+  if (days > 0) return `D-${days}`;
+  return `D+${Math.abs(days)}`;
+}
+
+function dueDayTone(days: number): string {
+  if (days < 0) return riskTypeTone.DELAYED;
+  if (days <= 3) return riskTypeTone.URGENT;
+  return "bg-canvas text-muted";
+}
+
+function DetailRow({ label, value, strong, extra }: { label: string; value: string; strong?: boolean; extra?: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-line py-4 text-sm">
+      <span className="shrink-0 text-xs text-muted">{label}</span>
+      <span className={`flex min-w-0 items-center justify-end gap-2 break-words text-right text-ink ${strong ? "font-semibold" : "font-medium"}`}>
+        {value}
+        {extra}
+      </span>
     </div>
   );
 }
