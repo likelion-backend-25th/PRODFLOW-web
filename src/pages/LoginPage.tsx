@@ -13,6 +13,13 @@ interface LoginFields {
 }
 
 const REMEMBERED_EMAIL_KEY = "prodflow-remembered-email";
+const TEST_ACCOUNTS = [
+  { label: "최고 관리자", email: "admin1@prodflow.site" },
+  { label: "수주 관리자", email: "order1@prodflow.site" },
+  { label: "생산 현장 관리자", email: "prod1@prodflow.site" },
+  { label: "업무 조회 담당", email: "inquiry1@prodflow.site" },
+];
+const TEST_PASSWORD = "Abcd123456!?";
 
 export function LoginPage() {
   const user = useAuthStore((state) => state.user);
@@ -28,6 +35,8 @@ export function LoginPage() {
     register,
     handleSubmit,
     setError,
+    setValue,
+    clearErrors,
     formState: { errors, isSubmitting },
   } = useForm<LoginFields>({
     defaultValues: { email: rememberedEmail, password: "", rememberEmail: Boolean(rememberedEmail) },
@@ -120,6 +129,28 @@ export function LoginPage() {
             </Button>
           </form>
 
+          <div className="mt-6 rounded-lg border border-line bg-surface p-4">
+            <p className="text-sm font-semibold">권한별 테스트 계정</p>
+            <p className="mt-1 text-xs text-muted">권한을 선택하면 이메일과 비밀번호가 입력됩니다.</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {TEST_ACCOUNTS.map((account) => (
+                <Button
+                  key={account.email}
+                  type="button"
+                  tone="ghost"
+                  className="text-xs"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setValue("email", account.email, { shouldDirty: true });
+                    setValue("password", TEST_PASSWORD, { shouldDirty: true });
+                    clearErrors();
+                  }}
+                >
+                  {account.label}
+                </Button>
+              ))}
+            </div>
+          </div>
           <div className="mt-8 border-t border-line pt-6 text-xs leading-6 text-muted">
             <p className="font-semibold text-ink">처음 이용하시나요?</p>
             <p className="mt-1">계정은 최고 관리자만 발급할 수 있습니다.</p>
