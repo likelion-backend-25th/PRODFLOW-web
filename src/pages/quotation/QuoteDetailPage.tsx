@@ -76,7 +76,7 @@ export function QuoteDetailPage() {
   if (loading) return <p>견적을 불러오는 중입니다.</p>;
   if (!quote) return <p>{loadError || "견적서를 찾을 수 없습니다."}</p>;
 
-  const hasOrder = quote.customerOrderId != null && Boolean(quote.orderNo) && quote.orderNo !== "-";
+  const hasOrder = quote.customerOrderId != null;
   const canChange = quote.status === "SENT" && canManageOrders(role);
   const canEditDraft = quote.status === "DRAFT" && canManageOrders(role);
   const earliest = scheduleResult && typeof scheduleResult !== "string" ? scheduleResult.earliestDueDate : null;

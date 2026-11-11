@@ -215,8 +215,8 @@ export function OrderRegisterPage() {
   const reduced = orderLines.some((line) => line.quantity < (quote.lines.find((item) => item.id === line.id)?.quantity ?? line.quantity));
   const orderAmount = orderTotal(orderLines, quote.vatIncluded);
   const needsConsent = reduced || slipped;
-  const existing = db.orders.find((order) => order.quotationId === quote.id && order.status !== "CANCELLED")
-    ?? (remote?.customerOrderId != null && remote.orderNo && remote.orderNo !== "-"
+  const existing = db.orders.find((order) => order.quotationId === quote.id)
+    ?? (remote?.customerOrderId != null
       ? { id: String(remote.customerOrderId), orderNo: remote.orderNo }
       : undefined);
   if (existing) {
