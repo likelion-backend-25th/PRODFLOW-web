@@ -234,8 +234,8 @@ export function PaymentsPage() {
             <Button tone="ghost" className="mt-3" onClick={() => void loadPayments()}>다시 시도</Button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1320px] text-left text-sm">
+          <div className="overflow-hidden">
+            <table className="w-full table-fixed text-left text-sm">
               <thead className="bg-canvas text-xs text-muted">
                 <tr>
                   <TableHead className="pl-4">수주번호</TableHead>
@@ -247,16 +247,24 @@ export function PaymentsPage() {
                   <TableHead>가상계좌 은행</TableHead>
                   <TableHead>입금기한</TableHead>
                   <TableHead>입금완료일</TableHead>
-                  <TableHead className="pr-4 text-center">상세보기</TableHead>
                 </tr>
               </thead>
               <tbody className={cn("divide-y divide-line", listLoading && pageData ? "opacity-50" : "")}>
                 {pageData?.content.map((row) => (
-                  <tr key={row.paymentId} className={cn("hover:bg-primary-soft/30", selectedPaymentId === row.paymentId && "bg-primary-soft/50")}>
+                  <tr
+                    key={row.paymentId}
+                    className={cn("cursor-pointer hover:bg-primary-soft/30 focus-visible:bg-primary-soft/50 focus-visible:outline-none", selectedPaymentId === row.paymentId && "bg-primary-soft/50")}
+                    tabIndex={0}
+                    onClick={() => setSelectedPaymentId(row.paymentId)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedPaymentId(row.paymentId);
+                      }
+                    }}
+                  >
                     <TableCell className="pl-4">
-                      <button type="button" className="font-semibold text-primary hover:underline" onClick={() => setSelectedPaymentId(row.paymentId)}>
-                        {row.orderNumber}
-                      </button>
+                      <span className="font-semibold text-primary">{row.orderNumber}</span>
                     </TableCell>
                     <TableCell>{row.clientName}</TableCell>
                     <TableCell>{paymentTypeLabel(row.paymentType)}</TableCell>
@@ -266,16 +274,11 @@ export function PaymentsPage() {
                     <TableCell>{bankLabel(row.bankName)}</TableCell>
                     <TableCell>{formatLocalDateTime(row.expiresAt)}</TableCell>
                     <TableCell>{formatLocalDateTime(row.receivedAt)}</TableCell>
-                    <TableCell className="pr-4 text-center">
-                      <button type="button" className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold hover:border-primary hover:text-primary" onClick={() => setSelectedPaymentId(row.paymentId)}>
-                        상세보기
-                      </button>
-                    </TableCell>
                   </tr>
                 ))}
                 {listLoading && !pageData ? <LoadingRows /> : null}
                 {!listLoading && pageData?.content.length === 0 ? (
-                  <tr><td className="px-4 py-14 text-center text-muted" colSpan={10}>조건에 맞는 입금 내역이 없습니다.</td></tr>
+                  <tr><td className="px-4 py-14 text-center text-muted" colSpan={9}>조건에 맞는 입금 내역이 없습니다.</td></tr>
                 ) : null}
               </tbody>
             </table>
@@ -374,11 +377,11 @@ function FilterField({ label, children }: { label: string; children: ReactNode }
 }
 
 function TableHead({ children, className }: { children: ReactNode; className?: string }) {
-  return <th className={cn("whitespace-nowrap px-3 py-3 font-medium", className)}>{children}</th>;
+  return <th className={cn("break-keep px-2 py-3 font-medium", className)}>{children}</th>;
 }
 
 function TableCell({ children, className }: { children: ReactNode; className?: string }) {
-  return <td className={cn("whitespace-nowrap px-3 py-3", className)}>{children}</td>;
+  return <td className={cn("break-words px-2 py-3", className)}>{children}</td>;
 }
 
 function LoadingRows() {
@@ -386,7 +389,7 @@ function LoadingRows() {
     <>
       {Array.from({ length: 6 }, (_, index) => (
         <tr key={index}>
-          <td colSpan={10} className="px-4 py-2">
+          <td colSpan={9} className="px-4 py-2">
             <div className="h-7 animate-pulse rounded bg-canvas" />
           </td>
         </tr>
