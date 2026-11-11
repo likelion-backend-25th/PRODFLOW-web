@@ -90,7 +90,7 @@ function daysUntilDue(due: string, today: string): number {
 function riskReasonText(due: string, statusCode: string | undefined, today: string): string {
   const days = daysUntilDue(due, today);
   const overdue = days < 0;
-  const head = overdue ? `납기 ${Math.abs(days)}일 초과` : `D-${days}`;
+  const head = overdue ? `지연 ${Math.abs(days)}일` : "납기 임박";
   const phase = statusCode ? riskPhaseOf[statusCode] : undefined;
   const detail = phase ? riskDetail[phase][overdue ? "late" : "soon"] : undefined;
   return detail ? `${head} · ${detail}` : head;
@@ -514,7 +514,7 @@ export function DashboardPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-5">
             <div>
               <h2 className="font-semibold">납기 위험 수주</h2>
-              <p className="text-sm text-muted">납기일이 지났거나 3일 이내인 수주</p>
+              <p className="mt-1 text-xs text-muted">납기 초과 또는 3일 이내 도래하는 수주</p>
             </div>
             <Link to="/orders" className="text-sm font-semibold text-primary">수주 목록으로 →</Link>
           </div>
@@ -560,12 +560,13 @@ export function DashboardPage() {
                       <td className="px-5 py-3 align-middle"><Badge className={paymentTone(toPaymentStatus(item.paymentStatus))}>{paymentStatusLabel[toPaymentStatus(item.paymentStatus)]}</Badge></td>
                       <td className="px-5 py-3 align-middle">
                         {sentNoticeKeys?.has(noticeKey(item.orderId, dueNotificationType(item.requestedDueDate, today))) ? (
-                          <span className="text-xs font-semibold whitespace-nowrap text-primary">전송 완료</span>
+                          <span className="text-xs font-semibold whitespace-nowrap text-primary" title="전송 완료">전송 완료</span>
                         ) : (
                           <button
                             type="button"
                             className="grid h-9 w-9 place-items-center rounded-lg text-primary hover:bg-primary-soft disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label={`${item.orderNo} 알림 전송`}
+                            title={sendingOrderId === item.orderId ? "전송 중" : sentNoticeKeys == null ? "전송 상태 확인 중" : "미전송"}
                             aria-busy={sendingOrderId === item.orderId}
                             disabled={sentNoticeKeys == null || sendingOrderId === item.orderId}
                             onClick={() => void sendNotice(item.orderId)}
