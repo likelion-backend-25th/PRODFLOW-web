@@ -50,20 +50,8 @@ export function formatLocalDateTime(value: string | null | undefined): string {
 }
 
 export function formatOffsetDateTime(value: string | null | undefined): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const parts = new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
-  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
+  // DB와 API가 한국 시각을 전달하므로 프론트에서는 시간대 연산 없이 표시 형식만 바꾼다.
+  return formatLocalDateTime(value);
 }
 
 export function paymentTypeLabel(type: PaymentType): string {
@@ -93,10 +81,8 @@ export function bankLabel(bank: string | null | undefined): string {
   return bankLabels[bank] ?? bank;
 }
 
-export function effectiveAccountStatus(status: VirtualAccountStatus, expiresAt: string): VirtualAccountStatus {
-  if (status !== "ACTIVE") return status;
-  const expiry = new Date(expiresAt);
-  return !Number.isNaN(expiry.getTime()) && expiry.getTime() <= Date.now() ? "EXPIRED" : status;
+export function effectiveAccountStatus(status: VirtualAccountStatus): VirtualAccountStatus {
+  return status;
 }
 
 export function accountStatusLabel(status: VirtualAccountStatus): string {
