@@ -12,7 +12,7 @@ import { screenHolidayDates } from "@/lib/db.ts";
 import { getClient, listClients, type ClientListItem } from "@/lib/clientApi.ts";
 import { depositTarget, digitsOnly, formatWon, lineAmount } from "@/lib/money.ts";
 import { searchProducts } from "@/lib/productApi.ts";
-import { createQuotationDraft, createQuotationPdf, deleteQuotation, getQuotation, listDailyPlanned, listLineCapacities, previewQuotationSchedule, readPdfFailure, regenerateQuotationPdf, sendQuotation, updateQuotationDraft, updateQuotationPdf, type QuotationPdfPreview, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
+import { createQuotationPdf, deleteQuotation, getQuotation, listDailyPlanned, listLineCapacities, previewQuotationSchedule, readPdfFailure, regenerateQuotationPdf, sendQuotation, updateQuotationPdf, type QuotationPdfPreview, type QuotationSchedulePreview } from "@/lib/quotationApi.ts";
 import { capacityUntil } from "@/lib/schedule.ts";
 import type { Line, LineStatus } from "@/types/domain.ts";
 import { useAuthStore } from "@/stores/useAuthStore.ts";
@@ -77,7 +77,6 @@ export function QuoteFormPage() {
   const [draftId, setDraftId] = useState<number | null>(null);
   const [draftNo, setDraftNo] = useState("");
   const [preparing, setPreparing] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfStatus, setPdfStatus] = useState<QuotePdfPreviewStatus>("empty");
@@ -395,27 +394,6 @@ export function QuoteFormPage() {
     return "";
   }
 
-  async function save() {
-    const message = formError();
-    if (message) {
-      setError(message);
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      const input = createInput();
-      const saved = draftId == null ? await createQuotationDraft(input) : await updateQuotationDraft(draftId, input);
-      setDraftId(saved.id);
-      setDraftNo(saved.quotationNo);
-      show("초안이 저장되었습니다.");
-    } catch (reason: unknown) {
-      setError(readApiErrorMessage(reason));
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function removeDraft() {
     if (draftId == null || deleting) return;
     if (!window.confirm("저장한 견적을 삭제할까요? 초안만 삭제되며, 삭제 후에는 되돌릴 수 없습니다.")) return;
@@ -444,10 +422,10 @@ export function QuoteFormPage() {
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{draftNo ? `${draftNo} 이어서 작성` : "견적 작성"}</h1>
-          <p className="mt-1 text-sm text-muted">{draftNo ? "저장하거나 발송하면 이 초안의 견적번호와 ID를 유지합니다." : "거래처를 검색하거나 새로 입력하고, 품목과 희망 납기를 넣습니다. 배송지는 넣지 않습니다."}</p>
+          <p className="mt-1 text-sm text-muted">{draftNo ? "발송 전 확인 시 이 초안의 견적번호와 ID를 유지합니다." : "거래처를 검색하거나 새로 입력하고, 품목과 희망 납기를 넣습니다. 배송지는 넣지 않습니다."}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button tone="ghost" className="text-danger" disabled={draftId == null || deleting || saving || preparing} onClick={() => void removeDraft()}>{deleting ? "삭제 중…" : "삭제"}</Button>
+          <Button tone="ghost" className="text-danger" disabled={draftId == null || deleting || preparing} onClick={() => void removeDraft()}>{deleting ? "삭제 중…" : "삭제"}</Button>
           <Link to="/quotations" className="inline-flex h-10 items-center rounded-lg border border-line bg-white px-4 text-sm font-semibold">견적 목록</Link>
         </div>
       </div>
@@ -838,8 +816,7 @@ export function QuoteFormPage() {
           </dl>
           {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
           <div className="mt-4 flex gap-2">
-            <Button tone="ghost" className="flex-1" disabled={saving || preparing || deleting} onClick={() => void save()}>{saving ? "저장 중…" : "저장"}</Button>
-            <Button className="flex-1" disabled={saving || preparing || deleting} onClick={send}>{preparing ? "견적서 준비 중…" : "견적 발송"}</Button>
+            <Button className="flex-1" disabled={preparing || deleting} onClick={send}>{preparing ? "견적서 준비 중…" : "견적 발송"}</Button>
           </div>
         </aside>
       </div>
