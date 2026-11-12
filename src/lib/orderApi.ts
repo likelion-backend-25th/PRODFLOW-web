@@ -249,6 +249,7 @@ export interface OrderListQuery {
 }
 
 export interface CreateOrderInput {
+  sameDayStart?: boolean;
   quotationId: number;
   items: Array<{ quotationItemId: number; quantity: number }>;
   dueDate: string;
@@ -322,6 +323,7 @@ export async function exportOrders(query: OrderListQuery): Promise<Blob> {
 export async function createCustomerOrder(body: CreateOrderInput): Promise<CreateOrderResult> {
   const { data } = await apiClient.post<CreateOrderResult>("/orders", {
     quotationId: body.quotationId,
+    sameDayStart: body.sameDayStart ?? false,
     items: body.items,
     dueDate: body.dueDate,
     useCompanyAddress: body.useCompanyAddress,

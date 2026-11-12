@@ -69,6 +69,7 @@ export function QuoteFormPage() {
   const [modalName, setModalName] = useState<string | null>(null);
   const [lines, setLines] = useState<LineDraft[]>([]);
   const [vatIncluded, setVatIncluded] = useState(false);
+  const [sameDayStart, setSameDayStart] = useState(false);
   const [requestedDueDate, setRequestedDueDate] = useState("");
   const [validityDays, setValidityDays] = useState<7 | 14>(14);
   const [dueOpen, setDueOpen] = useState(false);
@@ -130,10 +131,10 @@ export function QuoteFormPage() {
     }
     let ignore = false;
     const timer = window.setTimeout(() => {
-      previewQuotationSchedule({ items, requestedDueDate: requestedDueDate || undefined }).then((result) => {
+      previewQuotationSchedule({ items, requestedDueDate: requestedDueDate || undefined, sameDayStart }).then((result) => {
         if (ignore) return;
         setSchedule(result);
-        setScheduleError("");
+        setScheduleError(sameDayStart && !result.feasible ? "오늘 착수 또는 선택한 납기가 불가능합니다. 납기를 변경하거나 당일 착수 요청을 해제해주세요." : "");
       }).catch((reason: unknown) => {
         if (ignore) return;
         setSchedule(null);
@@ -144,7 +145,7 @@ export function QuoteFormPage() {
       ignore = true;
       window.clearTimeout(timer);
     };
-  }, [lines, requestedDueDate]);
+  }, [lines, requestedDueDate, sameDayStart]);
   useEffect(() => {
     if (!requestedDueDate || requestedDueDate < todayISO()) {
       setCapacity(null);
@@ -219,6 +220,7 @@ export function QuoteFormPage() {
         unitPrice: item.unitPrice,
       })));
       setVatIncluded(detail.vatIncluded);
+      setSameDayStart(detail.plannedStartDate?.slice(0, 10) === todayISO());
       setRequestedDueDate(dueDate);
       setValidityDays(until === addDays(todayISO(), 7) ? 7 : 14);
     }).catch((error: unknown) => {
@@ -310,6 +312,7 @@ export function QuoteFormPage() {
     return {
       clientId: client ?? undefined,
       requestedDueDate,
+      sameDayStart,
       validUntil,
       vatIncluded,
       items: draftLines().flatMap((line) => {
@@ -690,7 +693,17 @@ export function QuoteFormPage() {
           </section>
           <section className="rounded-xl border border-line bg-white p-5">
             <h2 className="font-semibold">납기</h2>
-            <p className="mt-1 text-sm text-muted">하늘색 날짜만 약속할 수 있습니다. 오늘 등록한다고 보고, 생산은 오늘부터 3일 뒤보다 앞에 두지 않습니다. 그 날이 주말이나 휴일이면 다음 생산일부터 잡습니다. 납기는 생산 완료 후 3일(주말·휴일 제외)입니다.</p>
+            <label className="mt-3 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={sameDayStart} onChange={(event) => {
+                setSameDayStart(event.target.checked);
+                setSchedule(null);
+                setScheduleError("");
+                setError("");
+              }} />
+              당일 착수 요청
+            </label>
+            {sameDayStart ? <p className="mt-1 text-xs text-muted">오늘 계약금 확인과 현장 준비가 완료되어야 착수할 수 있습니다. 오늘 남은 작업시간은 담당자가 확인해주세요.</p> : null}
+            <p className="mt-1 text-sm text-muted">일반 주문은 오늘 +3일 이후, 당일 착수 요청은 오늘부터 생산 가능 여부를 계산합니다. 주말·휴일은 제외하며, 납기는 생산 완료 후 영업일 3일입니다.</p>
             {schedule ? (
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary-soft px-3 py-2.5">
                 <div>
