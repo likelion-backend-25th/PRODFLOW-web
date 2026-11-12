@@ -93,8 +93,11 @@ export function ProductListPage() {
     let accepted = false;
     setLoading(true);
     const status = tab === "available" ? "AVAILABLE" : "DISCONTINUED";
-    const other = status === "AVAILABLE" ? "DISCONTINUED" : "AVAILABLE";
-    Promise.all([loadProductPage(keyword, status, page), loadProductPage(keyword, other, 0, 1)]).then(([current, rest]) => {
+    Promise.all([
+      loadProductPage(keyword, status, page),
+      listProducts("AVAILABLE", 0, 1),
+      listProducts("DISCONTINUED", 0, 1),
+    ]).then(([current, availablePage, stoppedPage]) => {
       if (ignore) return;
       if (page > 0 && page >= current.totalPages) {
         setPage(Math.max(0, current.totalPages - 1));
@@ -104,8 +107,8 @@ export function ProductListPage() {
       setRows(current.content.map(toProductRow));
       setTotalElements(current.totalElements);
       setTotalPages(current.totalPages);
-      setAvailableTotal(status === "AVAILABLE" ? current.totalElements : rest.totalElements);
-      setStoppedTotal(status === "DISCONTINUED" ? current.totalElements : rest.totalElements);
+      setAvailableTotal(availablePage.totalElements);
+      setStoppedTotal(stoppedPage.totalElements);
       setLoadError("");
     }).catch((error: unknown) => {
       if (ignore) return;
