@@ -36,11 +36,21 @@ interface UserFormFields {
 
 function formatDateTime(value: string | null): string {
   if (!value) return "로그인 이력 없음";
-  const dateTime = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  // DB와 API가 한국 시각을 전달하므로 프론트에서는 시간대 연산 없이 표시 형식만 바꾼다.
-  return dateTime
-    ? `${dateTime[1]}. ${dateTime[2]}. ${dateTime[3]}. ${dateTime[4]}:${dateTime[5]}`
-    : value;
+  const localDateTime = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  // 백엔드는 한국 현지 시각을 LocalDateTime으로 보내므로 시간대 없는 값에는 시차를 다시 더하지 않는다.
+  if (localDateTime && !/(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    return `${localDateTime[1]}. ${localDateTime[2]}. ${localDateTime[3]}. ${localDateTime[4]}:${localDateTime[5]}`;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function StatusBadge({ status }: { status: UserResponse["status"] }) {
