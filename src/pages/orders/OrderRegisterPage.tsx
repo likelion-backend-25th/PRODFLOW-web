@@ -25,6 +25,7 @@ export function OrderRegisterPage() {
   const localQuote = db.quotations.find((item) => item.id === quotationKey);
   const [remote, setRemote] = useState<QuotationDetail | null>(null);
   const [remoteError, setRemoteError] = useState("");
+  const [sameDayStart, setSameDayStart] = useState(false);
   const [companyParts, setCompanyParts] = useState<{ zipcode: string; roadAddress: string; detailAddress: string } | null>(null);
   useEffect(() => {
     if (!quotationKey || localQuote) return;
@@ -32,7 +33,10 @@ export function OrderRegisterPage() {
     if (!Number.isInteger(id) || id <= 0) return;
     let ignore = false;
     getQuotation(id).then((detail) => {
-      if (!ignore) setRemote(detail);
+      if (!ignore) {
+        setRemote(detail);
+        setSameDayStart(detail.plannedStartDate?.slice(0, 10) === todayISO());
+      }
     }).catch((error: unknown) => {
       if (!ignore) setRemoteError(readApiErrorMessage(error));
     });
@@ -117,7 +121,7 @@ export function OrderRegisterPage() {
   const [receiverPhone, setReceiverPhone] = useState(client?.contactMobile ?? "");
   const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>("EMAIL");
   const [memo, setMemo] = useState("");
-  const depositDueDate = addDays(todayISO(), 3);
+  const depositDueDate = sameDayStart ? todayISO() : addDays(todayISO(), 3);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [chosenDue, setChosenDue] = useState("");
   const [dueOpen, setDueOpen] = useState(false);
@@ -134,6 +138,7 @@ export function OrderRegisterPage() {
     quotationId: quote.id,
     estimatedDueDate: quote.estimatedDueDate,
     chosenDue,
+    sameDayStart,
     depositDueDate,
     items: quote.lines.map((line) => ({
       productId: Number(line.productId),
@@ -149,6 +154,7 @@ export function OrderRegisterPage() {
     const input: {
       estimatedDueDate: string;
       chosenDue: string;
+      sameDayStart: boolean;
       items: Array<{ productId: number; quantity: number }>;
     } = JSON.parse(previewKey);
     let ignore = false;
@@ -160,6 +166,7 @@ export function OrderRegisterPage() {
         }
         const initial = await previewQuotationSchedule({
           items: input.items,
+          sameDayStart: input.sameDayStart,
           requestedDueDate: input.estimatedDueDate,
         });
         if (ignore) return;
@@ -167,13 +174,16 @@ export function OrderRegisterPage() {
         if (input.estimatedDueDate < initial.earliestDueDate) {
           result = await previewQuotationSchedule({
             items: input.items,
+            sameDayStart: input.sameDayStart,
             requestedDueDate: input.chosenDue >= initial.earliestDueDate
               ? input.chosenDue : initial.earliestDueDate,
           });
         }
         if (ignore) return;
         if (!result.feasible || !result.plannedStartDate || !result.plannedEndDate) {
-          throw new Error(`선택한 납기를 지킬 수 없습니다. 가능한 가장 빠른 납기일: ${result.earliestDueDate}`);
+          throw new Error(input.sameDayStart
+            ? "오늘 착수 또는 선택한 납기가 불가능합니다. 당일 착수 요청을 해제하면 일반 일정으로 변경할 수 있습니다."
+            : `선택한 납기를 지킬 수 없습니다. 가능한 가장 빠른 납기일: ${result.earliestDueDate}`);
         }
         setPreview({ key: previewKey, result, error: "" });
       } catch (reason: unknown) {
@@ -214,7 +224,7 @@ export function OrderRegisterPage() {
   const orderLines = quote.lines.map((line) => ({ ...line, quantity: quantities[line.id] ?? line.quantity }));
   const reduced = orderLines.some((line) => line.quantity < (quote.lines.find((item) => item.id === line.id)?.quantity ?? line.quantity));
   const orderAmount = orderTotal(orderLines, quote.vatIncluded);
-  const needsConsent = reduced || slipped;
+  const needsConsent = reduced || slipped || (!sameDayStart && quote.plannedStartDate === todayISO());
   const existing = db.orders.find((order) => order.quotationId === quote.id)
     ?? (remote?.customerOrderId != null
       ? { id: String(remote.customerOrderId), orderNo: remote.orderNo }
@@ -292,6 +302,7 @@ export function OrderRegisterPage() {
         quotationId,
         items,
         dueDate: registerDue,
+        sameDayStart,
         useCompanyAddress,
         shippingAddress: { zipcode: postalCode.trim(), roadAddress: roadAddress.trim(), detailAddress: addressDetail.trim() },
         receiverName: receiverName.trim(),
@@ -367,14 +378,28 @@ export function OrderRegisterPage() {
               </tbody>
             </table>
           </div>
+          <label className="mt-3 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={sameDayStart} onChange={(event) => {
+              setSameDayStart(event.target.checked);
+              setChosenDue("");
+              setAgreed(false);
+              setError("");
+            }} />
+            당일 착수 요청
+          </label>
+          {sameDayStart ? <p className="mt-1 text-xs text-muted">오늘 착수할 생산 용량을 예약합니다. 계약금도 오늘 확인되어야 합니다.</p> : null}
           <p className="mt-3 text-xs text-muted">품목을 빼거나 단가를 바꾸려면 견적을 새로 작성합니다. 화면을 닫으면 수주는 만들어지지 않습니다.</p>
           <div className={`mt-3 rounded-lg px-3 py-2 text-sm leading-5 ${needsConsent ? "bg-warning-soft text-warning" : "bg-primary-soft text-primary"}`}>
             {scheduleLoading ? (
               "서버에서 생산 일정과 납기를 계산하고 있습니다."
             ) : scheduleError ? (
               scheduleError
+            ) : !sameDayStart && quote.plannedStartDate === todayISO() ? (
+              <>당일 착수 요청을 해제했습니다. 변경된 생산 일정과 납기를 거래처와 확인한 뒤 등록합니다.</>
             ) : reduced && !slipped ? (
               <>수량을 줄이면 견적 예상 납기 {quote.estimatedDueDate}이 가능합니다. 거래처가 이 수량에 동의한 뒤에 등록합니다.</>
+            ) : sameDayStart && !slipped ? (
+              <>현재 계획 기준으로 오늘 착수할 수 있습니다. 오늘 계약금 확인과 현장 준비가 필요합니다.</>
             ) : slipped ? (
               <>견적 예상 납기 {quote.estimatedDueDate}은 이 수량으로 어렵습니다. {schedule?.earliestDueDate}부터 고를 수 있습니다. 수량을 더 줄이거나, 거래처가 받은 날짜를 선택한 뒤에 등록합니다.</>
             ) : (
@@ -521,7 +546,7 @@ export function OrderRegisterPage() {
         <section className="rounded-lg bg-canvas px-3 py-3">
           <p className="text-xs text-muted">계약금 마감</p>
           <p className="mt-1 text-sm font-semibold">{depositDueDate}</p>
-          <p className="mt-1 text-xs leading-5 text-muted">등록일부터 3일입니다. 이 날까지 계약금이 전혀 없으면 다음 날 대기 수주가 취소됩니다.</p>
+          <p className="mt-1 text-xs leading-5 text-muted">{sameDayStart ? "당일 착수 요청은 오늘까지 계약금을 확인해야 합니다." : "등록일부터 3일입니다."} 이 날까지 계약금이 전혀 없으면 다음 날 대기 수주가 취소됩니다.</p>
         </section>
         {needsConsent ? (
           <label className="flex items-start gap-2 text-sm leading-6">
