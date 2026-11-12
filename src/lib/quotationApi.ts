@@ -89,6 +89,7 @@ export interface QuotationItemInput {
 }
 
 export interface QuotationCreateInput {
+  sameDayStart?: boolean;
   clientId?: number;
   requestedDueDate: string;
   validUntil: string;
@@ -182,9 +183,11 @@ export function sendQuotation(quotationId: number, confirmationToken: string): P
 export function previewQuotationSchedule(input: {
   items: Array<{ productId: number; quantity: number }>;
   requestedDueDate?: string;
+  sameDayStart?: boolean;
 }): Promise<QuotationSchedulePreview> {
   return apiClient.post<QuotationSchedulePreview>("/quotations/schedule", {
     items: input.items,
+    sameDayStart: input.sameDayStart ?? false,
     requestedDueDate: input.requestedDueDate || undefined,
   }).then((response) => response.data);
 }
