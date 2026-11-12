@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { Bell } from "lucide-react";
 import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { localDateTime } from "@/lib/dates.ts";
@@ -8,6 +9,7 @@ import { fetchLineNotifications, fetchOrderNotifications, fetchUnreadCount, mark
 const unreadPollMs = 30_000;
 
 export function NotificationBell() {
+  const navigate = useNavigate();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [count, setCount] = useState<number | null>(null);
@@ -172,17 +174,24 @@ export function NotificationBell() {
   }
 
   async function read(item: NoticeItem) {
-    if (item.isRead) return;
-    const key = `${item.source}-${item.id}`;
-    setPendingId(key);
-    try {
-      await markNoticeRead(item);
-      setItems((current) => current?.map((row) => row.source === item.source && row.id === item.id ? { ...row, isRead: true } : row) ?? current);
-      await refreshCount(true);
-    } catch (reason: unknown) {
-      setError(readApiErrorMessage(reason));
-    } finally {
-      setPendingId(null);
+    const orderPath = item.source === "order" && item.orderId != null ? `/orders/${item.orderId}` : null;
+    if (!item.isRead) {
+      const key = `${item.source}-${item.id}`;
+      setPendingId(key);
+      try {
+        await markNoticeRead(item);
+        setItems((current) => current?.map((row) => row.source === item.source && row.id === item.id ? { ...row, isRead: true } : row) ?? current);
+        await refreshCount(true);
+      } catch (reason: unknown) {
+        setError(readApiErrorMessage(reason));
+        return;
+      } finally {
+        setPendingId(null);
+      }
+    }
+    if (orderPath) {
+      setOpen(false);
+      navigate(orderPath);
     }
   }
 
