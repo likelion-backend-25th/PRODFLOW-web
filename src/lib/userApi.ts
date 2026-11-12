@@ -28,15 +28,6 @@ export interface MeResponse {
   mustChangePassword: boolean;
 }
 
-export interface OrderManagerResponse {
-  id: number;
-  name: string;
-  email: string;
-  phone: string;
-  role: ApiRole;
-  status: AccountStatus;
-}
-
 export interface UserStatsResponse {
   totalAccounts: number;
   activeAccounts: number;
@@ -80,8 +71,8 @@ export function getMe(): Promise<MeResponse> {
   return apiClient.get<MeResponse>("/users/me").then((response) => response.data);
 }
 
-export function getOrderManagers(): Promise<OrderManagerResponse[]> {
-  return apiClient.get<OrderManagerResponse[]>("/users/order").then((response) => response.data);
+export function getOrderManagers(): Promise<UserResponse[]> {
+  return apiClient.get<UserResponse[]>("/users/order").then((response) => response.data);
 }
 
 export function getUsers(params: {
