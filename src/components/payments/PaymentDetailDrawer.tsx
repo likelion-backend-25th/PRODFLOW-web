@@ -110,7 +110,7 @@ export function PaymentDetailDrawer({ paymentId, onClose, onChanged }: PaymentDe
   }
 
   const account = reissueResult?.virtualAccount ?? detail?.virtualAccount ?? null;
-  const accountStatus = account ? effectiveAccountStatus(account.status) : null;
+  const accountStatus = account ? effectiveAccountStatus(account.status, account.expiresAt) : null;
   const canManage = role === "SUPER_ADMIN" || role === "ORDER_MANAGER";
   const canReissue = Boolean(
     detail?.reissueAvailable
@@ -276,7 +276,7 @@ function CopyValue({ value, onCopy }: { value: string; onCopy: () => void }) {
 }
 
 function ReissueSuccess({ account, onCopy }: { account: VirtualAccount; onCopy: (value: string, label: string) => Promise<void> }) {
-  const status = effectiveAccountStatus(account.status);
+  const status = effectiveAccountStatus(account.status, account.expiresAt);
   return (
     <section className="overflow-hidden rounded-xl border border-teal-200 bg-teal-50">
       <div className="flex items-center gap-2 bg-primary px-4 py-3 font-semibold text-white">
