@@ -151,6 +151,7 @@ export function DashboardPage() {
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [sentNoticeKeys, setSentNoticeKeys] = useState<Set<string> | null>(null);
   const [sendingOrderId, setSendingOrderId] = useState<number | null>(null);
+  const sendingRef = useRef(false);
   const [noticeError, setNoticeError] = useState<string | null>(null);
   const periodKey = `${period.startDate}~${period.endDate}`;
   const loading = result?.key !== periodKey;
@@ -281,7 +282,8 @@ export function DashboardPage() {
   ].filter((item) => item.length > 0);
 
   async function sendNotice(orderId: number) {
-    if (sendingOrderId != null) return;
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     setSendingOrderId(orderId);
     setNoticeError(null);
     try {
@@ -296,6 +298,7 @@ export function DashboardPage() {
       if (apiStatus(reason) === 401) return;
       setNoticeError(readApiErrorMessage(reason));
     } finally {
+      sendingRef.current = false;
       setSendingOrderId((current) => current === orderId ? null : current);
     }
   }
@@ -568,7 +571,7 @@ export function DashboardPage() {
                             aria-label={`${item.orderNo} 알림 전송`}
                             title={sendingOrderId === item.orderId ? "전송 중" : sentNoticeKeys == null ? "전송 상태 확인 중" : "미전송"}
                             aria-busy={sendingOrderId === item.orderId}
-                            disabled={sentNoticeKeys == null || sendingOrderId === item.orderId}
+                            disabled={sentNoticeKeys == null || sendingOrderId != null}
                             onClick={() => void sendNotice(item.orderId)}
                           >
                             {sendingOrderId === item.orderId ? <Loader2 size={16} className="animate-spin" /> : <Bell size={16} />}

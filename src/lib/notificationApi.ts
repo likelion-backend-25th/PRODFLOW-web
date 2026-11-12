@@ -12,6 +12,7 @@ export interface NoticeItem {
   message: string;
   createdAt: string;
   isRead: boolean;
+  orderId?: number | null;
 }
 
 interface LineNotificationResponse {
@@ -87,6 +88,7 @@ export async function fetchOrderNotifications(): Promise<NoticeItem[]> {
     message: row.message,
     createdAt: row.createdAt,
     isRead: readFlag(row),
+    orderId: row.orderId,
   }));
 }
 
