@@ -232,7 +232,7 @@ export function ProductListPage() {
   );
 }
 
-const MAX_DRAWING_BYTES = 2 * 1024 * 1024;
+const MAX_DRAWING_BYTES = 100 * 1024 * 1024;
 
 function formatPriceInput(value: string): string {
   const digits = value.replace(/\D/g, "");
@@ -510,7 +510,7 @@ function ProductEditor({ productId }: { productId?: string }) {
           </section>
           <section className="rounded-xl border border-line bg-white p-5">
             <h2 className="font-semibold">파일</h2>
-            <p className="mt-1 text-sm text-muted">생산에 사용할 파일을 올려 주세요. 파일마다 2MB 이하이고, 여러 장을 한 번에 고를 수 있습니다.</p>
+            <p className="mt-1 text-sm text-muted">생산에 사용할 파일을 올려 주세요. 파일마다 100MB 이하이고, 여러 장을 한 번에 고를 수 있습니다.</p>
             <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-muted hover:border-primary hover:text-primary">
               <FileUp size={20} />
               <span className="mt-2 font-semibold text-ink">파일 선택</span>
@@ -526,7 +526,7 @@ function ProductEditor({ productId }: { productId?: string }) {
                   const oversized = selected.filter((file) => file.size > MAX_DRAWING_BYTES);
                   const accepted = selected.filter((file) => file.size <= MAX_DRAWING_BYTES);
                   setPendingFiles((current) => [...current, ...accepted]);
-                  setDrawingError(oversized.length > 0 ? "2MB를 넘는 파일은 빼 두었습니다." : "");
+                  setDrawingError(oversized.length > 0 ? "100MB를 넘는 파일은 빼 두었습니다." : "");
                 }}
               />
             </label>
