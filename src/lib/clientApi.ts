@@ -20,6 +20,7 @@ export interface ClientPage {
 }
 
 export interface ClientRecentMonthCounts {
+  countAll: number;
   countByOrder: number;
   countByCreatedAt: number;
 }

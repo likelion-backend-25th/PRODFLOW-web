@@ -37,7 +37,6 @@ export function RootLayout() {
             ))}
           </p>
           <div className="flex items-center gap-4 text-sm text-muted">
-            <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-success" />내부 네트워크 연결됨</span>
             <NotificationBell />
           </div>
         </header>
