@@ -8,7 +8,7 @@ import { readApiErrorMessage } from "@/lib/apiClient.ts";
 import { createClient, getClient, getClientRecentMonthCounts, importClientsFile, listClients, updateClient, type ClientDetail, type ClientListItem, type ClientPage, type ClientRecentMonthCounts } from "@/lib/clientApi.ts";
 import { orderStatusLabel, orderStatusTone, paymentStatusLabel, paymentTone } from "@/lib/labels.ts";
 import { getRecentClientOrder, listClientOrders, screenOrderStatus, screenPaymentStatus, type ClientOrder, type ClientOrderPage } from "@/lib/orderApi.ts";
-import { getOrderManagers, type OrderManagerResponse } from "@/lib/userApi.ts";
+import { getOrderManagers, type UserResponse } from "@/lib/userApi.ts";
 import { canManageOrders, useAuthStore } from "@/stores/useAuthStore.ts";
 import { useToastStore } from "@/stores/useToastStore.ts";
 
@@ -27,7 +27,7 @@ interface ClientRow {
 }
 
 const emptyClientPage: ClientPage = { content: [], totalElements: 0, totalPages: 0, number: 0, size: PAGE_SIZE };
-const emptyRecentMonthCounts: ClientRecentMonthCounts = { countByOrder: 0, countByCreatedAt: 0 };
+const emptyRecentMonthCounts: ClientRecentMonthCounts = { countAll: 0, countByOrder: 0, countByCreatedAt: 0 };
 
 function formatDate(value: string | null): string {
   if (!value) return "-";
@@ -147,7 +147,7 @@ export function ClientListPage() {
       {result ? <p className="-mt-3 text-sm text-muted">{result}</p> : null}
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Metric label="전체 거래처" value={list.totalElements} icon={<Building2 size={23} className="text-primary" />} />
+        <Metric label="전체 거래처" value={recentMonthCounts.countAll} icon={<Building2 size={23} className="text-primary" />} />
         <Metric label="최근 한달간 수주한 거래처" value={recentMonthCounts.countByOrder} />
         <Metric label="최근 한달간 등록한 거래처" value={recentMonthCounts.countByCreatedAt} />
       </div>
@@ -386,7 +386,7 @@ export function ClientFormPage() {
   const [form, setForm] = useState(emptyClient);
   const [checked, setChecked] = useState(false);
   const [duplicates, setDuplicates] = useState<ClientListItem[]>([]);
-  const [orderManagers, setOrderManagers] = useState<OrderManagerResponse[]>([]);
+  const [orderManagers, setOrderManagers] = useState<UserResponse[]>([]);
   const [selectedManagerId, setSelectedManagerId] = useState("");
   const [managerLoadError, setManagerLoadError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);

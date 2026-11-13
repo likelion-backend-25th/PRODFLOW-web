@@ -168,14 +168,6 @@ export function cancelQuotation(quotationId: number): Promise<QuotationDetail> {
   return apiClient.patch<QuotationDetail>(`/quotations/${quotationId}/cancel`).then((response) => response.data);
 }
 
-export function createQuotationDraft(input: QuotationCreateInput): Promise<QuotationDetail> {
-  return apiClient.post<QuotationDetail>("/quotations", input).then((response) => response.data);
-}
-
-export function updateQuotationDraft(quotationId: number, input: QuotationCreateInput): Promise<QuotationDetail> {
-  return apiClient.put<QuotationDetail>(`/quotations/${quotationId}`, input).then((response) => response.data);
-}
-
 export function sendQuotation(quotationId: number, confirmationToken: string): Promise<QuotationSendResult> {
   return apiClient.post<QuotationSendResult>(`/quotations/${quotationId}/send`, { confirmationToken }).then((response) => response.data);
 }
