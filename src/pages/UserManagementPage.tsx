@@ -185,7 +185,7 @@ export function UserManagementPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">계정 관리</h1>
-          <p className="mt-1 text-sm text-muted">직원은 직접 회원가입을 신청하고, 최고 관리자가 승인 후 계정을 활성화합니다.</p>
+          <p className="mt-1 text-sm text-muted">직원 계정은 최고 관리자가 직접 생성해 발급합니다.</p>
         </div>
         <Button onClick={() => setEditor("create")}><Plus className="mr-1 size-4" />계정 추가</Button>
       </div>
