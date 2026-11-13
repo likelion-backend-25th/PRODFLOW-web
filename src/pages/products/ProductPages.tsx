@@ -464,11 +464,11 @@ function ProductEditor({ productId }: { productId?: string }) {
               <input
                 className="mt-2 h-10 w-full rounded-lg border border-line px-3 font-normal"
                 value={productName}
-                placeholder="예: 정밀 브러쉬 8형"
+                placeholder="예: 아이폰 16 맥세이프 클리어 케이스"
                 onChange={(event) => setProductName(event.target.value)}
               />
             </label>
-            <p className="mt-2 text-xs text-muted">규격이 다르면 이름에 규격이나 모델을 함께 입력해 주세요.</p>
+            <p className="mt-2 text-xs text-muted">기종이나 디자인이 다르면 품목명에 함께 적어 주세요.</p>
             <div className="mt-5 text-sm font-semibold">
               기종명 <span className="text-danger">*</span>
               <span className="mt-2 flex gap-2">
@@ -489,7 +489,7 @@ function ProductEditor({ productId }: { productId?: string }) {
               <textarea
                 className="mt-2 h-28 w-full resize-none rounded-lg border border-line px-3 py-2 font-normal"
                 value={description}
-                placeholder="재질, 가공 방식, 표면 마감 등 품목을 구분할 수 있는 설명을 입력하세요"
+                placeholder="예: 아이폰 16 전용. 자석 링과 황변 방지 코팅을 적용한 투명 하드 케이스"
                 onChange={(event) => setDescription(event.target.value)}
               />
             </label>
