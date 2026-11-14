@@ -247,16 +247,32 @@ export function QuoteFormPage() {
       setProductMatches([]);
       return;
     }
-    const timer = window.setTimeout(() => {
-      searchProducts(query, "AVAILABLE", 0, 6).then((result) => setProductMatches(result.content.map((item) => ({
-        id: String(item.id),
-        productName: item.productName,
-        modelName: item.deviceName,
-        description: item.productDescription,
-        unitPrice: item.currentPrice,
-      })))).catch(() => setProductMatches([]));
+    let ignore = false;
+    const timer = window.setTimeout(async () => {
+      setProductMatches([]);
+      try {
+        const first = await searchProducts(query, "AVAILABLE", 0, 50);
+        if (ignore) return;
+        const remaining = await Promise.all(
+          Array.from({ length: Math.max(0, first.totalPages - 1) }, (_, index) =>
+            searchProducts(query, "AVAILABLE", index + 1, 50)),
+        );
+        if (ignore) return;
+        setProductMatches([first, ...remaining].flatMap((page) => page.content).map((item) => ({
+          id: String(item.id),
+          productName: item.productName,
+          modelName: item.deviceName,
+          description: item.productDescription,
+          unitPrice: item.currentPrice,
+        })));
+      } catch {
+        if (!ignore) setProductMatches([]);
+      }
     }, 200);
-    return () => window.clearTimeout(timer);
+    return () => {
+      ignore = true;
+      window.clearTimeout(timer);
+    };
   }, [productQuery]);
 
   function placeProduct(product: ProductChoice) {
@@ -596,7 +612,7 @@ export function QuoteFormPage() {
                 <button type="button" className="shrink-0 text-xs font-semibold text-primary" onClick={() => setModalName(productQuery.trim())}>+ 신규 품목 등록</button>
               </div>
               {productQuery.trim() ? (
-                <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-line bg-white shadow-lg">
+                <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto overscroll-contain rounded-lg border border-line bg-white shadow-lg">
                   {productMatches.map((item, index) => {
                     const added = lines.some((line) => line.productId === item.id);
                     const active = index === (productActive < productMatches.length ? productActive : 0);
