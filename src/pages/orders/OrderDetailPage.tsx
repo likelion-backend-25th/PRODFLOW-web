@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
-import { ArrowLeft, Check, Pencil } from "lucide-react";
+import { ArrowLeft, Check } from "lucide-react";
 import { AddressPicker } from "@/components/AddressPicker.tsx";
 import { Badge, Button, Card, SelectField, TextField } from "@/components/ui.tsx";
 import { readApiErrorMessage } from "@/lib/apiClient.ts";
@@ -350,19 +350,6 @@ export function OrderDetailPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link to="/orders" className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-3 text-sm font-semibold"><ArrowLeft size={16} />수주 목록으로</Link>
-          {canEditQty && canManageOrders(user.role) ? (
-            <button
-              type="button"
-              className="inline-flex h-10 items-center gap-1 rounded-lg border border-line bg-white px-3 text-sm font-semibold"
-              onClick={() => {
-                setEditingItems(true);
-                setLaterDue("");
-                document.getElementById("order-items")?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-            >
-              <Pencil size={15} />수주 수정
-            </button>
-          ) : null}
         </div>
       </div>
       <section className="rounded-xl border border-line bg-white px-5 py-4">
