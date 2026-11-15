@@ -445,9 +445,10 @@ function UserEditorModal({
         </div>
 
         <div className="space-y-4 px-7 py-6">
-          <FormInput label="이름" error={errors.name?.message} registration={register("name", { required: "이름을 입력해 주세요." })} />
+          <FormInput label="이름" autoComplete={user ? undefined : "off"} error={errors.name?.message} registration={register("name", { required: "이름을 입력해 주세요." })} />
           <FormInput
             label="아이디(이메일)"
+            autoComplete={user ? undefined : "off"}
             type="email"
             error={errors.email?.message}
             registration={register("email", {
@@ -457,6 +458,7 @@ function UserEditorModal({
           />
           <FormInput
             label="전화번호"
+            autoComplete={user ? undefined : "off"}
             placeholder="예시)010-1234-5678"
             error={errors.phone?.message}
             registration={register("phone", { required: "전화번호를 입력해 주세요." })}
@@ -507,12 +509,14 @@ function FormInput({
   label,
   type = "text",
   placeholder,
+  autoComplete,
   error,
   registration,
 }: {
   label: string;
   type?: string;
   placeholder?: string;
+  autoComplete?: string;
   error?: string;
   registration: UseFormRegisterReturn;
 }) {
@@ -522,6 +526,7 @@ function FormInput({
       <input
         type={type}
         placeholder={placeholder}
+        autoComplete={autoComplete}
         className={cn("mt-2 h-11 w-full rounded-lg border px-3 outline-none focus:border-primary", error ? "border-danger" : "border-line")}
         {...registration}
       />
